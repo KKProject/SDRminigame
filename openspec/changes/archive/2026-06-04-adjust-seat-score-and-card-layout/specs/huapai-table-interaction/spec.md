@@ -1,8 +1,5 @@
-# huapai-table-interaction Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose after archive.
-## Requirements
 ### Requirement: 玩家头像与点数显示
 系统 SHALL 在背景优先牌桌上为四个玩家显示头像占位和两行点数。对家头像 SHALL 位于界面顶部居中，上家头像 SHALL 位于左上角，下家头像 SHALL 位于右上角，自己头像 SHALL 位于左下角。当前没有头像资源时，系统 MUST 使用正方形有色方块作为头像占位。每个头像下方第一行 MUST 显示该玩家累计总输赢点数，第二行 MUST 显示该玩家当前局已操作牌福数。
 
@@ -28,6 +25,8 @@ TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose a
 #### Scenario: 点数不遮挡牌
 - **WHEN** 头像、点数、凑牌区、弃牌区和手牌同时显示
 - **THEN** 头像与两行点数 MUST 不遮挡可见 mini 牌、手牌或动作弹窗按钮
+
+## MODIFIED Requirements
 
 ### Requirement: Responsive Card Table Layout
 系统 SHALL 在当前 canvas 尺寸内渲染背景优先的四人横屏牌桌。原始背景图 SHALL 在正常对局中作为主要可见桌面，渲染器 SHALL 将头像、点数、手牌、凑好牌、弃牌/打牌和动画牌直接放在配置位置上，而不是绘制常驻填充面板、桌面框、座位框、中心操作块或带框弃牌/凑牌区域。布局 SHALL 暴露不可见区域：玩家头像与两行点数、玩家前方动画终点、各玩家弃牌/打牌 mini 排列区、各玩家凑好牌 mini 排列区、我的手牌、动作弹窗、结果弹窗和保留控制命中区域。横屏布局 SHALL 使用更宽的屏幕展示更多手牌列和桌面信息。我的手牌 SHALL 使用动态牌列：每列最多 6 张牌，同一句话可以拆成多个相邻牌列，单字牌集中到最后牌列，空牌列在每次手牌变化后自动消失并让剩余牌列紧挨。canvas backing store SHALL 按设备渲染像素比设置，使牌桌、牌和文字在高密度手机屏幕上保持清晰，同时布局尺寸保持逻辑像素。
@@ -182,74 +181,6 @@ TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose a
 - **WHEN** 打牌或凑牌导致中间手牌列消失并让剩余列压紧
 - **THEN** 后续点击 MUST 使用新的压紧后牌区域命中
 - **AND** 不得命中过时的空列区域
-
-### Requirement: Action Prompts
-The system SHALL render legal action choices for pending player decisions such as accept takeover, decline takeover, chi, peng, zhao, ta, hu, pass, and restart. During normal play, the hand SHALL be the only persistent operation area. Chi, peng, zhao, ta, hu, pass, accept takeover, decline takeover, dealer-slip, takeover-limit, forced-action, support-pair, dealer-kezi, scoring, or circle-loss warnings SHALL appear in a temporary modal popup when the current rule state requires a decision or warning. The modal SHALL be the only place where non-hand action controls are shown while a decision is pending.
-
-#### Scenario: Pending response choices
-- **WHEN** the human player has one or more legal responses to an incoming card
-- **THEN** the system MUST show a modal popup containing the available response buttons using labels `吃`, `碰`, `招`, `踏`, `胡`, and `过` as appropriate, and prevent unrelated hand discards until the player chooses an action
-
-#### Scenario: Prompt controls do not cover hand cards
-- **WHEN** legal action buttons are visible
-- **THEN** the modal action button hit regions MUST NOT overlap any visible human hand card hit region
-
-#### Scenario: Takeover choice is pending
-- **WHEN** dealer slip reaches the human player and the human player has at least one three-of-a-kind
-- **THEN** the system MUST show accept and decline takeover choices in a modal popup and explain that accepting limits the player to 3 grouping operations before listening
-
-#### Scenario: Forced action warning
-- **WHEN** the human player is in a mandatory chi or peng situation
-- **THEN** the system MUST show modal feedback that declining the required action can trigger circle-loss according to the rules
-
-#### Scenario: Zhao or ta support warning
-- **WHEN** the human player is considering or has completed zhao or ta
-- **THEN** the system MUST show the required support-pair count in the modal popup and warn when the current hand lacks enough valid support pairs
-
-#### Scenario: Dealer kezi warning
-- **WHEN** the human dealer or takeover dealer is about to chi in a way that would remove the last kezi
-- **THEN** the system MUST warn in the modal popup that the move will cause circle-loss
-
-#### Scenario: No center action controls during normal play
-- **WHEN** no player decision is pending
-- **THEN** the renderer MUST NOT draw center-table action buttons or operation prompts
-
-### Requirement: Game Feedback
-The system SHALL render clear feedback for current dealer, jiang card and jiang phrase, dealer slip, takeover choice, takeover operation count, current turn, recent discard, drawn-card resolution, illegal taps, AI thinking delay, forced actions, zhao/ta support-pair obligations, win/draw result, circle-loss result, score, hu grade, fu summary, point settlement, and hu summary. Normal-play feedback SHALL be lightweight and background-first: persistent feedback MUST avoid large filled panels and central operation blocks, while decision warnings and round-end summaries SHALL use modal overlays when readability or player action is required.
-
-#### Scenario: Illegal tap
-- **WHEN** the player taps a card or area that is not legal in the current phase
-- **THEN** the system MUST keep game state unchanged and display a short lightweight feedback prompt or modal message
-
-#### Scenario: Central active feedback
-- **WHEN** the round is active and no modal result or decision is shown
-- **THEN** the system MUST render current turn, deck count, recent discard, drawn-card resolution, or jiang information as lightweight text or card placement without drawing a persistent central panel
-
-#### Scenario: Circle-loss result
-- **WHEN** a player enters circle-loss
-- **THEN** the system MUST show the losing player, the three winning players, and the rule reason that ended the round
-
-#### Scenario: Win scoring result
-- **WHEN** a player wins the round
-- **THEN** the system MUST show the winner, hu source, jiang phrase, total fu, hu grade, point value, and concise itemized scoring summary
-
-#### Scenario: Draw-round result
-- **WHEN** dealer slip produces a draw-round because nobody can or will accept takeover
-- **THEN** the system MUST show the draw-round reason and identify the next dealer
-
-### Requirement: Touch Lifecycle
-The system SHALL register WeChat touch handlers once during game initialization and route touches through current layout hit regions.
-
-#### Scenario: Restart round does not duplicate handlers
-- **WHEN** the player restarts multiple rounds
-- **THEN** each touch MUST be handled exactly once
-
-### Requirement: Landscape Runtime Orientation
-The system SHALL configure the WeChat minigame to run in landscape orientation for normal gameplay.
-
-#### Scenario: Game launches
-- **WHEN** the minigame runtime reads the project configuration
-- **THEN** the game MUST request landscape orientation
 
 ### Requirement: Card Movement Animation
 系统 SHALL 使用对应字的大图 atlas sprite 展示可见摸牌或出牌动画。动画大图 SHALL 保持 big atlas 牌面 `88x307` 的宽高比，不得压缩变形。出牌动画 SHALL 先从出牌玩家一侧移动到该玩家前方并停留，等待其他玩家响应；若无人要牌，动画 SHALL 从停留位置移动到出牌玩家对应弃牌/打牌区后消失，并由 mini 图作为历史牌显示；若有人通过吃、碰、招或踏要牌，动画 SHALL 从停留位置移动到要牌玩家对应凑牌区后消失，并由该手凑牌竖列显示。

@@ -46,6 +46,35 @@ The system SHALL calculate Shang Da Ren fu after a legal hu using the winning do
 - **WHEN** a winning decomposition contains `xx`, `xyz`, or the required final `xy`
 - **THEN** the system MUST count those doors as valid doors but MUST NOT add standalone fu for them
 
+### Requirement: 当前局操作福数显示值
+系统 SHALL 为每个玩家提供当前局已操作牌福数显示值。该值 SHALL 只统计当前局已经公开形成的操作牌组，包括吃、碰、招、踏以及其他按福数规则可计分的公开牌组；不统计尚未公开的手牌。普通吃牌句子 SHALL 计 1 福。计算口径 SHALL 尽量复用胡牌福数规则中的吃牌、颜色、招、踏和将牌倍数逻辑，使局中显示值与最终计福口径一致。
+
+#### Scenario: 新局操作福数归零
+- **WHEN** 新一局开始
+- **THEN** 每个玩家的当前局已操作牌福数显示值 MUST 为 0
+
+#### Scenario: 吃牌增加一福
+- **WHEN** 玩家通过吃形成普通 `xyz` 句子
+- **THEN** 该操作牌组 MUST 作为公开操作显示
+- **AND** 当前局已操作牌福数显示值 MUST 增加 1 福
+
+#### Scenario: 碰牌增加福数
+- **WHEN** 玩家通过碰形成 `xxx` 公开牌组
+- **THEN** 当前局已操作牌福数显示值 MUST 按该字颜色和将牌规则增加对应福数
+
+#### Scenario: 招牌增加福数
+- **WHEN** 玩家通过招形成 `xxxx`、`xxxxx` 或 `xxxxxx` 公开牌组
+- **THEN** 当前局已操作牌福数显示值 MUST 按基础刻子和招牌增量规则计算该公开牌组福数
+
+#### Scenario: 踏牌更新福数
+- **WHEN** 已招牌组通过踏增加牌数
+- **THEN** 当前局已操作牌福数显示值 MUST 重新反映踏牌后的公开牌组福数
+
+#### Scenario: 只统计当前玩家公开操作
+- **WHEN** 计算某个玩家头像下方的当前局已操作牌福数
+- **THEN** 系统 MUST 只统计该玩家自己的公开操作牌组
+- **AND** 不得混入其他玩家的公开操作牌组或弃牌
+
 ### Requirement: Hu Grade Classification
 The system SHALL classify each legal hu into the highest applicable grade among `场`, `大甲`, `小甲`, and `屁胡`.
 
@@ -87,4 +116,3 @@ The system SHALL convert the classified hu grade into points using a base score 
 #### Scenario: Scoring summary
 - **WHEN** the system resolves a legal hu
 - **THEN** the result MUST include total fu, itemized fu entries, hu grade, base score, point value, and whether jiang multipliers were applied
-

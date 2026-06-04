@@ -38,9 +38,11 @@ const {
   CARD_SOURCE_HEIGHT,
   HAND_STACK_SOURCE_STEP,
 } = await import(pathToFileURL(join(tempDir, 'layout.mjs')));
+const { default: TableRenderer } = await import(pathToFileURL(join(tempDir, 'renderer.mjs')));
 const { ASSET_MANIFEST, buildCardAtlasFrameMap } = await import(pathToFileURL(join(tempDir, 'assets.mjs')));
 const { createDeck, createSeats } = await import(pathToFileURL(join(tempDir, 'cards.mjs')));
 const { DEFAULT_RULES, PHASES } = await import(pathToFileURL(join(tempDir, 'rules.mjs')));
+const { calculateOperationFu } = await import(pathToFileURL(join(tempDir, 'evaluator.mjs')));
 
 runSelfChecks();
 
@@ -372,6 +374,14 @@ const layoutState = {
   ],
 };
 
+function takeCards(deck, keys) {
+  return keys.map((key) => {
+    const index = deck.findIndex((card) => card.key === key);
+    if (index < 0) throw new Error(`missing card ${key} in test deck`);
+    return deck.splice(index, 1)[0];
+  });
+}
+
 function intersects(a, b) {
   return !(
     a.x + a.width <= b.x
@@ -396,11 +406,50 @@ for (const [width, height] of [[568, 320], [667, 375], [844, 390], [932, 430], [
   const layout = new TableLayout(width, height).build(layoutState);
   const allRegions = layout.handCards.concat(
     layout.actionButtons,
-    layout.opponents,
-    [layout.muteButton, layout.prompt, layout.result, layout.discardArea, layout.meldArea]
+    Object.values(layout.playerFronts || {}),
+    Object.values(layout.unclaimedZones || {}),
+    Object.values(layout.claimedZones || {}),
+    Object.values(layout.seatStatusAreas || {}),
+    Object.values(layout.seatStatusAreas || {}).flatMap((area) => [area.avatar, area.totalScore, area.roundFu]),
+    [layout.muteButton, layout.topBar, layout.centerFocus, layout.prompt, layout.result, layout.actionArea, layout.actionModal]
   );
   for (const region of allRegions) {
     assertInBounds(region, width, height);
+  }
+
+  for (const side of ['bottom', 'left', 'top', 'right']) {
+    if (!layout.playerFronts[side] || !layout.unclaimedZones[side] || !layout.claimedZones[side]) {
+      throw new Error(`placement table layout should expose ${side} front and mini-card zones at ${width}x${height}`);
+    }
+    if (!layout.seatStatusAreas || !layout.seatStatusAreas[side]) {
+      throw new Error(`seat status area should exist for ${side} at ${width}x${height}`);
+    }
+    const queueCapacity = Math.floor(layout.unclaimedZones[side].width / (layout.miniCardWidth || 1));
+    if (queueCapacity < 3) {
+      throw new Error(`unclaimed mini-card queue should fit multiple cards at ${width}x${height}`);
+    }
+    const claimedCapacity = Math.floor(layout.claimedZones[side].width / (layout.miniCardWidth || 1));
+    if (claimedCapacity < 3) {
+      throw new Error(`claimed mini-card row should fit multiple cards at ${width}x${height}`);
+    }
+  }
+
+  const discardDirections = { bottom: 'rtl', left: 'ltr', top: 'ltr', right: 'rtl' };
+  const claimedDirections = { bottom: 'ltr', left: 'ltr', top: 'rtl', right: 'rtl' };
+  for (const side of Object.keys(discardDirections)) {
+    if (layout.unclaimedZones[side].direction !== discardDirections[side]) {
+      throw new Error(`discard direction mismatch for ${side} at ${width}x${height}`);
+    }
+    if (layout.claimedZones[side].direction !== claimedDirections[side]) {
+      throw new Error(`claimed direction mismatch for ${side} at ${width}x${height}`);
+    }
+  }
+
+  if (Math.abs((layout.seatStatusAreas.top.avatar.x + layout.seatStatusAreas.top.avatar.width / 2) - (width / 2)) > 1) {
+    throw new Error(`opposite avatar should be centered at top at ${width}x${height}`);
+  }
+  if (layout.seatStatusAreas.bottom.avatar.x > layout.safe + 1 || layout.seatStatusAreas.bottom.avatar.y < height / 2) {
+    throw new Error(`self avatar should stay near lower-left corner at ${width}x${height}`);
   }
 
   if (layout.handCards.length) {
@@ -463,11 +512,11 @@ for (const [width, height] of [[568, 320], [667, 375], [844, 390], [932, 430], [
   }
 
   if (width > height) {
-    const protectedRegions = layout.actionButtons.concat([layout.prompt, layout.meldArea]);
+    const protectedRegions = layout.actionButtons;
     for (let i = 0; i < protectedRegions.length; i++) {
       for (let j = i + 1; j < protectedRegions.length; j++) {
         if (intersects(protectedRegions[i], protectedRegions[j])) {
-          throw new Error(`landscape table regions overlap at ${width}x${height}`);
+          throw new Error(`modal action regions overlap at ${width}x${height}`);
         }
       }
     }
@@ -477,8 +526,212 @@ for (const [width, height] of [[568, 320], [667, 375], [844, 390], [932, 430], [
           throw new Error(`landscape hand overlaps controls at ${width}x${height}`);
         }
       }
+      if (layout.actionModal.visible && intersects(handCard, layout.actionModal)) {
+        throw new Error(`landscape hand overlaps action modal at ${width}x${height}`);
+      }
+    }
+    for (const handCard of layout.handCards) {
+      for (const claimedZone of Object.values(layout.claimedZones)) {
+        if (claimedZone.side === 'bottom' && intersects(handCard, claimedZone)) {
+          throw new Error(`bottom claimed mini cards should not cover hand cards at ${width}x${height}`);
+        }
+      }
     }
   }
+}
+
+const splitDeck = createDeck(DEFAULT_RULES);
+const splitSeats = createSeats(DEFAULT_RULES);
+splitSeats[0].hand = takeCards(splitDeck, [
+  'shang', 'shang', 'shang', 'shang',
+  'da', 'da', 'da',
+  'ren', 'ren', 'ren',
+  'kong', 'yi',
+  'fu',
+]);
+let splitLayout = new TableLayout(844, 390).build({
+  ...layoutState,
+  seats: splitSeats,
+  playerActions: [],
+});
+if (splitLayout.handColumns.length !== 4) {
+  throw new Error('hand split should create adjacent split, remainder, partial phrase and singles columns');
+}
+if (splitLayout.handColumns[0].cards.length !== 4 || splitLayout.handColumns[0].groups[0].key !== 'shang') {
+  throw new Error('hand split should move the most frequent word into its own first adjacent column');
+}
+if (splitLayout.handColumns[1].cards.length !== 6 || splitLayout.handColumns[1].groups.map((group) => group.key).join(',') !== 'da,ren') {
+  throw new Error('hand split should keep the <=6 remaining words in one phrase column');
+}
+if (!splitLayout.handColumns[3].singleCollection || splitLayout.handColumns[3].cards[0].key !== 'fu') {
+  throw new Error('single-word phrase groups should be collected into the last hand column');
+}
+if (!splitLayout.handColumns.every((column) => column.cards.length <= 6)) {
+  throw new Error('every hand column should contain at most six cards');
+}
+
+const collapsedDeck = createDeck(DEFAULT_RULES);
+const collapsedSeats = createSeats(DEFAULT_RULES);
+collapsedSeats[0].hand = takeCards(collapsedDeck, [
+  'da', 'da', 'da',
+  'ren', 'ren', 'ren',
+  'kong', 'yi',
+  'fu',
+]);
+splitLayout = new TableLayout(844, 390).build({
+  ...layoutState,
+  seats: collapsedSeats,
+  playerActions: [],
+});
+const columnIndexes = splitLayout.handColumns.map((_, index) => index);
+if (columnIndexes.join(',') !== '0,1,2' || splitLayout.handCards.some((card) => card.key === 'shang')) {
+  throw new Error('empty split columns should collapse while preserving remaining order');
+}
+
+const fuDeck = createDeck(DEFAULT_RULES);
+const operationFu = calculateOperationFu([
+  { type: 'chi', label: '吃', cards: takeCards(fuDeck, ['shang', 'da', 'ren']) },
+  { type: 'peng', label: '碰', key: 'da', cards: takeCards(fuDeck, ['da', 'da', 'da']) },
+  { type: 'zhao', label: '招', key: 'shang', cards: takeCards(fuDeck, ['shang', 'shang', 'shang', 'shang']) },
+], DEFAULT_RULES, { jiangPhraseId: 'sdr' });
+if (operationFu.totalFu !== 41 || operationFu.entries.find((entry) => entry.type === 'chi').fu !== 1) {
+  throw new Error('operation fu should include chi=1 and color/jiang scores for peng and zhao');
+}
+if (calculateOperationFu(createSeats(DEFAULT_RULES)[0].melds, DEFAULT_RULES).totalFu !== 0) {
+  throw new Error('new round operation fu should derive as zero from empty exposed melds');
+}
+
+function createFakeRenderContext() {
+  const calls = [];
+  return {
+    calls,
+    clearRect: (...args) => calls.push(['clearRect', args]),
+    fillRect: (...args) => calls.push(['fillRect', args]),
+    drawImage: (...args) => calls.push(['drawImage', args]),
+    beginPath: () => calls.push(['beginPath']),
+    moveTo: (...args) => calls.push(['moveTo', args]),
+    lineTo: (...args) => calls.push(['lineTo', args]),
+    quadraticCurveTo: (...args) => calls.push(['quadraticCurveTo', args]),
+    closePath: () => calls.push(['closePath']),
+    fill: () => calls.push(['fill']),
+    stroke: () => calls.push(['stroke']),
+    save: () => calls.push(['save']),
+    restore: () => calls.push(['restore']),
+    translate: (...args) => calls.push(['translate', args]),
+    rotate: (...args) => calls.push(['rotate', args]),
+    fillText: (...args) => calls.push(['fillText', args]),
+    measureText: (text) => ({ width: String(text || '').length * 7 }),
+    createLinearGradient: (...args) => {
+      calls.push(['createLinearGradient', args]);
+      return {
+        addColorStop() {},
+      };
+    },
+  };
+}
+
+const renderSeats = createSeats(DEFAULT_RULES);
+const renderDeck = createDeck(DEFAULT_RULES);
+renderSeats[0].hand = renderDeck.slice(0, DEFAULT_RULES.dealerHandSize);
+renderSeats[1].discards = renderDeck.slice(24, 29);
+renderSeats[2].discards = renderDeck.slice(29, 34);
+renderSeats[3].discards = renderDeck.slice(34, 39);
+renderSeats[0].melds = [{ label: '吃', cards: renderDeck.slice(39, 42) }];
+const renderer = new TableRenderer({
+  getImage(name) { return name === 'table' ? { id: 'table-image' } : null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+const directionRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+let miniPositions = [];
+directionRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size) => {
+  miniPositions.push({ x, cardWidth, size });
+};
+directionRenderer.drawMiniSequence({}, { x: 10, y: 5, width: 48, height: 20, direction: 'rtl' }, renderDeck.slice(0, 3), { miniCardWidth: 16, miniCardHeight: 20 });
+if (miniPositions.map((item) => item.x).join(',') !== '42,26,10') {
+  throw new Error('rtl mini-card rendering should place cards right-to-left with no gap');
+}
+miniPositions = [];
+directionRenderer.drawMiniSequence({}, { x: 10, y: 5, width: 48, height: 20, direction: 'ltr' }, renderDeck.slice(0, 3), { miniCardWidth: 16, miniCardHeight: 20 });
+if (miniPositions.map((item) => item.x).join(',') !== '10,26,42') {
+  throw new Error('ltr mini-card rendering should place cards left-to-right with no gap');
+}
+miniPositions = [];
+directionRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size) => {
+  miniPositions.push({ x, y, size });
+};
+directionRenderer.drawClaimedColumns(
+  {},
+  { x: 100, y: 20, width: 48, height: 120, direction: 'rtl' },
+  [{ cards: renderDeck.slice(0, 3) }, { cards: renderDeck.slice(3, 6) }],
+  { miniCardWidth: 16, miniCardHeight: 20 }
+);
+if (miniPositions.map((item) => `${item.x}:${item.y}`).join(',') !== '132:20,132:40,132:60,116:20,116:40,116:60') {
+  throw new Error('claimed melds should render each meld as one right-to-left vertical column with no gap');
+}
+miniPositions = [];
+directionRenderer.drawClaimedColumns(
+  {},
+  { x: 100, y: 20, width: 48, height: 120, direction: 'ltr' },
+  [{ cards: renderDeck.slice(0, 3) }, { cards: renderDeck.slice(3, 6) }],
+  { miniCardWidth: 16, miniCardHeight: 20 }
+);
+if (miniPositions.map((item) => `${item.x}:${item.y}`).join(',') !== '100:20,100:40,100:60,116:20,116:40,116:60') {
+  throw new Error('claimed melds should render each meld as one left-to-right vertical column with no gap');
+}
+const animationSize = directionRenderer.animationCardSize(new TableLayout(667, 375).build(layoutState));
+if (Math.abs((animationSize.width / animationSize.height) - (88 / 307)) > 0.01) {
+  throw new Error('big-card animation should preserve the big atlas card ratio');
+}
+if (!directionRenderer.shouldHoldRecentDiscard({
+  ...layoutState,
+  recentDiscard: { seat: 1, card: renderDeck[24] },
+  pendingActions: [{ type: 'chi', seat: 0 }],
+  playerActions: [],
+}, 1)) {
+  throw new Error('recent discard should remain at the player front while responses are pending');
+}
+renderer.layout = new TableLayout(667, 375);
+const fakeCtx = createFakeRenderContext();
+renderer.render(fakeCtx, {
+  ...layoutState,
+  seats: renderSeats,
+  deck: renderDeck.slice(42),
+  recentDiscard: { seat: 1, card: renderDeck[24] },
+  jiangCard: renderDeck[0],
+  jiangPhraseId: renderDeck[0].phraseId,
+  feedback: '渲染检查',
+});
+if (!renderer.lastLayout || !renderer.lastLayout.centerFocus || !renderer.lastLayout.seatPanels.bottom) {
+  throw new Error('renderer should keep the placement table layout after rendering');
+}
+if (!fakeCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === '渲染检查')) {
+  throw new Error('renderer should draw modal feedback in the placement layout');
+}
+if (!fakeCtx.calls.find((call) => call[0] === 'clearRect')) {
+  throw new Error('renderer smoke test should exercise canvas drawing');
+}
+if (!fakeCtx.calls.find((call) => call[0] === 'drawImage' && call[1][0] && call[1][0].id === 'table-image')) {
+  throw new Error('renderer should draw the table background image as the primary surface');
+}
+if (fakeCtx.calls.find((call) => call[0] === 'createLinearGradient')) {
+  throw new Error('renderer should not draw a generated table panel over the background');
+}
+if (fakeCtx.calls.find((call) => call[0] === 'fillRect')) {
+  throw new Error('renderer should not tint or cover the background image during normal play');
+}
+if (!renderer.animation || renderer.animation.card.id !== renderDeck[24].id) {
+  throw new Error('renderer should create a big-card animation for recent discard');
+}
+if (
+  renderer.animation.start.x === renderer.animation.end.x
+  && renderer.animation.start.y === renderer.animation.end.y
+) {
+  throw new Error('card animation should have distinct movement endpoints');
 }
 
 console.log('huapai checks passed');

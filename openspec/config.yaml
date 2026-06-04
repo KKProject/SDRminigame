@@ -8,6 +8,10 @@ schema: spec-driven
 #     Tech stack: TypeScript, React, Node.js
 #     We use conventional commits
 #     Domain: e-commerce platform
+context: |
+  项目文档语言要求：
+  后续 OpenSpec 相关的任务规划、proposal、design、spec、tasks、归档说明以及实现过程中的任务描述，默认都使用中文编写，方便项目维护者阅读。
+  只有在代码标识符、文件路径、命令、API 名称、既有英文术语或 OpenSpec 固定字段必须保留英文时，才使用英文。
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
@@ -18,3 +22,12 @@ schema: spec-driven
 #       - Always include a "Non-goals" section
 #     tasks:
 #       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - 默认使用中文编写 proposal 内容。
+  design:
+    - 默认使用中文编写 design 内容。
+  specs:
+    - 默认使用中文编写需求说明和场景描述；OpenSpec 标题格式和 MUST/SHALL 等规范词可按校验要求保留。
+  tasks:
+    - 默认使用中文编写任务分组和任务描述。

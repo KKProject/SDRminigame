@@ -1,4 +1,7 @@
-import TableLayout from './layout';
+import TableLayout, { CARD_ASPECT_RATIO } from './layout';
+import { calculateOperationFu } from './evaluator';
+
+const BIG_CARD_ASPECT_RATIO = 88 / 307;
 
 function roundRect(ctx, x, y, width, height, radius) {
   const r = Math.min(radius, width / 2, height / 2);
@@ -20,6 +23,9 @@ export default class TableRenderer {
     this.assets = assetLoader;
     this.layout = new TableLayout();
     this.lastLayout = null;
+    this.animation = null;
+    this.lastEventSignature = '';
+    this.lastDiscardEvent = null;
   }
 
   render(ctx, state) {
@@ -27,13 +33,16 @@ export default class TableRenderer {
     this.lastLayout = layout;
 
     ctx.clearRect(0, 0, layout.width, layout.height);
+    this.updateAnimation(state, layout);
     this.drawBackground(ctx, layout);
     this.drawHeader(ctx, state, layout);
-    this.drawOpponents(ctx, state, layout);
+    this.drawSeatStatuses(ctx, state, layout);
     this.drawDiscardArea(ctx, state, layout);
     this.drawMeldArea(ctx, state, layout);
-    this.drawPrompt(ctx, state, layout);
+    this.drawCenterFocus(ctx, state, layout);
     this.drawPlayerHand(ctx, state, layout);
+    this.drawCardAnimation(ctx, layout);
+    this.drawPrompt(ctx, state, layout);
     if (state.phase === 'result') this.drawResult(ctx, state, layout);
     this.drawButtons(ctx, state, layout);
   }
@@ -42,134 +51,364 @@ export default class TableRenderer {
     const table = this.assets.getImage('table');
     if (table) {
       ctx.drawImage(table, 0, 0, layout.width, layout.height);
-      ctx.fillStyle = 'rgba(10, 39, 32, 0.52)';
-      ctx.fillRect(0, 0, layout.width, layout.height);
       return;
     }
 
-    ctx.fillStyle = '#153f34';
+    ctx.fillStyle = '#24150f';
     ctx.fillRect(0, 0, layout.width, layout.height);
-    ctx.fillStyle = '#d9b56c';
-    ctx.fillRect(0, 0, layout.width, 4);
+    ctx.fillStyle = '#26395c';
+    ctx.fillRect(layout.safe, layout.safe, layout.width - layout.safe * 2, layout.height - layout.safe * 2);
+  }
+
+  drawTextShadow(ctx, text, x, y) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.58)';
+    ctx.fillText(text, x + 1, y + 1);
+    ctx.fillStyle = '#fff7dc';
+    ctx.fillText(text, x, y);
+  }
+
+  drawCenteredTextShadow(ctx, text, x, y) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.58)';
+    ctx.fillText(text, x + 1, y + 1);
+    ctx.fillStyle = '#fff7dc';
+    ctx.fillText(text, x, y);
+  }
+
+  drawLightText(ctx, text, x, y, maxWidth = 220) {
+    let output = String(text || '');
+    while (output.length > 1 && ctx.measureText(output).width > maxWidth) {
+      output = `${output.slice(0, -2)}…`;
+    }
+    this.drawTextShadow(ctx, output, x, y);
   }
 
   drawHeader(ctx, state, layout) {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
-    roundRect(ctx, layout.safe, layout.safe, 310, 34, 6);
-    ctx.fill();
-    ctx.fillStyle = '#fff7dc';
-    ctx.font = '16px Arial';
-    const dealer = state.seats[state.dealerSeat] ? state.seats[state.dealerSeat].name : '-';
-    const jiang = state.jiangCard ? `${state.jiangCard.phraseText}/${state.jiangCard.text}` : '-';
-    ctx.fillText(`上大人  庄:${dealer}  将:${jiang}  余:${state.deck.length}`, layout.safe + 10, layout.safe + 22);
-    this.drawButton(ctx, layout.muteButton, state.muted ? '静音' : '有声', true);
+    this.drawHudButton(ctx, layout.muteButton, state.muted ? '静' : '音');
   }
 
-  drawOpponents(ctx, state, layout) {
-    layout.opponents.forEach((area) => {
+  drawSeatStatuses(ctx, state, layout) {
+    const colors = ['#d94841', '#2f9e44', '#1971c2', '#f08c00'];
+    Object.values(layout.seatStatusAreas || {}).forEach((area) => {
       const seat = state.seats[area.seat];
-      const isCurrent = state.currentSeat === seat.id;
-      ctx.fillStyle = isCurrent ? 'rgba(255, 214, 102, 0.32)' : 'rgba(255, 255, 255, 0.14)';
-      roundRect(ctx, area.x, area.y, area.width, area.height, 6);
+      if (!seat) return;
+      const avatar = area.avatar;
+      ctx.fillStyle = colors[area.seat % colors.length];
+      roundRect(ctx, avatar.x, avatar.y, avatar.width, avatar.height, 3);
       ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.70)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
       ctx.fillStyle = '#fff7dc';
-      ctx.font = '14px Arial';
-      ctx.fillText(`${seat.name}${seat.isDealer ? ' 庄' : ''}`, area.x + 8, area.y + 20);
-      ctx.fillText(`${seat.hand.length} 张`, area.x + 8, area.y + 42);
-      if (area.height >= 60) {
-        ctx.fillText(`弃 ${seat.discards.length}`, area.x + 8, area.y + 60);
-      }
+      ctx.font = `${Math.max(13, Math.floor(avatar.height * 0.34))}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.fillText((seat.name || '?').slice(0, 1), avatar.x + avatar.width / 2, avatar.y + avatar.height / 2 + 5);
+
+      const totalScore = typeof seat.score === 'number' ? seat.score : 0;
+      const operationFu = calculateOperationFu(seat.melds || [], state.rules, {
+        jiangPhraseId: state.jiangPhraseId,
+      }).totalFu;
+      ctx.font = '12px Arial';
+      this.drawCenteredTextShadow(ctx, `${totalScore > 0 ? '+' : ''}${totalScore}`, area.totalScore.x + area.totalScore.width / 2, area.totalScore.y + 11);
+      this.drawCenteredTextShadow(ctx, `${operationFu}福`, area.roundFu.x + area.roundFu.width / 2, area.roundFu.y + 11);
+      ctx.textAlign = 'left';
     });
   }
 
+  drawSeatPanels(ctx) {
+    // Kept for compatibility with older smoke tests. Normal play uses no seat panels.
+  }
+
+  drawOpponents(ctx, state, layout) {
+    this.drawSeatPanels(ctx, state, layout);
+  }
+
   drawDiscardArea(ctx, state, layout) {
-    const area = layout.discardArea;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.13)';
-    roundRect(ctx, area.x, area.y, area.width, area.height, 8);
-    ctx.fill();
-
-    ctx.fillStyle = '#fff7dc';
-    ctx.font = '15px Arial';
-    ctx.fillText('弃牌区', area.x + 10, area.y + 24);
-
-    if (layout.isLandscape) {
-      state.seats.forEach((seat, seatIndex) => {
-        const col = seatIndex % 2;
-        const row = Math.floor(seatIndex / 2);
-        const laneWidth = area.width / 2;
-        const x = area.x + 10 + col * laneWidth;
-        const y = area.y + 30 + row * 28;
-        ctx.fillStyle = '#fff7dc';
-        ctx.font = '12px Arial';
-        ctx.fillText(seat.name, x, y + 16);
-        seat.discards.slice(-6).forEach((card, index) => {
-          this.drawTinyCard(ctx, card, x + 36 + index * 20, y);
-        });
-      });
-      if (state.recentDiscard) {
-        ctx.fillStyle = '#ffd666';
-        ctx.font = '13px Arial';
-        ctx.fillText(
-          `最近：${state.recentDiscard.card.text}`,
-          area.x + area.width - 70,
-          area.y + 24
-        );
-      }
-      return;
-    }
-
-    const recent = state.recentDiscard;
-    if (recent) {
-      this.drawCard(ctx, recent.card, area.x + area.width / 2 - 22, area.y + 36, 44, 64, true, false, 'small');
-      ctx.fillStyle = '#fff7dc';
-      ctx.font = '13px Arial';
-      ctx.fillText(`${state.seats[recent.seat].name} 打出`, area.x + area.width / 2 - 38, area.y + 128);
-    }
-
-    state.seats.forEach((seat, seatIndex) => {
-      const rowY = area.y + 30 + seatIndex * 26;
-      const cards = seat.discards.slice(-5);
-      cards.forEach((card, index) => {
-        this.drawTinyCard(ctx, card, area.x + 10 + index * 22, rowY);
-      });
+    Object.entries(layout.unclaimedZones || layout.discardZones).forEach(([, area]) => {
+      const seat = state.seats[area.seat];
+      if (!seat) return;
+      const hiddenId = this.shouldHoldRecentDiscard(state, area.seat)
+        ? state.recentDiscard.card.id
+        : null;
+      const cards = hiddenId
+        ? seat.discards.filter((card) => card.id !== hiddenId)
+        : seat.discards;
+      this.drawMiniSequence(ctx, area, cards.slice(-12), layout);
     });
   }
 
   drawMeldArea(ctx, state, layout) {
-    const player = state.seats[state.humanSeat];
-    const area = layout.meldArea;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
-    roundRect(ctx, area.x, area.y, area.width, area.height, 6);
-    ctx.fill();
-    ctx.fillStyle = '#fff7dc';
-    ctx.font = '14px Arial';
-    ctx.fillText('我的门前', area.x + 8, area.y + 20);
-
-    let x = area.x + 76;
-    player.melds.forEach((meld) => {
-      meld.cards.forEach((card) => {
-        this.drawTinyCard(ctx, card, x, area.y + 30);
-        x += 20;
-      });
-      ctx.fillStyle = '#ffd666';
-      ctx.fillText(meld.label, x + 2, area.y + 48);
-      x += 34;
+    Object.entries(layout.claimedZones || layout.meldZones).forEach(([, area]) => {
+      const seat = state.seats[area.seat];
+      if (!seat) return;
+      this.drawClaimedColumns(ctx, area, seat.melds, layout, state.rules);
     });
-    if (player.history && player.history.takeover) {
-      ctx.fillStyle = '#ffd666';
-      ctx.font = '13px Arial';
-      ctx.fillText(`接庄凑牌 ${player.history.takeoverOperations}/3 ${player.history.listening ? '已听' : ''}`, area.x + area.width - 150, area.y + 20);
+
+    const player = state.seats[state.humanSeat];
+    const area = layout.claimedZones ? layout.claimedZones.bottom : layout.meldZones.bottom;
+    if (player && player.history && player.history.takeover) {
+      ctx.font = '12px Arial';
+      this.drawLightText(ctx, `接庄 ${player.history.takeoverOperations}/3${player.history.listening ? ' 已听' : ''}`, area.x, area.y + area.height + 14, area.width);
     }
   }
 
   drawPrompt(ctx, state, layout) {
     const text = state.feedback || this.getPhaseText(state);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
-    roundRect(ctx, layout.prompt.x, layout.prompt.y, layout.prompt.width, layout.prompt.height, 6);
+    if (layout.actionModal && layout.actionModal.visible) {
+      this.drawActionModal(ctx, state, layout, text);
+      return;
+    }
+
+    ctx.font = layout.isLandscape ? '14px Arial' : '15px Arial';
+    this.drawLightText(ctx, text, layout.prompt.x + 10, layout.prompt.y + 20, layout.prompt.width - 20);
+  }
+
+  drawCenterFocus(ctx, state, layout) {
+    const area = layout.centerFocus;
+    ctx.font = '12px Arial';
+    const turnName = state.seats[state.currentSeat] ? state.seats[state.currentSeat].name : '-';
+    this.drawLightText(ctx, `行牌:${turnName}`, area.x, area.y + 18, 96);
+    if (state.jiangCard) {
+      this.drawCard(ctx, state.jiangCard, area.x + area.width - 28, area.y, 22, Math.round(22 / CARD_ASPECT_RATIO), true, false, 'mini');
+      this.drawLightText(ctx, '将', area.x + area.width - 48, area.y + 17, 18);
+    }
+  }
+
+  drawActionModal(ctx, state, layout, text) {
+    const area = layout.actionModal;
+    ctx.fillStyle = 'rgba(8, 14, 24, 0.72)';
+    roundRect(ctx, area.x, area.y, area.width, area.height, 8);
     ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 214, 102, 0.50)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
     ctx.fillStyle = '#fff7dc';
-    ctx.font = '15px Arial';
-    ctx.fillText(text, layout.prompt.x + 10, layout.prompt.y + 20);
+    ctx.font = '14px Arial';
+    this.fillClampedText(ctx, text, area.x + 12, area.y + 24, area.width - 24);
+  }
+
+  updateAnimation(state, layout) {
+    const event = this.getAnimationEvent(state);
+    const signature = event ? `${event.type}:${event.seat}:${event.card.id}` : '';
+    if (this.animation && this.animation.stage === 'hold-discard') {
+      this.updateHeldDiscardAnimation(state, layout);
+    }
+    if (!this.animation && this.lastDiscardEvent && !state.recentDiscard) {
+      const claim = this.findClaimedCard(state, this.lastDiscardEvent.card.id);
+      if (claim) {
+        this.animation = this.createCardAnimation(
+          `claim:${claim.seat}:${this.lastDiscardEvent.card.id}:${claim.meld.id}`,
+          this.lastDiscardEvent.card,
+          this.lastDiscardEvent.holdPosition || this.animationEndForSeat(this.lastDiscardEvent.seat, layout),
+          this.claimedAnimationEnd(claim.seat, layout),
+          'to-claimed',
+          360
+        );
+      }
+      this.lastDiscardEvent = null;
+    }
+
+    if (signature && signature !== this.lastEventSignature) {
+      const start = this.animationStartForSeat(event.seat, layout);
+      const end = this.animationEndForSeat(event.seat, layout);
+      const isDiscard = event.type === 'discard';
+      this.animation = this.createCardAnimation(
+        signature,
+        event.card,
+        start,
+        end,
+        isDiscard ? 'to-front' : 'to-front',
+        420
+      );
+      if (isDiscard) {
+        this.lastDiscardEvent = {
+          seat: event.seat,
+          card: event.card,
+          holdPosition: end,
+        };
+      }
+      this.lastEventSignature = signature;
+    } else if (!signature) {
+      this.lastEventSignature = '';
+    }
+  }
+
+  createCardAnimation(signature, card, start, end, stage, duration) {
+    return {
+      signature,
+      card,
+      start,
+      end,
+      stage,
+      startedAt: Date.now(),
+      duration,
+    };
+  }
+
+  updateHeldDiscardAnimation(state, layout) {
+    const event = this.lastDiscardEvent;
+    if (!event) {
+      this.animation = null;
+      return;
+    }
+
+    if (state.recentDiscard && state.recentDiscard.card.id === event.card.id) {
+      if (this.shouldHoldRecentDiscard(state, event.seat)) return;
+      this.animation = this.createCardAnimation(
+        `discard-zone:${event.seat}:${event.card.id}`,
+        event.card,
+        event.holdPosition || this.animationEndForSeat(event.seat, layout),
+        this.discardAnimationEnd(event.seat, layout),
+        'to-discard',
+        360
+      );
+      return;
+    }
+
+    const claim = this.findClaimedCard(state, event.card.id);
+    if (claim) {
+      this.animation = this.createCardAnimation(
+        `claim:${claim.seat}:${event.card.id}:${claim.meld.id}`,
+        event.card,
+        event.holdPosition || this.animationEndForSeat(event.seat, layout),
+        this.claimedAnimationEnd(claim.seat, layout),
+        'to-claimed',
+        360
+      );
+      this.lastDiscardEvent = null;
+      return;
+    }
+
+    this.animation = null;
+    this.lastDiscardEvent = null;
+  }
+
+  getAnimationEvent(state) {
+    if (state.drawnCard && typeof state.currentSeat === 'number') {
+      return { type: 'draw', seat: state.currentSeat, card: state.drawnCard };
+    }
+    if (state.recentDiscard) {
+      return { type: 'discard', seat: state.recentDiscard.seat, card: state.recentDiscard.card };
+    }
+    return null;
+  }
+
+  animationStartForSeat(seat, layout) {
+    const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
+    if (seat === 0) return { x: layout.width / 2 - cardWidth / 2, y: layout.height - cardHeight - 8 };
+    if (seat === 1) return { x: layout.width - cardWidth - 8, y: layout.height / 2 - cardHeight / 2 };
+    if (seat === 2) return { x: layout.width / 2 - cardWidth / 2, y: 8 };
+    return { x: 8, y: layout.height / 2 - cardHeight / 2 };
+  }
+
+  animationEndForSeat(seat, layout) {
+    const side = seat === 0 ? 'bottom' : (seat === 1 ? 'right' : (seat === 2 ? 'top' : 'left'));
+    const front = layout.playerFronts && layout.playerFronts[side];
+    const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
+    if (!front) return this.animationStartForSeat(seat, layout);
+    return {
+      x: front.x + front.width / 2 - cardWidth / 2,
+      y: front.y + front.height / 2 - cardHeight / 2,
+    };
+  }
+
+  animationCardSize(layout) {
+    const width = Math.max(34, Math.min(54, Math.floor(layout.height * 0.13), Math.floor(layout.cardWidth * 1.12)));
+    return {
+      width,
+      height: Math.round(width / BIG_CARD_ASPECT_RATIO),
+    };
+  }
+
+  discardAnimationEnd(seat, layout) {
+    const side = seat === 0 ? 'bottom' : (seat === 1 ? 'right' : (seat === 2 ? 'top' : 'left'));
+    const area = layout.unclaimedZones && layout.unclaimedZones[side];
+    const { width, height } = this.animationCardSize(layout);
+    if (!area) return this.animationEndForSeat(seat, layout);
+    return {
+      x: area.direction === 'rtl' ? area.x + area.width - width : area.x,
+      y: area.y + area.height / 2 - height / 2,
+    };
+  }
+
+  claimedAnimationEnd(seat, layout) {
+    const side = seat === 0 ? 'bottom' : (seat === 1 ? 'right' : (seat === 2 ? 'top' : 'left'));
+    const area = layout.claimedZones && layout.claimedZones[side];
+    const { width, height } = this.animationCardSize(layout);
+    if (!area) return this.animationEndForSeat(seat, layout);
+    return {
+      x: area.direction === 'rtl' ? area.x + area.width - width : area.x,
+      y: area.y,
+    };
+  }
+
+  shouldHoldRecentDiscard(state, sourceSeat) {
+    if (!state.recentDiscard || state.recentDiscard.seat !== sourceSeat) return false;
+    return Boolean(
+      (state.pendingActions && state.pendingActions.length)
+      || (state.playerActions && state.playerActions.some((action) => ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'].indexOf(action.type) >= 0))
+    );
+  }
+
+  findClaimedCard(state, cardId) {
+    for (let seatIndex = 0; seatIndex < state.seats.length; seatIndex++) {
+      const seat = state.seats[seatIndex];
+      const meld = (seat.melds || []).find((item) => (item.cards || []).some((card) => card.id === cardId));
+      if (meld) return { seat: seatIndex, meld };
+    }
+    return null;
+  }
+
+  drawCardAnimation(ctx, layout) {
+    if (!this.animation) return;
+    const elapsed = Date.now() - this.animation.startedAt;
+    const progress = Math.min(1, Math.max(0, elapsed / this.animation.duration));
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
+    const x = this.animation.start.x + (this.animation.end.x - this.animation.start.x) * eased;
+    const y = this.animation.start.y + (this.animation.end.y - this.animation.start.y) * eased;
+    this.drawCard(ctx, this.animation.card, x, y, cardWidth, cardHeight, true, false, 'big');
+    if (progress < 1) return;
+
+    if (this.animation.stage === 'to-front' && this.animation.signature.startsWith('discard:')) {
+      this.animation.stage = 'hold-discard';
+      this.animation.start = this.animation.end;
+      this.animation.startedAt = Date.now();
+      if (this.lastDiscardEvent) this.lastDiscardEvent.holdPosition = this.animation.end;
+      return;
+    }
+
+    this.animation = null;
+  }
+
+  drawMiniSequence(ctx, area, cards, layout) {
+    const cardWidth = layout.miniCardWidth || 16;
+    const cardHeight = layout.miniCardHeight || Math.round(cardWidth / CARD_ASPECT_RATIO);
+    const maxVisible = Math.max(0, Math.floor(area.width / cardWidth));
+    const visible = cards.slice(-maxVisible);
+    const direction = area.direction || 'ltr';
+    visible.forEach((card, index) => {
+      const x = direction === 'rtl'
+        ? area.x + area.width - cardWidth * (index + 1)
+        : area.x + index * cardWidth;
+      this.drawCard(ctx, card, x, area.y, cardWidth, cardHeight, true, false, 'mini');
+    });
+  }
+
+  drawClaimedColumns(ctx, area, melds, layout) {
+    const cardWidth = layout.miniCardWidth || 16;
+    const cardHeight = layout.miniCardHeight || Math.round(cardWidth / CARD_ASPECT_RATIO);
+    const maxColumns = Math.max(0, Math.floor(area.width / cardWidth));
+    const visible = (melds || []).slice(-maxColumns);
+    const direction = area.direction || 'ltr';
+    visible.forEach((meld, columnIndex) => {
+      const x = direction === 'rtl'
+        ? area.x + area.width - cardWidth * (columnIndex + 1)
+        : area.x + columnIndex * cardWidth;
+      (meld.cards || []).slice(0, Math.floor(area.height / cardHeight)).forEach((card, rowIndex) => {
+        this.drawCard(ctx, card, x, area.y + rowIndex * cardHeight, cardWidth, cardHeight, true, false, 'mini');
+      });
+    });
   }
 
   getPhaseText(state) {
@@ -306,7 +545,26 @@ export default class TableRenderer {
   }
 
   drawTinyCard(ctx, card, x, y) {
-    this.drawCard(ctx, card, x, y, 18, 24, true, false, 'small');
+    this.drawCard(ctx, card, x, y, 18, 22, true, false, 'mini');
+  }
+
+  drawCardZone(ctx, area, title, cards, layout) {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.10)';
+    roundRect(ctx, area.x, area.y, area.width, area.height, 6);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255, 247, 220, 0.74)';
+    ctx.font = '11px Arial';
+    ctx.fillText(title, area.x + 6, area.y + 14);
+
+    const cardWidth = layout.miniCardWidth || 16;
+    const cardHeight = layout.miniCardHeight || Math.round(cardWidth / CARD_ASPECT_RATIO);
+    const gap = 3;
+    const startX = area.x + 6;
+    const startY = area.y + area.height - cardHeight - 4;
+    const maxVisible = Math.max(0, Math.floor((area.width - 12) / (cardWidth + gap)));
+    cards.slice(-maxVisible).forEach((card, index) => {
+      this.drawCard(ctx, card, startX + index * (cardWidth + gap), startY, cardWidth, cardHeight, true, false, 'mini');
+    });
   }
 
   drawButton(ctx, button, label, compact = false) {
@@ -318,5 +576,27 @@ export default class TableRenderer {
     ctx.textAlign = 'center';
     ctx.fillText(label, button.x + button.width / 2, button.y + button.height / 2 + 5);
     ctx.textAlign = 'left';
+  }
+
+  drawHudButton(ctx, button, label) {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    roundRect(ctx, button.x, button.y, button.width, button.height, 6);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#fff7dc';
+    ctx.font = '12px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, button.x + button.width / 2, button.y + button.height / 2 + 5);
+    ctx.textAlign = 'left';
+  }
+
+  fillClampedText(ctx, text, x, y, maxWidth) {
+    let output = String(text || '');
+    while (output.length > 1 && ctx.measureText(output).width > maxWidth) {
+      output = `${output.slice(0, -2)}…`;
+    }
+    ctx.fillText(output, x, y);
   }
 }

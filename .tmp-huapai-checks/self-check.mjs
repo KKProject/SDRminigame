@@ -17,6 +17,7 @@ import {
 } from './rules.mjs';
 import {
   buildCircleLossResult,
+  calculateOperationFu,
   calculateHuScoring,
   dealOpeningHands,
   evaluateWin,
@@ -248,6 +249,13 @@ export function runSelfChecks() {
   assert(pointValueForGrade('屁胡', DEFAULT_RULES) === 1, 'pi hu should settle 1 point');
   assert(pointValueForGrade('小甲', DEFAULT_RULES) === 2, 'jia hands should settle 2 points');
   assert(pointValueForGrade('场', DEFAULT_RULES) === 4, 'chang should settle 4 points');
+  const operationScoring = calculateOperationFu([
+    { type: 'chi', label: '吃', cards: cardsFor(['shang', 'da', 'ren']) },
+    { type: 'peng', label: '碰', key: 'da', cards: cardsFor(['da', 'da', 'da']) },
+    { type: 'zhao', label: '招', key: 'shang', cards: cardsFor(['shang', 'shang', 'shang', 'shang']) },
+  ], DEFAULT_RULES, { jiangPhraseId: 'sdr' });
+  assert(operationScoring.entries.find((entry) => entry.type === 'chi').fu === 1, 'chi should count one operation fu');
+  assert(operationScoring.totalFu === 1 + 8 + 32, 'operation fu should score chi, peng, zhao and jiang multiplier');
 
   const layoutSeats = createSeats(DEFAULT_RULES, 0);
   layoutSeats[0].hand = cardsFor([
@@ -268,7 +276,7 @@ export function runSelfChecks() {
     phase: 'human-discard',
   });
   assert(Math.abs((layout.handCards[0].width / layout.handCards[0].height) - CARD_ASPECT_RATIO) < 0.015, 'hand cards should preserve atlas aspect ratio');
-  assert(layout.handColumns.length === DEFAULT_RULES.phrases.length, 'hand should expose one column per phrase');
+  assert(layout.handColumns.length > 0 && layout.handColumns.length < DEFAULT_RULES.phrases.length, 'hand should collapse empty phrase columns');
   assert(layout.handCards[0].phraseColumn === 0 && layout.handCards[layout.handCards.length - 1].phraseColumn === 6, 'hand cards should be ordered by phrase column');
   const shangCards = layout.handCards.filter((card) => card.key === 'shang');
   assert(shangCards.length === 2 && shangCards[0].stackIndex === 0 && shangCards[1].stackIndex === 1, 'identical cards should be adjacent in a stack');
@@ -281,10 +289,13 @@ export function runSelfChecks() {
   const firstPhraseCards = layout.handCards.filter((card) => card.phraseColumn === 0).sort((a, b) => a.stackIndex - b.stackIndex);
   assert(firstPhraseCards.every((card) => card.x === firstPhraseCards[0].x), 'same phrase cards should share one stack x position');
   assert(firstPhraseCards[1].y - firstPhraseCards[0].y === expectedStep, 'same phrase cards should use the scaled vertical offset');
-  const phraseBottoms = DEFAULT_RULES.phrases.map((phrase, phraseColumn) => {
-    const cards = layout.handCards.filter((card) => card.phraseColumn === phraseColumn).sort((a, b) => a.stackIndex - b.stackIndex);
-    return cards.length ? cards[cards.length - 1].y + cards[cards.length - 1].height : null;
-  }).filter((bottom) => bottom !== null);
+  const phraseBottoms = Object.keys(layout.handCards.reduce((columns, card) => {
+    columns[card.phraseColumn] = true;
+    return columns;
+  }, {})).map((phraseColumn) => {
+    const cards = layout.handCards.filter((card) => card.phraseColumn === Number(phraseColumn)).sort((a, b) => a.stackIndex - b.stackIndex);
+    return cards[cards.length - 1].y + cards[cards.length - 1].height;
+  });
   assert(phraseBottoms.every((bottom) => bottom === phraseBottoms[0]), 'phrase stacks should align to the same bottom edge');
   const renderer = new TableRenderer({});
   const handSpriteSizes = [];

@@ -454,6 +454,48 @@ function applyJiangMultiplier(amount, symbol, jiangPhraseId) {
   };
 }
 
+export function scoreOperationMeld(meld, rules = DEFAULT_RULES, context = {}) {
+  if (!meld || !Array.isArray(meld.cards) || !meld.cards.length) return null;
+  if (meld.type === 'chi') {
+    return {
+      type: 'chi',
+      key: meld.key || meld.cards[0].key,
+      text: meld.label || '吃',
+      baseFu: 1,
+      multiplier: 1,
+      fu: 1,
+      description: '吃牌句子',
+    };
+  }
+
+  const key = meld.key || meld.cards[0].key;
+  const symbols = createSymbolMap(rules);
+  const symbol = symbols[key] || meld.cards[0];
+  const base = cardColorBase(symbol);
+  const baseFu = base + Math.max(0, meld.cards.length - 3) * base;
+  const result = applyJiangMultiplier(baseFu, symbol, context.jiangPhraseId || null);
+  return {
+    type: meld.type || 'peng',
+    key,
+    text: symbol ? symbol.text : key,
+    baseFu,
+    multiplier: result.multiplier,
+    fu: result.amount,
+    description: `${symbol ? symbol.text : key}${meld.cards.length}张${meld.label || meld.type || '凑牌'}`,
+  };
+}
+
+export function calculateOperationFu(melds = [], rules = DEFAULT_RULES, context = {}) {
+  const entries = (melds || [])
+    .map((meld) => scoreOperationMeld(meld, rules, context))
+    .filter(Boolean);
+  return {
+    totalFu: entries.reduce((total, entry) => total + entry.fu, 0),
+    entries,
+    jiangPhraseId: context.jiangPhraseId || null,
+  };
+}
+
 function classifyHuGrade(doors, totalFu) {
   if (totalFu >= 44) return '场';
   if (totalFu >= 33 && totalFu <= 43) return '大甲';
