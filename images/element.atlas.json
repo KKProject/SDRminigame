@@ -1,0 +1,2232 @@
+{
+  "meta": {
+    "app": "ChatGPT semantic named atlas",
+    "image": "bcfa2b6b-09fb-4d83-8fa5-83d2081ef47e.dd26d(1).png",
+    "size": {
+      "w": 1281,
+      "h": 1021
+    },
+    "scale": "1",
+    "format": "RGBA8888",
+    "coordinate": "top-left origin",
+    "naming": "content-based semantic names; low-confidence items are kept conservative",
+    "note": "已按图片内容尽量重命名。部分旋转/重叠的中间牌面无法完全确认，已使用 low confidence 标记。"
+  },
+  "frames": {
+    "small":{
+      "tile_black_shou_small": {
+        "frame": {
+          "x": 363,
+          "y": 683,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "黑色寿-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 43
+      },
+      "tile_black_ren_small": {
+        "frame": {
+          "x": 455,
+          "y": 683,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "黑色仁-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 44
+      },
+      "tile_black_zi_small": {
+        "frame": {
+          "x": 547,
+          "y": 683,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "黑色子-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 45
+      },
+      "tile_black_sheng_small": {
+        "frame": {
+          "x": 639,
+          "y": 683,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "黑色生-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 46
+      },
+      "tile_black_tu_small": {
+        "frame": {
+          "x": 731,
+          "y": 683,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "黑色土-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 47
+      },
+      "tile_black_qian_small": {
+        "frame": {
+          "x": 823,
+          "y": 683,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "黑色千-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 48
+      },
+      "tile_black_ji_small": {
+        "frame": {
+          "x": 915,
+          "y": 683,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "黑色己-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 49
+      },
+      "tile_black_ren2_small": {
+        "frame": {
+          "x": 1007,
+          "y": 683,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "黑色人-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 50
+      },
+      "tile_green_lu_small": {
+        "frame": {
+          "x": 363,
+          "y": 796,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "绿色禄-小牌",
+        "category": "tile",
+        "confidence": "medium",
+        "originalIndex": 65
+      },
+      "tile_green_zuo_small": {
+        "frame": {
+          "x": 455,
+          "y": 796,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "绿色作-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 66
+      },
+      "tile_green_jiu_small": {
+        "frame": {
+          "x": 547,
+          "y": 796,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "绿色九-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 67
+      },
+      "tile_green_chuan_small": {
+        "frame": {
+          "x": 639,
+          "y": 796,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "绿色川-小牌",
+        "category": "tile",
+        "confidence": "medium",
+        "originalIndex": 68
+      },
+      "tile_green_shi_small": {
+        "frame": {
+          "x": 731,
+          "y": 796,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "绿色十-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 69
+      },
+      "tile_green_san_small": {
+        "frame": {
+          "x": 823,
+          "y": 796,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "绿色三-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 70
+      },
+      "tile_green_yi_small": {
+        "frame": {
+          "x": 915,
+          "y": 796,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "绿色乙-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 71
+      },
+      "tile_green_da_small": {
+        "frame": {
+          "x": 1007,
+          "y": 796,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "绿色大-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 72
+      },
+      "tile_red_fu_small": {
+        "frame": {
+          "x": 363,
+          "y": 909,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "红色福-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 82
+      },
+      "tile_red_jia_small": {
+        "frame": {
+          "x": 455,
+          "y": 909,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "红色佳-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 83
+      },
+      "tile_red_ba_small": {
+        "frame": {
+          "x": 547,
+          "y": 909,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "红色八-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 84
+      },
+      "tile_red_er_small": {
+        "frame": {
+          "x": 639,
+          "y": 909,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "红色二/尔-小牌",
+        "category": "tile",
+        "confidence": "medium",
+        "originalIndex": 85
+      },
+      "tile_red_qi_small": {
+        "frame": {
+          "x": 731,
+          "y": 909,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "红色七-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 86
+      },
+      "tile_red_hua_small": {
+        "frame": {
+          "x": 823,
+          "y": 909,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "红色化-小牌",
+        "category": "tile",
+        "confidence": "medium",
+        "originalIndex": 87
+      },
+      "tile_red_kong_small": {
+        "frame": {
+          "x": 915,
+          "y": 909,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "红色孔-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 88
+      },
+      "tile_red_shang_small": {
+        "frame": {
+          "x": 1007,
+          "y": 909,
+          "w": 88,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 108
+        },
+        "label": "红色上-小牌",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 89
+      }
+    },
+    "big":{
+      "tile_black_shou_vertical": {
+        "frame": {
+          "x": 339,
+          "y": 3,
+          "w": 88,
+          "h": 307
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 307
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 307
+        },
+        "label": "黑色寿-竖向",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 4
+      },
+      "tile_green_lu_vertical": {
+        "frame": {
+          "x": 431,
+          "y": 3,
+          "w": 88,
+          "h": 307
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 307
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 307
+        },
+        "label": "绿色禄-竖向",
+        "category": "tile",
+        "confidence": "medium",
+        "originalIndex": 5
+      },
+      "tile_red_fu_vertical": {
+        "frame": {
+          "x": 523,
+          "y": 3,
+          "w": 88,
+          "h": 307
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 307
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 307
+        },
+        "label": "红色福-竖向",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 6
+      },
+      "tile_black_ren_vertical": {
+        "frame": {
+          "x": 615,
+          "y": 3,
+          "w": 88,
+          "h": 307
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 307
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 307
+        },
+        "label": "黑色仁-竖向",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 7
+      },
+      "tile_green_zuo_vertical": {
+        "frame": {
+          "x": 707,
+          "y": 3,
+          "w": 88,
+          "h": 307
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 307
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 307
+        },
+        "label": "绿色作-竖向",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 8
+      },
+      "tile_red_jia_vertical": {
+        "frame": {
+          "x": 799,
+          "y": 3,
+          "w": 88,
+          "h": 307
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 307
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 307
+        },
+        "label": "红色佳-竖向",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 9
+      },
+      "tile_black_zi_vertical": {
+        "frame": {
+          "x": 891,
+          "y": 3,
+          "w": 88,
+          "h": 307
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 307
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 307
+        },
+        "label": "黑色子-竖向",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 10
+      },
+      "tile_green_jiu_vertical": {
+        "frame": {
+          "x": 983,
+          "y": 3,
+          "w": 88,
+          "h": 307
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 307
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 307
+        },
+        "label": "绿色九-竖向",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 11
+      },
+      "tile_red_ba_vertical": {
+        "frame": {
+          "x": 1075,
+          "y": 3,
+          "w": 88,
+          "h": 307
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 307
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 307
+        },
+        "label": "红色八-竖向",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 12
+      },
+      "tile_black_sheng_vertical": {
+        "frame": {
+          "x": 1167,
+          "y": 3,
+          "w": 88,
+          "h": 307
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 307
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 307
+        },
+        "label": "黑色生-竖向",
+        "category": "tile",
+        "confidence": "high",
+        "originalIndex": 13
+      },
+      "ui_right_jing_panel": {
+        "frame": {
+          "x": 1181,
+          "y": 313,
+          "w": 87,
+          "h": 108
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 87,
+          "h": 108
+        },
+        "sourceSize": {
+          "w": 87,
+          "h": 108
+        },
+        "label": "右侧精区域",
+        "category": "ui",
+        "confidence": "high",
+        "originalIndex": 14
+      },
+      "meld_red_horizontal_er": {
+        "frame": {
+          "x": 248,
+          "y": 315,
+          "w": 307,
+          "h": 88
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 307,
+          "h": 88
+        },
+        "sourceSize": {
+          "w": 307,
+          "h": 88
+        },
+        "label": "红色尔-横向",
+        "category": "meld",
+        "confidence": "low",
+        "originalIndex": 15
+      },
+      "meld_black_horizontal_tu": {
+        "frame": {
+          "x": 560,
+          "y": 315,
+          "w": 307,
+          "h": 88
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 307,
+          "h": 88
+        },
+        "sourceSize": {
+          "w": 307,
+          "h": 88
+        },
+        "label": "黑色土-横向",
+        "category": "meld",
+        "confidence": "low",
+        "originalIndex": 16
+      },
+      "meld_green_horizontal_shi": {
+        "frame": {
+          "x": 872,
+          "y": 315,
+          "w": 307,
+          "h": 88
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 307,
+          "h": 88
+        },
+        "sourceSize": {
+          "w": 307,
+          "h": 88
+        },
+        "label": "绿色十-横向",
+        "category": "meld",
+        "confidence": "low",
+        "originalIndex": 17
+      },
+      "tile_red_qi_vertical": {
+        "frame": {
+          "x": 122,
+          "y": 348,
+          "w": 88,
+          "h": 307
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 307
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 307
+        },
+        "label": "红色七-竖向",
+        "category": "tile",
+        "confidence": "medium",
+        "originalIndex": 20
+      },
+      "meld_black_horizontal_qian": {
+        "frame": {
+          "x": 215,
+          "y": 407,
+          "w": 307,
+          "h": 88
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 307,
+          "h": 88
+        },
+        "sourceSize": {
+          "w": 307,
+          "h": 88
+        },
+        "label": "黑色千-横向",
+        "category": "meld",
+        "confidence": "low",
+        "originalIndex": 21
+      },
+      "meld_red_horizontal_hua": {
+        "frame": {
+          "x": 527,
+          "y": 407,
+          "w": 307,
+          "h": 88
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 307,
+          "h": 88
+        },
+        "sourceSize": {
+          "w": 307,
+          "h": 88
+        },
+        "label": "红色化-横向",
+        "category": "meld",
+        "confidence": "low",
+        "originalIndex": 22
+      },
+      "meld_green_horizontal_yi": {
+        "frame": {
+          "x": 839,
+          "y": 407,
+          "w": 307,
+          "h": 88
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 307,
+          "h": 88
+        },
+        "sourceSize": {
+          "w": 307,
+          "h": 88
+        },
+        "label": "绿色乙-横向",
+        "category": "meld",
+        "confidence": "low",
+        "originalIndex": 23
+      },
+      "tile_green_xiao_vertical": {
+        "frame": {
+          "x": 95,
+          "y": 687,
+          "w": 88,
+          "h": 307
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 88,
+          "h": 307
+        },
+        "sourceSize": {
+          "w": 88,
+          "h": 307
+        },
+        "label": "绿色小-竖向",
+        "category": "tile",
+        "confidence": "medium",
+        "originalIndex": 56
+      },
+      "meld_green_horizontal_san": {
+        "frame": {
+          "x": 215,
+          "y": 499,
+          "w": 307,
+          "h": 88
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 307,
+          "h": 88
+        },
+        "sourceSize": {
+          "w": 307,
+          "h": 88
+        },
+        "label": "绿色三-横向",
+        "category": "meld",
+        "confidence": "low",
+        "originalIndex": 28
+      },
+      "meld_black_horizontal_ji": {
+        "frame": {
+          "x": 527,
+          "y": 499,
+          "w": 307,
+          "h": 88
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 307,
+          "h": 88
+        },
+        "sourceSize": {
+          "w": 307,
+          "h": 88
+        },
+        "label": "黑色己-横向",
+        "category": "meld",
+        "confidence": "low",
+        "originalIndex": 29
+      },
+      "meld_red_horizontal_kong": {
+        "frame": {
+          "x": 839,
+          "y": 499,
+          "w": 307,
+          "h": 88
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 307,
+          "h": 88
+        },
+        "sourceSize": {
+          "w": 307,
+          "h": 88
+        },
+        "label": "红色孔-横向",
+        "category": "meld",
+        "confidence": "low",
+        "originalIndex": 30
+      },
+      "meld_black_horizontal_ren2": {
+        "frame": {
+          "x": 215,
+          "y": 591,
+          "w": 307,
+          "h": 88
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 307,
+          "h": 88
+        },
+        "sourceSize": {
+          "w": 307,
+          "h": 88
+        },
+        "label": "黑色人-横向",
+        "category": "meld",
+        "confidence": "low",
+        "originalIndex": 34
+      },
+      "meld_green_horizontal_da": {
+        "frame": {
+          "x": 527,
+          "y": 591,
+          "w": 307,
+          "h": 88
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 307,
+          "h": 88
+        },
+        "sourceSize": {
+          "w": 307,
+          "h": 88
+        },
+        "label": "绿色大-横向",
+        "category": "meld",
+        "confidence": "low",
+        "originalIndex": 35
+      },
+      "meld_red_horizontal_shang": {
+        "frame": {
+          "x": 839,
+          "y": 591,
+          "w": 307,
+          "h": 88
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 307,
+          "h": 88
+        },
+        "sourceSize": {
+          "w": 307,
+          "h": 88
+        },
+        "label": "红色上-横向",
+        "category": "meld",
+        "confidence": "low",
+        "originalIndex": 36
+      },
+      "ui_left_play_panel_da": {
+        "frame": {
+          "x": 2,
+          "y": 2,
+          "w": 123,
+          "h": 343
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 123,
+          "h": 343
+        },
+        "sourceSize": {
+          "w": 123,
+          "h": 343
+        },
+        "label": "左侧打牌区域/打",
+        "category": "ui",
+        "confidence": "high",
+        "originalIndex": 1
+      }
+    },
+    "mini":{
+      "tile_black_mini_shou": {
+        "frame": {
+          "x": 1237,
+          "y": 503,
+          "w": 42,
+          "h": 38
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 42,
+          "h": 38
+        },
+        "sourceSize": {
+          "w": 42,
+          "h": 38
+        },
+        "label": "mini黑色寿",
+        "category": "mini_tile",
+        "confidence": "low",
+        "originalIndex": 31
+      },
+      "mini_tile_green_lu": {
+        "frame": {
+          "x": 1149,
+          "y": 603,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-绿禄",
+        "category": "mini_tile",
+        "confidence": "medium",
+        "originalIndex": 37
+      },
+      "mini_tile_black_sheng": {
+        "frame": {
+          "x": 1189,
+          "y": 603,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-黑生",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 38
+      },
+      "mini_tile_red_ba": {
+        "frame": {
+          "x": 1149,
+          "y": 647,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-红八",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 39
+      },
+      "mini_tile_green_xiao": {
+        "frame": {
+          "x": 1189,
+          "y": 647,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-绿小",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 40
+      },
+      "mini_tile_red_er_horizontal": {
+        "frame": {
+          "x": 1140,
+          "y": 691,
+          "w": 42,
+          "h": 38
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 42,
+          "h": 38
+        },
+        "sourceSize": {
+          "w": 42,
+          "h": 38
+        },
+        "label": "右侧小牌-红尔",
+        "category": "mini_tile",
+        "confidence": "medium",
+        "originalIndex": 57
+      },
+      "mini_tile_black_tu_horizontal": {
+        "frame": {
+          "x": 1184,
+          "y": 691,
+          "w": 42,
+          "h": 38
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 42,
+          "h": 38
+        },
+        "sourceSize": {
+          "w": 42,
+          "h": 38
+        },
+        "label": "右侧小牌-黑土",
+        "category": "mini_tile",
+        "confidence": "medium",
+        "originalIndex": 58
+      },
+      "mini_tile_red_fu": {
+        "frame": {
+          "x": 1098,
+          "y": 728,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-红福",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 59
+      },
+      "mini_tile_green_shi": {
+        "frame": {
+          "x": 1138,
+          "y": 731,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-绿十",
+        "category": "mini_tile",
+        "confidence": "medium",
+        "originalIndex": 60
+      },
+      "mini_tile_black_qian": {
+        "frame": {
+          "x": 1178,
+          "y": 731,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-黑千",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 61
+      },
+      "mini_tile_black_ren": {
+        "frame": {
+          "x": 1098,
+          "y": 772,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-黑仁",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 62
+      },
+      "mini_tile_red_qi": {
+        "frame": {
+          "x": 1138,
+          "y": 775,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-红七",
+        "category": "mini_tile",
+        "confidence": "medium",
+        "originalIndex": 63
+      },
+      "mini_tile_red_hua": {
+        "frame": {
+          "x": 1178,
+          "y": 775,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-红化",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 64
+      },
+      "mini_tile_green_zuo": {
+        "frame": {
+          "x": 1098,
+          "y": 816,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-绿作",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 73
+      },
+      "mini_tile_green_san": {
+        "frame": {
+          "x": 1138,
+          "y": 819,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-绿三",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 74
+      },
+      "mini_tile_green_yi": {
+        "frame": {
+          "x": 1178,
+          "y": 819,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-绿乙",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 75
+      },
+      "mini_tile_red_jia": {
+        "frame": {
+          "x": 1098,
+          "y": 860,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-红佳",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 76
+      },
+      "mini_tile_black_ji": {
+        "frame": {
+          "x": 1138,
+          "y": 863,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-黑己",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 77
+      },
+      "mini_tile_black_ren2": {
+        "frame": {
+          "x": 1178,
+          "y": 863,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-黑人",
+        "category": "mini_tile",
+        "confidence": "medium",
+        "originalIndex": 78
+      },
+      "mini_tile_black_zi": {
+        "frame": {
+          "x": 1098,
+          "y": 904,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-黑子",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 79
+      },
+      "mini_tile_red_kong": {
+        "frame": {
+          "x": 1138,
+          "y": 907,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-红孔",
+        "category": "mini_tile",
+        "confidence": "low",
+        "originalIndex": 80
+      },
+      "mini_tile_green_da": {
+        "frame": {
+          "x": 1178,
+          "y": 907,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-绿大",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 81
+      },
+      "mini_tile_green_jiu": {
+        "frame": {
+          "x": 1098,
+          "y": 948,
+          "w": 38,
+          "h": 42
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 38,
+          "h": 42
+        },
+        "sourceSize": {
+          "w": 38,
+          "h": 42
+        },
+        "label": "右侧小牌-绿九",
+        "category": "mini_tile",
+        "confidence": "high",
+        "originalIndex": 90
+      },
+      "mini_tile_red_shang_horizontal": {
+        "frame": {
+          "x": 1138,
+          "y": 951,
+          "w": 42,
+          "h": 38
+        },
+        "rotated": false,
+        "trimmed": false,
+        "spriteSourceSize": {
+          "x": 0,
+          "y": 0,
+          "w": 42,
+          "h": 38
+        },
+        "sourceSize": {
+          "w": 42,
+          "h": 38
+        },
+        "label": "右侧红色上",
+        "category": "mini_tile",
+        "confidence": "low",
+        "originalIndex": 91
+      }
+    },
+    
+    "ui_left_empty_yellow_panel": {
+      "frame": {
+        "x": 127,
+        "y": 2,
+        "w": 117,
+        "h": 337
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 337
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 337
+      },
+      "label": "左侧黄色空操作区",
+      "category": "ui",
+      "confidence": "medium",
+      "originalIndex": 2
+    },
+    "tile_back_green_vertical": {
+      "frame": {
+        "x": 247,
+        "y": 3,
+        "w": 88,
+        "h": 307
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 88,
+        "h": 307
+      },
+      "sourceSize": {
+        "w": 88,
+        "h": 307
+      },
+      "label": "绿色牌背-竖向",
+      "category": "back",
+      "confidence": "high",
+      "originalIndex": 3
+    },
+    "icon_jing_small": {
+      "frame": {
+        "x": 1184,
+        "y": 316,
+        "w": 28,
+        "h": 29
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 28,
+        "h": 29
+      },
+      "sourceSize": {
+        "w": 28,
+        "h": 29
+      },
+      "label": "精小标识",
+      "category": "icon",
+      "confidence": "high",
+      "originalIndex": 18
+    },
+    "ui_left_move_panel_ban": {
+      "frame": {
+        "x": 2,
+        "y": 347,
+        "w": 117,
+        "h": 337
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 117,
+        "h": 337
+      },
+      "sourceSize": {
+        "w": 117,
+        "h": 337
+      },
+      "label": "左侧搬牌区域/搬",
+      "category": "ui",
+      "confidence": "high",
+      "originalIndex": 19
+    },
+    "ui_right_jiang_panel": {
+      "frame": {
+        "x": 1148,
+        "y": 422,
+        "w": 87,
+        "h": 108
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 87,
+        "h": 108
+      },
+      "sourceSize": {
+        "w": 87,
+        "h": 108
+      },
+      "label": "右侧将区域",
+      "category": "ui",
+      "confidence": "high",
+      "originalIndex": 24
+    },
+    "icon_jiang_small": {
+      "frame": {
+        "x": 1151,
+        "y": 425,
+        "w": 28,
+        "h": 29
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 28,
+        "h": 29
+      },
+      "sourceSize": {
+        "w": 28,
+        "h": 29
+      },
+      "label": "将小标识",
+      "category": "icon",
+      "confidence": "high",
+      "originalIndex": 25
+    },
+    "icon_pu_small": {
+      "frame": {
+        "x": 1239,
+        "y": 425,
+        "w": 38,
+        "h": 35
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 38,
+        "h": 35
+      },
+      "sourceSize": {
+        "w": 38,
+        "h": 35
+      },
+      "label": "铺小标识",
+      "category": "icon",
+      "confidence": "medium",
+      "originalIndex": 26
+    },
+    "icon_kan_small": {
+      "frame": {
+        "x": 1239,
+        "y": 465,
+        "w": 38,
+        "h": 35
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 38,
+        "h": 35
+      },
+      "sourceSize": {
+        "w": 38,
+        "h": 35
+      },
+      "label": "砍小标识",
+      "category": "icon",
+      "confidence": "medium",
+      "originalIndex": 27
+    },
+    "tile_back_green_small": {
+      "frame": {
+        "x": 1150,
+        "y": 532,
+        "w": 66,
+        "h": 67
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 66,
+        "h": 67
+      },
+      "sourceSize": {
+        "w": 66,
+        "h": 67
+      },
+      "label": "绿色牌背-小",
+      "category": "back",
+      "confidence": "high",
+      "originalIndex": 32
+    },
+    "icon_he_small": {
+      "frame": {
+        "x": 1220,
+        "y": 543,
+        "w": 38,
+        "h": 42
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 38,
+        "h": 42
+      },
+      "sourceSize": {
+        "w": 38,
+        "h": 42
+      },
+      "label": "合牌小标识",
+      "category": "icon",
+      "confidence": "medium",
+      "originalIndex": 33
+    },
+    "ui_bottom_jing_panel": {
+      "frame": {
+        "x": 185,
+        "y": 681,
+        "w": 87,
+        "h": 308
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 87,
+        "h": 308
+      },
+      "sourceSize": {
+        "w": 87,
+        "h": 308
+      },
+      "label": "底部精区域",
+      "category": "ui",
+      "confidence": "high",
+      "originalIndex": 41
+    },
+    "ui_bottom_panel_top_line": {
+      "frame": {
+        "x": 274,
+        "y": 681,
+        "w": 86,
+        "h": 10
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 86,
+        "h": 10
+      },
+      "sourceSize": {
+        "w": 86,
+        "h": 10
+      },
+      "label": "底部面板顶部边线",
+      "category": "ui",
+      "confidence": "medium",
+      "originalIndex": 42
+    },
+    "icon_jing_bottom_small": {
+      "frame": {
+        "x": 188,
+        "y": 684,
+        "w": 28,
+        "h": 29
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 28,
+        "h": 29
+      },
+      "sourceSize": {
+        "w": 28,
+        "h": 29
+      },
+      "label": "底部精小标识",
+      "category": "icon",
+      "confidence": "high",
+      "originalIndex": 51
+    },
+    "ui_bottom_jiang_panel": {
+      "frame": {
+        "x": 276,
+        "y": 684,
+        "w": 83,
+        "h": 302
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 83,
+        "h": 302
+      },
+      "sourceSize": {
+        "w": 83,
+        "h": 302
+      },
+      "label": "底部将区域",
+      "category": "ui",
+      "confidence": "high",
+      "originalIndex": 52
+    },
+    "icon_jiang_bottom_small": {
+      "frame": {
+        "x": 276,
+        "y": 684,
+        "w": 29,
+        "h": 30
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 29,
+        "h": 30
+      },
+      "sourceSize": {
+        "w": 29,
+        "h": 30
+      },
+      "label": "底部将小标识",
+      "category": "icon",
+      "confidence": "high",
+      "originalIndex": 53
+    },
+    "icon_hu_button": {
+      "frame": {
+        "x": 1100,
+        "y": 684,
+        "w": 36,
+        "h": 40
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 36,
+        "h": 40
+      },
+      "sourceSize": {
+        "w": 36,
+        "h": 40
+      },
+      "label": "胡按钮",
+      "category": "icon",
+      "confidence": "high",
+      "originalIndex": 54
+    },
+    "tile_back_red_vertical": {
+      "frame": {
+        "x": 3,
+        "y": 687,
+        "w": 88,
+        "h": 307
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 88,
+        "h": 307
+      },
+      "sourceSize": {
+        "w": 88,
+        "h": 307
+      },
+      "label": "红色牌背-竖向",
+      "category": "back",
+      "confidence": "high",
+      "originalIndex": 55
+    },
+    "tile_back_red_small": {
+      "frame": {
+        "x": 1184,
+        "y": 953,
+        "w": 34,
+        "h": 38
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 34,
+        "h": 38
+      },
+      "sourceSize": {
+        "w": 34,
+        "h": 38
+      },
+      "label": "红色牌背-小",
+      "category": "back",
+      "confidence": "high",
+      "originalIndex": 92
+    }
+  }
+}
