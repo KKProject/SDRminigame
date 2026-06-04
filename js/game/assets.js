@@ -52,6 +52,24 @@ export const CARD_ATLAS_LABEL_KEYS = {
   子: 'zi',
 };
 
+export const CARD_ATLAS_SIZES = ['big', 'small', 'mini'];
+
+const CARD_ATLAS_SIZE_FALLBACKS = {
+  big: ['big', 'small', 'mini'],
+  small: ['small', 'big', 'mini'],
+  mini: ['mini', 'small', 'big'],
+};
+
+const CARD_ATLAS_SIZE_ALIASES = {
+  vertical: 'big',
+  default: 'big',
+};
+
+const CARD_ATLAS_KEY_SET = Object.keys(CARD_ATLAS_LABEL_KEYS).reduce((set, label) => {
+  set[CARD_ATLAS_LABEL_KEYS[label]] = true;
+  return set;
+}, {});
+
 function isValidFrame(frame) {
   return Boolean(
     frame
@@ -63,6 +81,15 @@ function isValidFrame(frame) {
   );
 }
 
+function normalizeSpriteSize(size = 'big') {
+  const normalized = CARD_ATLAS_SIZE_ALIASES[size] || size;
+  return CARD_ATLAS_SIZES.indexOf(normalized) >= 0 ? normalized : 'big';
+}
+
+function nameTokens(name = '') {
+  return String(name).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
 function keyFromLabel(label = '') {
   const chars = Object.keys(CARD_ATLAS_LABEL_KEYS);
   for (let i = 0; i < chars.length; i++) {
@@ -71,27 +98,114 @@ function keyFromLabel(label = '') {
   return null;
 }
 
-function frameNeedsClockwiseRotation(frame) {
+function keyFromFrameName(name = '') {
+  const tokens = nameTokens(name);
+  for (let i = 0; i < tokens.length; i++) {
+    if (CARD_ATLAS_KEY_SET[tokens[i]]) return tokens[i];
+  }
+  return null;
+}
+
+function sizeFromFrameName(name = '', groupSize = null) {
+  if (groupSize && CARD_ATLAS_SIZES.indexOf(groupSize) >= 0) return groupSize;
+  const tokens = nameTokens(name);
+  for (let i = 0; i < tokens.length; i++) {
+    if (CARD_ATLAS_SIZES.indexOf(tokens[i]) >= 0) return tokens[i];
+  }
+  return null;
+}
+
+function orientationFromFrameName(name = '') {
+  const tokens = nameTokens(name);
+  if (tokens.indexOf('hf') >= 0) return 'hf';
+  if (tokens.indexOf('hl') >= 0 || tokens.indexOf('horizontal') >= 0) return 'hl';
+  if (tokens.indexOf('v') >= 0 || tokens.indexOf('vertical') >= 0) return 'v';
+  return null;
+}
+
+function frameNeedsCounterClockwiseRotation(name = '') {
+  return orientationFromFrameName(name) === 'hf';
+}
+
+function frameNeedsClockwiseRotation(frame, name = '') {
+  const orientation = orientationFromFrameName(name);
+  if (orientation === 'hl') return true;
+  if (orientation === 'hf') return false;
+  if (orientation === 'v') return false;
   if (!frame || !frame.frame) return false;
   return (frame.label || '').indexOf('横向') >= 0 || frame.frame.w > frame.frame.h;
 }
 
+function enumerateAtlasFrames(atlas) {
+  if (!atlas || !atlas.frames) return [];
+  const entries = [];
+
+  Object.entries(atlas.frames).forEach(([name, frameOrGroup]) => {
+    if (isValidFrame(frameOrGroup)) {
+      entries.push({ name, frame: frameOrGroup, sizeGroup: null });
+      return;
+    }
+
+    if (CARD_ATLAS_SIZES.indexOf(name) < 0 || !frameOrGroup || typeof frameOrGroup !== 'object') return;
+    Object.entries(frameOrGroup).forEach(([frameName, frame]) => {
+      if (isValidFrame(frame)) entries.push({ name: frameName, frame, sizeGroup: name });
+    });
+  });
+
+  return entries;
+}
+
+function createFrameMatch(name, frame, size, source) {
+  return {
+    name,
+    frame,
+    size,
+    source,
+    rotateCw: frameNeedsClockwiseRotation(frame, name),
+    rotateCcw: frameNeedsCounterClockwiseRotation(name),
+  };
+}
+
+function ensureCardFrameBucket(map, key) {
+  if (!map[key]) {
+    map[key] = {
+      bySize: CARD_ATLAS_SIZES.reduce((sizes, size) => {
+        sizes[size] = [];
+        return sizes;
+      }, {}),
+      legacy: [],
+    };
+  }
+  return map[key];
+}
+
+function addSizedFrameMatch(map, key, match) {
+  if (!key || !match || !match.size) return;
+  const bucket = ensureCardFrameBucket(map, key);
+  bucket.bySize[match.size].push(match);
+}
+
+function addLegacyFrameMatch(map, key, match) {
+  if (!key || !match) return;
+  ensureCardFrameBucket(map, key).legacy.push(match);
+}
+
 export function buildCardAtlasFrameMap(atlas, targetCount = 24) {
   const map = {};
-  if (!atlas || !atlas.frames) return map;
+  const entries = enumerateAtlasFrames(atlas);
+  entries.forEach(({ name, frame, sizeGroup }) => {
+    const key = keyFromFrameName(name) || keyFromLabel(frame.label || name);
+    const size = sizeFromFrameName(name, sizeGroup);
+    if (key && size) addSizedFrameMatch(map, key, createFrameMatch(name, frame, size, 'name'));
+  });
 
   let mappedCount = 0;
-  Object.entries(atlas.frames).some(([name, frame]) => {
-    if (!isValidFrame(frame)) return;
+  entries.some(({ name, frame }) => {
     const key = keyFromLabel(frame.label || name);
     if (!key) return;
-    const isNewKey = !map[key];
-    if (!map[key]) map[key] = [];
-    map[key].push({
-      name,
-      frame,
-      rotateCw: frameNeedsClockwiseRotation(frame),
-    });
+    const bucket = ensureCardFrameBucket(map, key);
+    const isNewKey = bucket.legacy.length === 0;
+    addLegacyFrameMatch(map, key, createFrameMatch(name, frame, sizeFromFrameName(name) || 'big', 'label'));
     if (isNewKey) mappedCount += 1;
     return mappedCount >= targetCount;
   });
@@ -166,8 +280,12 @@ export default class AssetLoader {
   getAtlasFrame(name, frameName) {
     const atlas = this.atlases[name];
     if (!atlas || !atlas.frames) return null;
-    const frame = atlas.frames[frameName];
-    return isValidFrame(frame) ? frame : null;
+    if (isValidFrame(atlas.frames[frameName])) return atlas.frames[frameName];
+    for (let i = 0; i < CARD_ATLAS_SIZES.length; i++) {
+      const group = atlas.frames[CARD_ATLAS_SIZES[i]];
+      if (group && isValidFrame(group[frameName])) return group[frameName];
+    }
+    return null;
   }
 
   findFirstAtlasFrame(name, candidates = []) {
@@ -183,18 +301,40 @@ export default class AssetLoader {
     if (!config) return null;
     const image = this.getImage(config.image);
     const frame = this.getAtlasFrame(atlasName, frameName);
-    return image && frame ? { image, frame, name: frameName, rotateCw: Boolean(options.rotateCw) } : null;
+    return image && frame ? {
+      image,
+      frame,
+      name: frameName,
+      rotateCw: Boolean(options.rotateCw),
+      rotateCcw: Boolean(options.rotateCcw),
+    } : null;
   }
 
-  getCardFrame(card) {
-    const entries = this.cardAtlasFrames[card && card.key] || [];
-    return entries.length ? entries[0] : null;
+  getCardFrame(card, size = 'big') {
+    const bucket = this.cardAtlasFrames[card && card.key];
+    if (!bucket) return null;
+    const requestedSize = normalizeSpriteSize(size);
+    const fallbackSizes = CARD_ATLAS_SIZE_FALLBACKS[requestedSize] || CARD_ATLAS_SIZE_FALLBACKS.big;
+    for (let i = 0; i < fallbackSizes.length; i++) {
+      const matches = bucket.bySize && bucket.bySize[fallbackSizes[i]];
+      if (matches && matches.length) return matches[0];
+    }
+    return bucket.legacy && bucket.legacy.length ? bucket.legacy[0] : null;
   }
 
-  getCardSprite(card) {
-    const match = this.getCardFrame(card);
+  getCardSprite(card, size = 'big') {
+    const match = this.getCardFrame(card, size);
     if (!match) return null;
-    return this.getAtlasSprite(match.name, 'cards', { rotateCw: match.rotateCw });
+    const config = this.manifest.atlases && this.manifest.atlases.cards;
+    const image = config ? this.getImage(config.image) : null;
+    return image && match.frame ? {
+      image,
+      frame: match.frame,
+      name: match.name,
+      size: match.size,
+      rotateCw: match.rotateCw,
+      rotateCcw: match.rotateCcw,
+    } : null;
   }
 
   getCardBackFrame(size = 'vertical') {

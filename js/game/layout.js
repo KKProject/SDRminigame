@@ -1,9 +1,12 @@
 import { SCREEN_HEIGHT, SCREEN_WIDTH } from '../render';
 import { DEFAULT_RULES } from './rules';
 
-export const CARD_SOURCE_WIDTH = 88;
-export const CARD_SOURCE_HEIGHT = 307;
-export const CARD_ASPECT_RATIO = CARD_SOURCE_WIDTH / CARD_SOURCE_HEIGHT;
+export const HAND_CARD_SOURCE_WIDTH = 88;
+export const HAND_CARD_SOURCE_HEIGHT = 108;
+export const HAND_STACK_SOURCE_STEP = 40;
+export const CARD_SOURCE_WIDTH = HAND_CARD_SOURCE_WIDTH;
+export const CARD_SOURCE_HEIGHT = HAND_CARD_SOURCE_HEIGHT;
+export const CARD_ASPECT_RATIO = HAND_CARD_SOURCE_WIDTH / HAND_CARD_SOURCE_HEIGHT;
 
 function rect(x, y, width, height, meta = {}) {
   return { x, y, width, height, ...meta };
@@ -51,12 +54,15 @@ function maxPhraseCardCount(columns) {
 }
 
 function stackStepForHeight(cardHeight) {
-  return Math.max(1, Math.round(25 * (cardHeight / CARD_SOURCE_HEIGHT)));
+  return Math.max(1, Math.round(HAND_STACK_SOURCE_STEP * (cardHeight / HAND_CARD_SOURCE_HEIGHT)));
 }
 
 function computeAspectCardWidth(handWidth, columnCount, handAreaHeight, maxStack) {
   const horizontalLimit = Math.floor(handWidth / columnCount);
-  const verticalLimit = Math.floor((handAreaHeight * CARD_SOURCE_WIDTH) / (CARD_SOURCE_HEIGHT + 25 * Math.max(0, maxStack - 1)));
+  const verticalLimit = Math.floor(
+    (handAreaHeight * HAND_CARD_SOURCE_WIDTH)
+    / (HAND_CARD_SOURCE_HEIGHT + HAND_STACK_SOURCE_STEP * Math.max(0, maxStack - 1))
+  );
   return Math.max(8, Math.min(horizontalLimit, verticalLimit));
 }
 
@@ -126,7 +132,7 @@ export default class TableLayout {
     const columns = phraseColumnData(player.hand, state.rules || DEFAULT_RULES);
     const maxStack = maxPhraseCardCount(columns);
     const cardWidth = computeAspectCardWidth(handWidth, columnCount, handAreaHeight, maxStack);
-    const cardHeight = Math.floor(cardWidth / CARD_ASPECT_RATIO);
+    const cardHeight = Math.round(cardWidth / CARD_ASPECT_RATIO);
     const stackStep = stackStepForHeight(cardHeight);
     const handContentHeight = cardHeight + Math.max(0, maxStack - 1) * stackStep;
     const centeredHandWidth = cardWidth * columnCount;

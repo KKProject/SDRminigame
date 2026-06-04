@@ -1,12 +1,10 @@
-import './render';
+import { ctx } from './render';
 import AssetLoader from './game/assets';
 import HuapaiEngine from './game/engine';
 import TableInput from './game/input';
 import TableRenderer from './game/renderer';
 import DataBus from './databus';
 import Music from './runtime/music';
-
-const ctx = canvas.getContext('2d');
 
 GameGlobal.databus = new DataBus();
 GameGlobal.musicManager = new Music();

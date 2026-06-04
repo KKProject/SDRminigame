@@ -4,7 +4,12 @@ import AssetLoader, {
   buildCardAtlasFrameMap,
 } from './assets.mjs';
 import { createDeck, createSeats } from './cards.mjs';
-import TableLayout, { CARD_ASPECT_RATIO, CARD_SOURCE_HEIGHT } from './layout.mjs';
+import TableLayout, {
+  CARD_ASPECT_RATIO,
+  CARD_SOURCE_HEIGHT,
+  HAND_STACK_SOURCE_STEP,
+} from './layout.mjs';
+import TableRenderer from './renderer.mjs';
 import {
   ACTION_PRIORITY,
   DEFAULT_RULES,
@@ -63,16 +68,45 @@ function makeTestAtlas() {
     category,
     confidence,
   });
+  return {
+    meta: { image: 'element.png', size: { w: 1281, h: 1021 } },
+    frames: {
+      big: {
+        big_fu_v: frame(523, 3, 88, 307, '红色福-竖向'),
+        big_shang_hl: frame(839, 591, 307, 88, '红色上-横向', 'meld', 'low'),
+        big_da_hf: frame(880, 591, 307, 88, '绿色大-横向', 'meld', 'low'),
+        tile_back_green_vertical: frame(247, 3, 88, 307, '绿色牌背-竖向', 'back'),
+      },
+      small: {
+        small_shang_v: frame(300, 360, 88, 108, '红色上-小牌'),
+      },
+      mini: {
+        mini_shang_hl: frame(500, 360, 42, 38, 'mini红色上', 'mini_tile', 'low'),
+      },
+      tile_back_green_small: frame(1, 80, 30, 48, '绿色牌背-小', 'back'),
+    },
+  };
+}
+
+function makeLegacyTestAtlas() {
+  const frame = (x, y, w, h, label, category = 'tile', confidence = 'high') => ({
+    frame: { x, y, w, h },
+    rotated: false,
+    trimmed: false,
+    spriteSourceSize: { x: 0, y: 0, w, h },
+    sourceSize: { w, h },
+    label,
+    category,
+    confidence,
+  });
   const frames = {
-    tile_red_fu_vertical: frame(523, 3, 88, 307, '红色福-竖向'),
-    meld_red_horizontal_shang: frame(839, 591, 307, 88, '红色上-横向', 'meld', 'low'),
+    legacy_red_fu_vertical: frame(523, 3, 88, 307, '红色福-竖向'),
+    legacy_red_horizontal_shang: frame(839, 591, 307, 88, '红色上-横向', 'meld', 'low'),
   };
   for (let i = 3; i <= 24; i++) {
     frames[`test_unused_${i}`] = frame(i, i, 88, 307, `测试${i}`, 'ui', 'low');
   }
-  frames.meld_red_horizontal_hua = frame(527, 407, 307, 88, '红色化-横向', 'meld', 'low');
-  frames.tile_back_green_vertical = frame(247, 3, 88, 307, '绿色牌背-竖向', 'back');
-  frames.tile_back_green_small = frame(1, 80, 30, 48, '绿色牌背-小', 'back');
+  frames.legacy_red_horizontal_hua = frame(527, 407, 307, 88, '红色化-横向', 'meld', 'low');
   return {
     meta: { image: 'element.png', size: { w: 1281, h: 1021 } },
     frames,
@@ -92,17 +126,29 @@ export function runSelfChecks() {
   assert(ASSET_MANIFEST.atlases.cards.path === 'images/element.atlas.json', 'card atlas json path should be configured');
 
   const cardFrameMap = buildCardAtlasFrameMap(makeTestAtlas());
-  assert(cardFrameMap.fu[0].name === 'tile_red_fu_vertical', 'vertical card should map from first 24 labels');
-  assert(cardFrameMap.shang[0].name === 'meld_red_horizontal_shang' && cardFrameMap.shang[0].rotateCw, 'horizontal card should be marked for clockwise rotation');
-  assert(cardFrameMap.hua[0].name === 'meld_red_horizontal_hua', 'mapper should skip non-card labels and continue collecting card frames');
+  assert(cardFrameMap.fu.bySize.big[0].name === 'big_fu_v', 'big vertical card should map from nested key name');
+  assert(!cardFrameMap.fu.bySize.big[0].rotateCw, 'v card frame should not rotate');
+  assert(cardFrameMap.shang.bySize.big[0].name === 'big_shang_hl' && cardFrameMap.shang.bySize.big[0].rotateCw, 'hl card frame should rotate clockwise');
+  assert(cardFrameMap.da.bySize.big[0].name === 'big_da_hf' && cardFrameMap.da.bySize.big[0].rotateCcw, 'hf card frame should rotate counterclockwise');
+  assert(cardFrameMap.shang.bySize.small[0].name === 'small_shang_v', 'small card should map from nested key name');
+  assert(cardFrameMap.shang.bySize.mini[0].name === 'mini_shang_hl', 'mini card should map from nested key name');
+  const legacyFrameMap = buildCardAtlasFrameMap(makeLegacyTestAtlas());
+  assert(legacyFrameMap.fu.legacy[0].name === 'legacy_red_fu_vertical', 'legacy vertical card should map from first 24 labels');
+  assert(legacyFrameMap.shang.legacy[0].name === 'legacy_red_horizontal_shang' && legacyFrameMap.shang.legacy[0].rotateCw, 'legacy horizontal card should be marked for clockwise rotation');
+  assert(legacyFrameMap.hua.legacy[0].name === 'legacy_red_horizontal_hua', 'legacy mapper should skip non-card labels and continue collecting card frames');
   const assetLoader = new AssetLoader(ASSET_MANIFEST);
   assetLoader.setAtlas('cards', makeTestAtlas());
   assetLoader.images.cardFront = {};
   assetLoader.status.cardFront = 'ready';
-  assert(assetLoader.getAtlasFrame('cards', 'meld_red_horizontal_shang'), 'atlas frame lookup should work');
-  assert(assetLoader.getCardFrame({ key: 'shang' }).name === 'meld_red_horizontal_shang', 'card frame should use first-24 label mapping');
-  assert(assetLoader.getCardSprite({ key: 'shang' }).rotateCw, 'horizontal card sprite should carry rotation flag');
-  assert(assetLoader.getCardSprite({ key: 'fu' }), 'card sprite should resolve when image and frame are ready');
+  assert(assetLoader.getAtlasFrame('cards', 'big_shang_hl'), 'nested atlas frame lookup should work');
+  assert(assetLoader.getCardFrame({ key: 'shang' }, 'big').name === 'big_shang_hl', 'card frame should prefer requested big match');
+  assert(assetLoader.getCardFrame({ key: 'shang' }, 'small').name === 'small_shang_v', 'card frame should prefer requested small match');
+  assert(assetLoader.getCardFrame({ key: 'shang' }, 'mini').name === 'mini_shang_hl', 'card frame should prefer requested mini match');
+  assert(assetLoader.getCardFrame({ key: 'fu' }, 'small').name === 'big_fu_v', 'missing requested size should fall back to another size');
+  assert(assetLoader.getCardSprite({ key: 'shang' }, 'big').rotateCw, 'hl card sprite should carry clockwise rotation flag');
+  assert(assetLoader.getCardSprite({ key: 'da' }, 'big').rotateCcw, 'hf card sprite should carry counterclockwise rotation flag');
+  assert(!assetLoader.getCardSprite({ key: 'fu' }, 'big').rotateCw, 'v card sprite should not rotate');
+  assert(assetLoader.getCardSprite({ key: 'fu' }, 'small'), 'card sprite should resolve fallback size when image and frame are ready');
   assert(assetLoader.getCardBackFrame('vertical').name === 'tile_back_green_vertical', 'card back frame should resolve');
   assert(!assetLoader.getCardFrame({ key: 'unknown' }), 'missing card frame should return null for canvas fallback');
 
@@ -227,8 +273,8 @@ export function runSelfChecks() {
   const shangCards = layout.handCards.filter((card) => card.key === 'shang');
   assert(shangCards.length === 2 && shangCards[0].stackIndex === 0 && shangCards[1].stackIndex === 1, 'identical cards should be adjacent in a stack');
   const expectedLeft = Math.floor((layout.width - layout.cardWidth * layout.handColumns.length) / 2);
-  const expectedStep = Math.max(1, Math.round(25 * (layout.cardHeight / CARD_SOURCE_HEIGHT)));
-  assert(layout.cardStep === expectedStep, 'same-phrase stack offset should scale from the 25px source offset');
+  const expectedStep = Math.max(1, Math.round(HAND_STACK_SOURCE_STEP * (layout.cardHeight / CARD_SOURCE_HEIGHT)));
+  assert(layout.cardStep === expectedStep, 'same-phrase stack offset should scale from the small-card source offset');
   layout.handCards.forEach((card) => {
     assert(card.x === expectedLeft + card.phraseColumn * layout.cardWidth, 'phrase stacks should touch without gaps and stay centered');
   });
@@ -240,6 +286,14 @@ export function runSelfChecks() {
     return cards.length ? cards[cards.length - 1].y + cards[cards.length - 1].height : null;
   }).filter((bottom) => bottom !== null);
   assert(phraseBottoms.every((bottom) => bottom === phraseBottoms[0]), 'phrase stacks should align to the same bottom edge');
+  const renderer = new TableRenderer({});
+  const handSpriteSizes = [];
+  renderer.drawCard = (...args) => {
+    handSpriteSizes.push(args[8]);
+  };
+  renderer.drawPlayerHand({}, { selectedCardId: null }, layout);
+  assert(handSpriteSizes.length === layout.handCards.length, 'renderer should draw each hand card');
+  assert(handSpriteSizes.every((size) => size === 'small'), 'human hand cards should request small sprites');
 
   return true;
 }

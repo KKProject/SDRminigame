@@ -1,1 +1,1 @@
-export const SCREEN_WIDTH = 375; export const SCREEN_HEIGHT = 667;
+export const SCREEN_WIDTH = 375; export const SCREEN_HEIGHT = 667; export const DEVICE_PIXEL_RATIO = 2; export const RENDER_PIXEL_RATIO = 2; export const BACKING_STORE_WIDTH = 750; export const BACKING_STORE_HEIGHT = 1334;

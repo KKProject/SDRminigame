@@ -1,34 +1,4 @@
-# huapai-assets-audio Specification
-
-## Purpose
-TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose after archive.
-## Requirements
-### Requirement: Asset Manifest
-The system SHALL load visual assets through a manifest that maps semantic names such as table background, card back, card front, action button, result panel, and card atlas metadata to local project paths. The default table background SHALL be mapped to `images/background.jpg`, and the default card atlas image SHALL be mapped to `images/element.png`.
-
-#### Scenario: Manifest asset exists
-- **WHEN** a mapped image path loads successfully
-- **THEN** the renderer MUST use that image for the corresponding table element
-
-#### Scenario: Manifest asset is missing
-- **WHEN** a mapped image path is absent or fails to load
-- **THEN** the renderer MUST draw a canvas fallback for that element without blocking gameplay
-
-#### Scenario: Default background image exists
-- **WHEN** `images/background.jpg` loads successfully
-- **THEN** the renderer MUST use it as the table background
-
-#### Scenario: Card atlas metadata exists
-- **WHEN** the bundled atlas JSON for `images/element.png` is available
-- **THEN** the asset loader MUST expose named frame metadata including frame coordinates, source size, rotation flag, category, confidence, label, and nested atlas size group where provided
-
-#### Scenario: Nested card atlas groups exist
-- **WHEN** the bundled atlas JSON contains `frames.big`, `frames.small`, or `frames.mini`
-- **THEN** the asset loader MUST read card frames from those nested groups and associate each frame with its containing size group
-
-#### Scenario: Card atlas metadata is missing
-- **WHEN** the atlas JSON is absent, invalid, or lacks a requested frame
-- **THEN** the renderer MUST continue using the existing canvas card fallback without throwing runtime errors
+## MODIFIED Requirements
 
 ### Requirement: Card Face Rendering
 The system SHALL render every configured card face with readable symbol text, color, and special-card indicators whether or not card-face images exist. The system SHALL scan `images/element.png` atlas frame names for configured card keys and size/orientation tokens, support nested `big`, `small`, and `mini` frame groups, render matched card faces by cropping the atlas image from those named frames, and preserve the card artwork aspect ratio when drawing visible card faces.
@@ -92,21 +62,3 @@ The system SHALL render every configured card face with readable symbol text, co
 #### Scenario: Fallback card face is drawn
 - **WHEN** a canvas-rendered fallback card is used for a hand card
 - **THEN** the fallback card bounds MUST use the same aspect ratio as atlas-rendered hand cards
-
-### Requirement: Audio Cues
-The system SHALL play local audio cues for key events when configured, including discard, meld, win, draw result, button tap, and looping background music, and the default background music SHALL be loaded from `audio/bgmusic.mp3`.
-
-#### Scenario: Audio is disabled or unavailable
-- **WHEN** an audio file fails to load or playback is unavailable
-- **THEN** the system MUST continue gameplay silently without throwing runtime errors
-
-#### Scenario: Default background music exists
-- **WHEN** `audio/bgmusic.mp3` is available and audio is not muted
-- **THEN** the music manager MUST use it as the looping background music track
-
-### Requirement: Audio Controls
-The system SHALL expose an in-game mute state that applies to background music and sound effects.
-
-#### Scenario: Player toggles mute
-- **WHEN** the player taps the mute control
-- **THEN** the system MUST update the mute state and stop or resume future audio playback accordingly

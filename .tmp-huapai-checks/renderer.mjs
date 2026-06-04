@@ -1,4 +1,4 @@
-import TableLayout from './layout';
+import TableLayout from './layout.mjs';
 
 function roundRect(ctx, x, y, width, height, radius) {
   const r = Math.min(radius, width / 2, height / 2);

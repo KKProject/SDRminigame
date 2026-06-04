@@ -4,11 +4,24 @@
 TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose after archive.
 ## Requirements
 ### Requirement: Responsive Card Table Layout
-The system SHALL render the table, player hand, opponent hand backs, meld areas, discard areas, draw pile count, turn marker, prompts, and action area within the current canvas dimensions, with a landscape-first layout that uses the wider screen to show more player hand cards and table information at once. The human hand SHALL use phrase-grouped stacks: each configured phrase gets one visual stack, cards from the same phrase share that stack's x position, and identical characters remain adjacent within the stack.
+The system SHALL render the table, player hand, opponent hand backs, meld areas, discard areas, draw pile count, turn marker, prompts, and action area within the current canvas dimensions, with a landscape-first layout that uses the wider screen to show more player hand cards and table information at once. The human hand SHALL use phrase-grouped stacks: each configured phrase gets one visual stack, cards from the same phrase share that stack's x position, and identical characters remain adjacent within the stack. The canvas backing store SHALL be sized for the device render pixel ratio so the table, cards, and text remain sharp on high-density phone screens while layout dimensions remain logical pixels.
 
 #### Scenario: Canvas size changes at startup
 - **WHEN** the game starts on a device with a different screen size
 - **THEN** the layout MUST compute card sizes and positions that keep all primary controls visible and non-overlapping
+
+#### Scenario: High-density canvas is initialized
+- **WHEN** the game starts on a device whose pixel ratio is greater than 1
+- **THEN** the canvas backing-store width and height MUST be greater than the logical screen width and height by the configured render pixel ratio
+- **AND** exported layout dimensions MUST remain the logical screen width and height
+
+#### Scenario: Drawing context uses logical coordinates
+- **WHEN** the renderer draws the table after high-density canvas initialization
+- **THEN** the 2D context MUST be scaled by the render pixel ratio so drawing commands continue to use logical layout coordinates
+
+#### Scenario: Render pixel ratio is bounded
+- **WHEN** the device reports an unusually high pixel ratio
+- **THEN** the render pixel ratio MUST be capped to avoid excessive backing-store memory use
 
 #### Scenario: Landscape table is shown
 - **WHEN** the game starts on a landscape canvas
@@ -42,11 +55,11 @@ The system SHALL render the table, player hand, opponent hand backs, meld areas,
 
 #### Scenario: Phrase stack offset scales
 - **WHEN** cards overlap within a phrase stack
-- **THEN** each next card MUST be offset vertically by `25 * (cardHeight / 307)` rounded to the layout's pixel grid
+- **THEN** each next card MUST be offset vertically by `40 * (cardHeight / 108)` rounded to the layout's pixel grid
 
-#### Scenario: Card aspect ratio is preserved
-- **WHEN** the layout computes a visible hand card region
-- **THEN** the region's width and height MUST preserve the configured atlas card aspect ratio based on `88x307` within a small rounding tolerance
+#### Scenario: Hand card aspect ratio is preserved
+- **WHEN** the layout computes a visible human hand card region
+- **THEN** the region's width and height MUST preserve the small atlas card aspect ratio based on `88x108` within a small rounding tolerance
 
 ### Requirement: Human Card Selection
 The system SHALL let the human player select and deselect cards from their hand by touch, including cards positioned in phrase-grouped stacks with overlapped or adjacent copies.

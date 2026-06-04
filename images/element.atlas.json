@@ -9,12 +9,12 @@
     "scale": "1",
     "format": "RGBA8888",
     "coordinate": "top-left origin",
-    "naming": "content-based semantic names; low-confidence items are kept conservative",
-    "note": "已按图片内容尽量重命名。部分旋转/重叠的中间牌面无法完全确认，已使用 low confidence 标记。"
+    "naming": "card frames use size_key_orientation names: big|small|mini + card key + hl|v",
+    "note": "牌面帧已统一为 big_ren_v / small_ren_v / mini_ren_hl 形式；hl 表示水平左旋资源，使用时顺时针旋转 90 度，v 表示竖向资源。"
   },
   "frames": {
-    "small":{
-      "tile_black_shou_small": {
+    "small": {
+      "small_shou_v": {
         "frame": {
           "x": 363,
           "y": 683,
@@ -38,7 +38,7 @@
         "confidence": "high",
         "originalIndex": 43
       },
-      "tile_black_ren_small": {
+      "small_ren2_v": {
         "frame": {
           "x": 455,
           "y": 683,
@@ -62,7 +62,7 @@
         "confidence": "high",
         "originalIndex": 44
       },
-      "tile_black_zi_small": {
+      "small_zi_v": {
         "frame": {
           "x": 547,
           "y": 683,
@@ -86,7 +86,7 @@
         "confidence": "high",
         "originalIndex": 45
       },
-      "tile_black_sheng_small": {
+      "small_sheng_v": {
         "frame": {
           "x": 639,
           "y": 683,
@@ -110,7 +110,7 @@
         "confidence": "high",
         "originalIndex": 46
       },
-      "tile_black_tu_small": {
+      "small_tu_v": {
         "frame": {
           "x": 731,
           "y": 683,
@@ -134,7 +134,7 @@
         "confidence": "high",
         "originalIndex": 47
       },
-      "tile_black_qian_small": {
+      "small_qian_v": {
         "frame": {
           "x": 823,
           "y": 683,
@@ -158,7 +158,7 @@
         "confidence": "high",
         "originalIndex": 48
       },
-      "tile_black_ji_small": {
+      "small_ji_v": {
         "frame": {
           "x": 915,
           "y": 683,
@@ -182,7 +182,7 @@
         "confidence": "high",
         "originalIndex": 49
       },
-      "tile_black_ren2_small": {
+      "small_ren_v": {
         "frame": {
           "x": 1007,
           "y": 683,
@@ -206,7 +206,7 @@
         "confidence": "high",
         "originalIndex": 50
       },
-      "tile_green_lu_small": {
+      "small_lu_v": {
         "frame": {
           "x": 363,
           "y": 796,
@@ -230,7 +230,7 @@
         "confidence": "medium",
         "originalIndex": 65
       },
-      "tile_green_zuo_small": {
+      "small_zuo_v": {
         "frame": {
           "x": 455,
           "y": 796,
@@ -254,7 +254,7 @@
         "confidence": "high",
         "originalIndex": 66
       },
-      "tile_green_jiu_small": {
+      "small_jiu_v": {
         "frame": {
           "x": 547,
           "y": 796,
@@ -278,7 +278,7 @@
         "confidence": "high",
         "originalIndex": 67
       },
-      "tile_green_chuan_small": {
+      "small_xiao_v": {
         "frame": {
           "x": 639,
           "y": 796,
@@ -297,12 +297,12 @@
           "w": 88,
           "h": 108
         },
-        "label": "绿色川-小牌",
+        "label": "绿色小-小牌",
         "category": "tile",
         "confidence": "medium",
         "originalIndex": 68
       },
-      "tile_green_shi_small": {
+      "small_shi_v": {
         "frame": {
           "x": 731,
           "y": 796,
@@ -326,7 +326,7 @@
         "confidence": "high",
         "originalIndex": 69
       },
-      "tile_green_san_small": {
+      "small_san_v": {
         "frame": {
           "x": 823,
           "y": 796,
@@ -350,7 +350,7 @@
         "confidence": "high",
         "originalIndex": 70
       },
-      "tile_green_yi_small": {
+      "small_yi_v": {
         "frame": {
           "x": 915,
           "y": 796,
@@ -374,7 +374,7 @@
         "confidence": "high",
         "originalIndex": 71
       },
-      "tile_green_da_small": {
+      "small_da_v": {
         "frame": {
           "x": 1007,
           "y": 796,
@@ -398,7 +398,7 @@
         "confidence": "high",
         "originalIndex": 72
       },
-      "tile_red_fu_small": {
+      "small_fu_v": {
         "frame": {
           "x": 363,
           "y": 909,
@@ -422,7 +422,7 @@
         "confidence": "high",
         "originalIndex": 82
       },
-      "tile_red_jia_small": {
+      "small_jia_v": {
         "frame": {
           "x": 455,
           "y": 909,
@@ -446,7 +446,7 @@
         "confidence": "high",
         "originalIndex": 83
       },
-      "tile_red_ba_small": {
+      "small_ba_v": {
         "frame": {
           "x": 547,
           "y": 909,
@@ -470,7 +470,7 @@
         "confidence": "high",
         "originalIndex": 84
       },
-      "tile_red_er_small": {
+      "small_er_v": {
         "frame": {
           "x": 639,
           "y": 909,
@@ -494,7 +494,7 @@
         "confidence": "medium",
         "originalIndex": 85
       },
-      "tile_red_qi_small": {
+      "small_qi_v": {
         "frame": {
           "x": 731,
           "y": 909,
@@ -518,7 +518,7 @@
         "confidence": "high",
         "originalIndex": 86
       },
-      "tile_red_hua_small": {
+      "small_hua_v": {
         "frame": {
           "x": 823,
           "y": 909,
@@ -542,7 +542,7 @@
         "confidence": "medium",
         "originalIndex": 87
       },
-      "tile_red_kong_small": {
+      "small_kong_v": {
         "frame": {
           "x": 915,
           "y": 909,
@@ -566,7 +566,7 @@
         "confidence": "high",
         "originalIndex": 88
       },
-      "tile_red_shang_small": {
+      "small_shang_v": {
         "frame": {
           "x": 1007,
           "y": 909,
@@ -591,8 +591,8 @@
         "originalIndex": 89
       }
     },
-    "big":{
-      "tile_black_shou_vertical": {
+    "big": {
+      "big_shou_v": {
         "frame": {
           "x": 339,
           "y": 3,
@@ -616,7 +616,7 @@
         "confidence": "high",
         "originalIndex": 4
       },
-      "tile_green_lu_vertical": {
+      "big_lu_v": {
         "frame": {
           "x": 431,
           "y": 3,
@@ -640,7 +640,7 @@
         "confidence": "medium",
         "originalIndex": 5
       },
-      "tile_red_fu_vertical": {
+      "big_fu_v": {
         "frame": {
           "x": 523,
           "y": 3,
@@ -664,7 +664,7 @@
         "confidence": "high",
         "originalIndex": 6
       },
-      "tile_black_ren_vertical": {
+      "big_ren2_v": {
         "frame": {
           "x": 615,
           "y": 3,
@@ -688,7 +688,7 @@
         "confidence": "high",
         "originalIndex": 7
       },
-      "tile_green_zuo_vertical": {
+      "big_zuo_v": {
         "frame": {
           "x": 707,
           "y": 3,
@@ -712,7 +712,7 @@
         "confidence": "high",
         "originalIndex": 8
       },
-      "tile_red_jia_vertical": {
+      "big_jia_v": {
         "frame": {
           "x": 799,
           "y": 3,
@@ -736,7 +736,7 @@
         "confidence": "high",
         "originalIndex": 9
       },
-      "tile_black_zi_vertical": {
+      "big_zi_v": {
         "frame": {
           "x": 891,
           "y": 3,
@@ -760,7 +760,7 @@
         "confidence": "high",
         "originalIndex": 10
       },
-      "tile_green_jiu_vertical": {
+      "big_jiu_v": {
         "frame": {
           "x": 983,
           "y": 3,
@@ -784,7 +784,7 @@
         "confidence": "high",
         "originalIndex": 11
       },
-      "tile_red_ba_vertical": {
+      "big_ba_v": {
         "frame": {
           "x": 1075,
           "y": 3,
@@ -808,7 +808,7 @@
         "confidence": "high",
         "originalIndex": 12
       },
-      "tile_black_sheng_vertical": {
+      "big_sheng_v": {
         "frame": {
           "x": 1167,
           "y": 3,
@@ -856,7 +856,7 @@
         "confidence": "high",
         "originalIndex": 14
       },
-      "meld_red_horizontal_er": {
+      "big_er_hl": {
         "frame": {
           "x": 248,
           "y": 315,
@@ -880,7 +880,7 @@
         "confidence": "low",
         "originalIndex": 15
       },
-      "meld_black_horizontal_tu": {
+      "big_tu_hl": {
         "frame": {
           "x": 560,
           "y": 315,
@@ -904,7 +904,7 @@
         "confidence": "low",
         "originalIndex": 16
       },
-      "meld_green_horizontal_shi": {
+      "big_shi_hl": {
         "frame": {
           "x": 872,
           "y": 315,
@@ -928,7 +928,7 @@
         "confidence": "low",
         "originalIndex": 17
       },
-      "tile_red_qi_vertical": {
+      "big_qi_v": {
         "frame": {
           "x": 122,
           "y": 348,
@@ -952,7 +952,7 @@
         "confidence": "medium",
         "originalIndex": 20
       },
-      "meld_black_horizontal_qian": {
+      "big_qian_hl": {
         "frame": {
           "x": 215,
           "y": 407,
@@ -976,7 +976,7 @@
         "confidence": "low",
         "originalIndex": 21
       },
-      "meld_red_horizontal_hua": {
+      "big_hua_hl": {
         "frame": {
           "x": 527,
           "y": 407,
@@ -1000,7 +1000,7 @@
         "confidence": "low",
         "originalIndex": 22
       },
-      "meld_green_horizontal_yi": {
+      "big_yi_hl": {
         "frame": {
           "x": 839,
           "y": 407,
@@ -1024,7 +1024,7 @@
         "confidence": "low",
         "originalIndex": 23
       },
-      "tile_green_xiao_vertical": {
+      "big_xiao_v": {
         "frame": {
           "x": 95,
           "y": 687,
@@ -1048,7 +1048,7 @@
         "confidence": "medium",
         "originalIndex": 56
       },
-      "meld_green_horizontal_san": {
+      "big_san_hl": {
         "frame": {
           "x": 215,
           "y": 499,
@@ -1072,7 +1072,7 @@
         "confidence": "low",
         "originalIndex": 28
       },
-      "meld_black_horizontal_ji": {
+      "big_ji_hl": {
         "frame": {
           "x": 527,
           "y": 499,
@@ -1096,7 +1096,7 @@
         "confidence": "low",
         "originalIndex": 29
       },
-      "meld_red_horizontal_kong": {
+      "big_kong_hl": {
         "frame": {
           "x": 839,
           "y": 499,
@@ -1120,7 +1120,7 @@
         "confidence": "low",
         "originalIndex": 30
       },
-      "meld_black_horizontal_ren2": {
+      "big_ren_hl": {
         "frame": {
           "x": 215,
           "y": 591,
@@ -1144,7 +1144,7 @@
         "confidence": "low",
         "originalIndex": 34
       },
-      "meld_green_horizontal_da": {
+      "big_da_hl": {
         "frame": {
           "x": 527,
           "y": 591,
@@ -1168,7 +1168,7 @@
         "confidence": "low",
         "originalIndex": 35
       },
-      "meld_red_horizontal_shang": {
+      "big_shang_hl": {
         "frame": {
           "x": 839,
           "y": 591,
@@ -1217,8 +1217,8 @@
         "originalIndex": 1
       }
     },
-    "mini":{
-      "tile_black_mini_shou": {
+    "mini": {
+      "mini_shou_hl": {
         "frame": {
           "x": 1237,
           "y": 503,
@@ -1242,7 +1242,7 @@
         "confidence": "low",
         "originalIndex": 31
       },
-      "mini_tile_green_lu": {
+      "mini_lu_v": {
         "frame": {
           "x": 1149,
           "y": 603,
@@ -1266,7 +1266,7 @@
         "confidence": "medium",
         "originalIndex": 37
       },
-      "mini_tile_black_sheng": {
+      "mini_sheng_v": {
         "frame": {
           "x": 1189,
           "y": 603,
@@ -1290,7 +1290,7 @@
         "confidence": "high",
         "originalIndex": 38
       },
-      "mini_tile_red_ba": {
+      "mini_ba_v": {
         "frame": {
           "x": 1149,
           "y": 647,
@@ -1314,7 +1314,7 @@
         "confidence": "high",
         "originalIndex": 39
       },
-      "mini_tile_green_xiao": {
+      "mini_xiao_v": {
         "frame": {
           "x": 1189,
           "y": 647,
@@ -1338,7 +1338,7 @@
         "confidence": "high",
         "originalIndex": 40
       },
-      "mini_tile_red_er_horizontal": {
+      "mini_er_hl": {
         "frame": {
           "x": 1140,
           "y": 691,
@@ -1362,7 +1362,7 @@
         "confidence": "medium",
         "originalIndex": 57
       },
-      "mini_tile_black_tu_horizontal": {
+      "mini_tu_hl": {
         "frame": {
           "x": 1184,
           "y": 691,
@@ -1386,7 +1386,7 @@
         "confidence": "medium",
         "originalIndex": 58
       },
-      "mini_tile_red_fu": {
+      "mini_fu_v": {
         "frame": {
           "x": 1098,
           "y": 728,
@@ -1410,7 +1410,7 @@
         "confidence": "high",
         "originalIndex": 59
       },
-      "mini_tile_green_shi": {
+      "mini_shi_v": {
         "frame": {
           "x": 1138,
           "y": 731,
@@ -1434,7 +1434,7 @@
         "confidence": "medium",
         "originalIndex": 60
       },
-      "mini_tile_black_qian": {
+      "mini_qian_v": {
         "frame": {
           "x": 1178,
           "y": 731,
@@ -1458,7 +1458,7 @@
         "confidence": "high",
         "originalIndex": 61
       },
-      "mini_tile_black_ren": {
+      "mini_ren2_v": {
         "frame": {
           "x": 1098,
           "y": 772,
@@ -1482,7 +1482,7 @@
         "confidence": "high",
         "originalIndex": 62
       },
-      "mini_tile_red_qi": {
+      "mini_qi_v": {
         "frame": {
           "x": 1138,
           "y": 775,
@@ -1506,7 +1506,7 @@
         "confidence": "medium",
         "originalIndex": 63
       },
-      "mini_tile_red_hua": {
+      "mini_hua_v": {
         "frame": {
           "x": 1178,
           "y": 775,
@@ -1530,7 +1530,7 @@
         "confidence": "high",
         "originalIndex": 64
       },
-      "mini_tile_green_zuo": {
+      "mini_zuo_v": {
         "frame": {
           "x": 1098,
           "y": 816,
@@ -1554,7 +1554,7 @@
         "confidence": "high",
         "originalIndex": 73
       },
-      "mini_tile_green_san": {
+      "mini_san_v": {
         "frame": {
           "x": 1138,
           "y": 819,
@@ -1578,7 +1578,7 @@
         "confidence": "high",
         "originalIndex": 74
       },
-      "mini_tile_green_yi": {
+      "mini_yi_v": {
         "frame": {
           "x": 1178,
           "y": 819,
@@ -1602,7 +1602,7 @@
         "confidence": "high",
         "originalIndex": 75
       },
-      "mini_tile_red_jia": {
+      "mini_jia_v": {
         "frame": {
           "x": 1098,
           "y": 860,
@@ -1626,7 +1626,7 @@
         "confidence": "high",
         "originalIndex": 76
       },
-      "mini_tile_black_ji": {
+      "mini_ji_v": {
         "frame": {
           "x": 1138,
           "y": 863,
@@ -1650,7 +1650,7 @@
         "confidence": "high",
         "originalIndex": 77
       },
-      "mini_tile_black_ren2": {
+      "mini_ren_v": {
         "frame": {
           "x": 1178,
           "y": 863,
@@ -1674,7 +1674,7 @@
         "confidence": "medium",
         "originalIndex": 78
       },
-      "mini_tile_black_zi": {
+      "mini_zi_v": {
         "frame": {
           "x": 1098,
           "y": 904,
@@ -1698,7 +1698,7 @@
         "confidence": "high",
         "originalIndex": 79
       },
-      "mini_tile_red_kong": {
+      "mini_kong_v": {
         "frame": {
           "x": 1138,
           "y": 907,
@@ -1722,7 +1722,7 @@
         "confidence": "low",
         "originalIndex": 80
       },
-      "mini_tile_green_da": {
+      "mini_da_v": {
         "frame": {
           "x": 1178,
           "y": 907,
@@ -1746,7 +1746,7 @@
         "confidence": "high",
         "originalIndex": 81
       },
-      "mini_tile_green_jiu": {
+      "mini_jiu_v": {
         "frame": {
           "x": 1098,
           "y": 948,
@@ -1770,7 +1770,7 @@
         "confidence": "high",
         "originalIndex": 90
       },
-      "mini_tile_red_shang_horizontal": {
+      "mini_shang_hl": {
         "frame": {
           "x": 1138,
           "y": 951,
@@ -1795,7 +1795,6 @@
         "originalIndex": 91
       }
     },
-    
     "ui_left_empty_yellow_panel": {
       "frame": {
         "x": 127,

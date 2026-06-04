@@ -1,8 +1,5 @@
-# huapai-assets-audio Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose after archive.
-## Requirements
 ### Requirement: Asset Manifest
 The system SHALL load visual assets through a manifest that maps semantic names such as table background, card back, card front, action button, result panel, and card atlas metadata to local project paths. The default table background SHALL be mapped to `images/background.jpg`, and the default card atlas image SHALL be mapped to `images/element.png`.
 
@@ -38,12 +35,8 @@ The system SHALL render every configured card face with readable symbol text, co
 - **THEN** the asset loader MUST map that frame to the matching card key and size
 
 #### Scenario: Big card atlas face is requested
-- **WHEN** the renderer requests a normal non-hand card sprite for a card key
+- **WHEN** the renderer requests a normal hand-card sprite for a card key
 - **THEN** the asset loader MUST prefer the matching `big` atlas frame for that card key
-
-#### Scenario: Human hand small card atlas face is requested
-- **WHEN** the renderer draws a visible human hand card
-- **THEN** the renderer MUST request the matching `small` atlas frame for that card key
 
 #### Scenario: Small card atlas face is requested
 - **WHEN** the renderer requests a compact table, discard, or meld sprite for a card key
@@ -92,21 +85,3 @@ The system SHALL render every configured card face with readable symbol text, co
 #### Scenario: Fallback card face is drawn
 - **WHEN** a canvas-rendered fallback card is used for a hand card
 - **THEN** the fallback card bounds MUST use the same aspect ratio as atlas-rendered hand cards
-
-### Requirement: Audio Cues
-The system SHALL play local audio cues for key events when configured, including discard, meld, win, draw result, button tap, and looping background music, and the default background music SHALL be loaded from `audio/bgmusic.mp3`.
-
-#### Scenario: Audio is disabled or unavailable
-- **WHEN** an audio file fails to load or playback is unavailable
-- **THEN** the system MUST continue gameplay silently without throwing runtime errors
-
-#### Scenario: Default background music exists
-- **WHEN** `audio/bgmusic.mp3` is available and audio is not muted
-- **THEN** the music manager MUST use it as the looping background music track
-
-### Requirement: Audio Controls
-The system SHALL expose an in-game mute state that applies to background music and sound effects.
-
-#### Scenario: Player toggles mute
-- **WHEN** the player taps the mute control
-- **THEN** the system MUST update the mute state and stop or resume future audio playback accordingly
