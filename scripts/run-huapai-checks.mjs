@@ -695,6 +695,94 @@ if (!directionRenderer.shouldHoldRecentDiscard({
 }, 1)) {
   throw new Error('recent discard should remain at the player front while responses are pending');
 }
+const discardResolutionLayout = new TableLayout(667, 375).build(layoutState);
+const pendingDiscardCard = renderDeck[24];
+const pendingDiscardState = {
+  ...layoutState,
+  seats: createSeats(DEFAULT_RULES),
+  recentDiscard: { seat: 1, card: pendingDiscardCard },
+  pendingActions: [{ type: 'chi', seat: 0 }],
+  playerActions: [{ type: 'chi', seat: 0 }, { type: 'pass', seat: 0 }],
+  phase: PHASES.HUMAN_RESPONSE,
+};
+pendingDiscardState.seats[1].discards = [pendingDiscardCard];
+const pendingDiscardRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+pendingDiscardRenderer.updateAnimation(pendingDiscardState, discardResolutionLayout);
+pendingDiscardRenderer.animation.startedAt -= pendingDiscardRenderer.animation.duration;
+pendingDiscardRenderer.drawCard = () => {};
+pendingDiscardRenderer.drawCardAnimation({}, discardResolutionLayout);
+if (pendingDiscardRenderer.animation.stage !== 'hold-discard') {
+  throw new Error('pending human response should hold the discard at the player front');
+}
+if (!pendingDiscardRenderer.shouldHideDiscardMini(pendingDiscardState, 1)) {
+  throw new Error('pending human response should not duplicate the discard in the discard mini area');
+}
+let fallbackDraws = [];
+const fallbackRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+fallbackRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size) => {
+  fallbackDraws.push({ card, x, y, size });
+};
+fallbackRenderer.drawHeldDiscardFallback({}, pendingDiscardState, discardResolutionLayout);
+if (fallbackDraws.length !== 1 || fallbackDraws[0].card.id !== pendingDiscardCard.id || fallbackDraws[0].size !== 'big') {
+  throw new Error('pending human response should draw a fallback big discard if animation state is momentarily absent');
+}
+const claimState = {
+  ...pendingDiscardState,
+  recentDiscard: null,
+  pendingActions: [],
+  playerActions: [],
+  drawnCard: renderDeck[30],
+  currentSeat: 2,
+};
+claimState.seats = createSeats(DEFAULT_RULES);
+claimState.seats[0].melds = [{ id: 'claim-test', cards: [pendingDiscardCard] }];
+pendingDiscardRenderer.updateAnimation(claimState, discardResolutionLayout);
+if (pendingDiscardRenderer.animation.stage !== 'to-claimed' || pendingDiscardRenderer.animation.card.id !== pendingDiscardCard.id) {
+  throw new Error('claimed discard should resolve to the claiming player before later draw animations');
+}
+if (pendingDiscardRenderer.resolvingClaimedMiniId(claimState, 0) !== pendingDiscardCard.id) {
+  throw new Error('claimed mini card should stay hidden until the claim animation completes');
+}
+const passRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+passRenderer.animation = passRenderer.createCardAnimation(
+  `discard:1:${pendingDiscardCard.id}`,
+  pendingDiscardCard,
+  passRenderer.animationEndForSeat(1, discardResolutionLayout),
+  passRenderer.animationEndForSeat(1, discardResolutionLayout),
+  'hold-discard',
+  420
+);
+passRenderer.lastDiscardEvent = {
+  seat: 1,
+  card: pendingDiscardCard,
+  holdPosition: passRenderer.animationEndForSeat(1, discardResolutionLayout),
+};
+const passState = {
+  ...pendingDiscardState,
+  pendingActions: [],
+  playerActions: [],
+  drawnCard: renderDeck[31],
+  currentSeat: 2,
+};
+passRenderer.updateAnimation(passState, discardResolutionLayout);
+if (passRenderer.animation.stage !== 'to-discard' || passRenderer.animation.card.id !== pendingDiscardCard.id) {
+  throw new Error('passed discard should resolve to the discarder area before later draw animations');
+}
+if (passRenderer.resolvingDiscardMiniId(1) !== pendingDiscardCard.id) {
+  throw new Error('discard mini card should stay hidden until the discard animation completes');
+}
 renderer.layout = new TableLayout(667, 375);
 const fakeCtx = createFakeRenderContext();
 renderer.render(fakeCtx, {

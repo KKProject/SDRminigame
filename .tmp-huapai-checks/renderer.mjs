@@ -41,8 +41,9 @@ export default class TableRenderer {
     this.drawMeldArea(ctx, state, layout);
     this.drawCenterFocus(ctx, state, layout);
     this.drawPlayerHand(ctx, state, layout);
-    this.drawCardAnimation(ctx, layout);
     this.drawPrompt(ctx, state, layout);
+    this.drawHeldDiscardFallback(ctx, state, layout);
+    this.drawCardAnimation(ctx, layout);
     if (state.phase === 'result') this.drawResult(ctx, state, layout);
     this.drawButtons(ctx, state, layout);
   }
@@ -127,9 +128,9 @@ export default class TableRenderer {
     Object.entries(layout.unclaimedZones || layout.discardZones).forEach(([, area]) => {
       const seat = state.seats[area.seat];
       if (!seat) return;
-      const hiddenId = this.shouldHoldRecentDiscard(state, area.seat)
+      const hiddenId = this.shouldHideDiscardMini(state, area.seat)
         ? state.recentDiscard.card.id
-        : null;
+        : this.resolvingDiscardMiniId(area.seat);
       const cards = hiddenId
         ? seat.discards.filter((card) => card.id !== hiddenId)
         : seat.discards;
@@ -141,7 +142,7 @@ export default class TableRenderer {
     Object.entries(layout.claimedZones || layout.meldZones).forEach(([, area]) => {
       const seat = state.seats[area.seat];
       if (!seat) return;
-      this.drawClaimedColumns(ctx, area, seat.melds, layout, state.rules);
+      this.drawClaimedColumns(ctx, area, seat.melds, layout, this.resolvingClaimedMiniId(state, area.seat));
     });
 
     const player = state.seats[state.humanSeat];
@@ -193,6 +194,7 @@ export default class TableRenderer {
     if (this.animation && this.animation.stage === 'hold-discard') {
       this.updateHeldDiscardAnimation(state, layout);
     }
+    if (this.isDiscardResolutionActive()) return;
     if (!this.animation && this.lastDiscardEvent && !state.recentDiscard) {
       const claim = this.findClaimedCard(state, this.lastDiscardEvent.card.id);
       if (claim) {
@@ -283,6 +285,17 @@ export default class TableRenderer {
     this.lastDiscardEvent = null;
   }
 
+  isDiscardResolutionActive() {
+    if (!this.animation) return false;
+    if (this.animation.stage === 'hold-discard') return false;
+    return ['to-front', 'to-discard', 'to-claimed'].indexOf(this.animation.stage) >= 0
+      && (
+        this.animation.signature.startsWith('discard:')
+        || this.animation.signature.startsWith('discard-zone:')
+        || this.animation.signature.startsWith('claim:')
+      );
+  }
+
   getAnimationEvent(state) {
     if (state.drawnCard && typeof state.currentSeat === 'number') {
       return { type: 'draw', seat: state.currentSeat, card: state.drawnCard };
@@ -350,6 +363,37 @@ export default class TableRenderer {
     );
   }
 
+  shouldHideDiscardMini(state, sourceSeat) {
+    return this.shouldHoldRecentDiscard(state, sourceSeat)
+      || (
+        this.animation
+        && this.animation.stage === 'to-discard'
+        && this.lastDiscardEvent
+        && this.lastDiscardEvent.seat === sourceSeat
+        && state.recentDiscard
+        && state.recentDiscard.card.id === this.animation.card.id
+      );
+  }
+
+  resolvingDiscardMiniId(sourceSeat) {
+    if (
+      this.animation
+      && this.animation.stage === 'to-discard'
+      && this.lastDiscardEvent
+      && this.lastDiscardEvent.seat === sourceSeat
+    ) {
+      return this.animation.card.id;
+    }
+    return null;
+  }
+
+  resolvingClaimedMiniId(state, seat) {
+    if (!this.animation || this.animation.stage !== 'to-claimed') return null;
+    const claim = this.findClaimedCard(state, this.animation.card.id);
+    if (!claim || claim.seat !== seat) return null;
+    return this.animation.card.id;
+  }
+
   findClaimedCard(state, cardId) {
     for (let seatIndex = 0; seatIndex < state.seats.length; seatIndex++) {
       const seat = state.seats[seatIndex];
@@ -357,6 +401,14 @@ export default class TableRenderer {
       if (meld) return { seat: seatIndex, meld };
     }
     return null;
+  }
+
+  drawHeldDiscardFallback(ctx, state, layout) {
+    if (!state.recentDiscard || !this.shouldHoldRecentDiscard(state, state.recentDiscard.seat)) return;
+    if (this.animation && this.animation.card && this.animation.card.id === state.recentDiscard.card.id) return;
+    const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
+    const position = this.animationEndForSeat(state.recentDiscard.seat, layout);
+    this.drawCard(ctx, state.recentDiscard.card, position.x, position.y, cardWidth, cardHeight, true, false, 'big');
   }
 
   drawCardAnimation(ctx, layout) {
@@ -378,6 +430,9 @@ export default class TableRenderer {
       return;
     }
 
+    if (['to-discard', 'to-claimed'].indexOf(this.animation.stage) >= 0) {
+      this.lastDiscardEvent = null;
+    }
     this.animation = null;
   }
 
@@ -395,7 +450,7 @@ export default class TableRenderer {
     });
   }
 
-  drawClaimedColumns(ctx, area, melds, layout) {
+  drawClaimedColumns(ctx, area, melds, layout, hiddenCardId = null) {
     const cardWidth = layout.miniCardWidth || 16;
     const cardHeight = layout.miniCardHeight || Math.round(cardWidth / CARD_ASPECT_RATIO);
     const maxColumns = Math.max(0, Math.floor(area.width / cardWidth));
@@ -405,7 +460,10 @@ export default class TableRenderer {
       const x = direction === 'rtl'
         ? area.x + area.width - cardWidth * (columnIndex + 1)
         : area.x + columnIndex * cardWidth;
-      (meld.cards || []).slice(0, Math.floor(area.height / cardHeight)).forEach((card, rowIndex) => {
+      (meld.cards || [])
+        .filter((card) => card.id !== hiddenCardId)
+        .slice(0, Math.floor(area.height / cardHeight))
+        .forEach((card, rowIndex) => {
         this.drawCard(ctx, card, x, area.y + rowIndex * cardHeight, cardWidth, cardHeight, true, false, 'mini');
       });
     });
