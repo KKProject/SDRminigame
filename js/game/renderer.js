@@ -308,10 +308,11 @@ export default class TableRenderer {
 
   animationStartForSeat(seat, layout) {
     const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
-    if (seat === 0) return { x: layout.width / 2 - cardWidth / 2, y: layout.height - cardHeight - 8 };
-    if (seat === 1) return { x: layout.width - cardWidth - 8, y: layout.height / 2 - cardHeight / 2 };
-    if (seat === 2) return { x: layout.width / 2 - cardWidth / 2, y: 8 };
-    return { x: 8, y: layout.height / 2 - cardHeight / 2 };
+    const bounds = layout.contentBounds || { x: 0, y: 0, width: layout.width, height: layout.height };
+    if (seat === 0) return this.clampAnimationPosition({ x: bounds.x + bounds.width / 2 - cardWidth / 2, y: bounds.y + bounds.height - cardHeight - 8 }, layout);
+    if (seat === 1) return this.clampAnimationPosition({ x: bounds.x + bounds.width - cardWidth - 8, y: bounds.y + bounds.height / 2 - cardHeight / 2 }, layout);
+    if (seat === 2) return this.clampAnimationPosition({ x: bounds.x + bounds.width / 2 - cardWidth / 2, y: bounds.y + 8 }, layout);
+    return this.clampAnimationPosition({ x: bounds.x + 8, y: bounds.y + bounds.height / 2 - cardHeight / 2 }, layout);
   }
 
   animationEndForSeat(seat, layout) {
@@ -319,10 +320,10 @@ export default class TableRenderer {
     const front = layout.playerFronts && layout.playerFronts[side];
     const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
     if (!front) return this.animationStartForSeat(seat, layout);
-    return {
+    return this.clampAnimationPosition({
       x: front.x + front.width / 2 - cardWidth / 2,
       y: front.y + front.height / 2 - cardHeight / 2,
-    };
+    }, layout);
   }
 
   animationCardSize(layout) {
@@ -338,10 +339,10 @@ export default class TableRenderer {
     const area = layout.unclaimedZones && layout.unclaimedZones[side];
     const { width, height } = this.animationCardSize(layout);
     if (!area) return this.animationEndForSeat(seat, layout);
-    return {
+    return this.clampAnimationPosition({
       x: area.direction === 'rtl' ? area.x + area.width - width : area.x,
       y: area.y + area.height / 2 - height / 2,
-    };
+    }, layout);
   }
 
   claimedAnimationEnd(seat, layout) {
@@ -349,9 +350,18 @@ export default class TableRenderer {
     const area = layout.claimedZones && layout.claimedZones[side];
     const { width, height } = this.animationCardSize(layout);
     if (!area) return this.animationEndForSeat(seat, layout);
-    return {
+    return this.clampAnimationPosition({
       x: area.direction === 'rtl' ? area.x + area.width - width : area.x,
       y: area.y,
+    }, layout);
+  }
+
+  clampAnimationPosition(point, layout) {
+    const bounds = layout.contentBounds || { x: 0, y: 0, width: layout.width, height: layout.height };
+    const { width, height } = this.animationCardSize(layout);
+    return {
+      x: Math.max(bounds.x, Math.min(point.x, bounds.x + bounds.width - width)),
+      y: Math.max(bounds.y, Math.min(point.y, bounds.y + bounds.height - height)),
     };
   }
 

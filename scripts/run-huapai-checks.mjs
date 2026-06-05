@@ -28,6 +28,8 @@ await writeFile(join(tempDir, 'render-stub.mjs'), [
   'export const RENDER_PIXEL_RATIO = 2;',
   'export const BACKING_STORE_WIDTH = 750;',
   'export const BACKING_STORE_HEIGHT = 1334;',
+  'export const SAFE_AREA_INSETS = { left: 0, top: 0, right: 0, bottom: 0 };',
+  'export const SAFE_AREA_BOUNDS = { x: 0, y: 0, width: 375, height: 667 };',
 ].join(' '));
 
 const { runSelfChecks } = await import(pathToFileURL(join(tempDir, 'self-check.mjs')));
@@ -108,6 +110,44 @@ if (
 }
 if (renderCase.calls.setTransform.length !== 1 || renderCase.calls.setTransform[0].join(',') !== '2,0,0,2,0,0') {
   throw new Error('DPR 2 render setup should apply one scaled transform');
+}
+
+renderCase = await loadRenderRuntime({
+  windowWidth: 844,
+  windowHeight: 390,
+  pixelRatio: 3,
+  safeArea: { left: 47, top: 0, right: 844, bottom: 369, width: 797, height: 369 },
+});
+if (
+  renderCase.module.SCREEN_WIDTH !== 844
+  || renderCase.module.SCREEN_HEIGHT !== 390
+  || renderCase.module.BACKING_STORE_WIDTH !== 1688
+  || renderCase.module.BACKING_STORE_HEIGHT !== 780
+) {
+  throw new Error('safe-area render setup should keep full logical and backing canvas sizes');
+}
+if (
+  renderCase.module.SAFE_AREA_INSETS.left !== 47
+  || renderCase.module.SAFE_AREA_INSETS.right !== 0
+  || renderCase.module.SAFE_AREA_INSETS.bottom !== 21
+  || renderCase.module.SAFE_AREA_BOUNDS.width !== 797
+  || renderCase.module.SAFE_AREA_BOUNDS.height !== 369
+) {
+  throw new Error('render setup should export logical safe-area insets and bounds');
+}
+
+renderCase = await loadRenderRuntime({
+  windowWidth: 844,
+  windowHeight: 390,
+  pixelRatio: 2,
+  safeArea: { left: 900, top: 0, right: 800, bottom: 390 },
+});
+if (
+  renderCase.module.SAFE_AREA_INSETS.left !== 0
+  || renderCase.module.SAFE_AREA_INSETS.right !== 0
+  || renderCase.module.SAFE_AREA_BOUNDS.width !== 844
+) {
+  throw new Error('invalid safe-area data should fall back to the full logical canvas');
 }
 
 renderCase = await loadRenderRuntime({ windowWidth: 390, windowHeight: 844, pixelRatio: 3 });
@@ -402,6 +442,30 @@ function assertInBounds(region, width, height) {
   }
 }
 
+function assertWithinBounds(region, bounds, label) {
+  if (!region) throw new Error(`${label} is missing`);
+  if (
+    region.x < bounds.x - 1
+    || region.y < bounds.y - 1
+    || region.x + region.width > bounds.x + bounds.width + 1
+    || region.y + region.height > bounds.y + bounds.height + 1
+  ) {
+    throw new Error(`${label} should stay inside safe content bounds`);
+  }
+}
+
+function visibleSafeRegions(layout) {
+  return layout.handCards.concat(
+    layout.actionButtons,
+    Object.values(layout.playerFronts || {}),
+    Object.values(layout.unclaimedZones || {}),
+    Object.values(layout.claimedZones || {}),
+    Object.values(layout.seatStatusAreas || {}),
+    Object.values(layout.seatStatusAreas || {}).flatMap((area) => [area.avatar, area.totalScore, area.roundFu]),
+    [layout.muteButton, layout.centerFocus, layout.prompt, layout.result, layout.actionModal]
+  ).filter((region) => region && region.width > 0 && region.height > 0);
+}
+
 for (const [width, height] of [[568, 320], [667, 375], [844, 390], [932, 430], [320, 568]]) {
   const layout = new TableLayout(width, height).build(layoutState);
   const allRegions = layout.handCards.concat(
@@ -448,7 +512,7 @@ for (const [width, height] of [[568, 320], [667, 375], [844, 390], [932, 430], [
   if (Math.abs((layout.seatStatusAreas.top.avatar.x + layout.seatStatusAreas.top.avatar.width / 2) - (width / 2)) > 1) {
     throw new Error(`opposite avatar should be centered at top at ${width}x${height}`);
   }
-  if (layout.seatStatusAreas.bottom.avatar.x > layout.safe + 1 || layout.seatStatusAreas.bottom.avatar.y < height / 2) {
+  if (layout.seatStatusAreas.bottom.x > layout.safe + 1 || layout.seatStatusAreas.bottom.avatar.y < height / 2) {
     throw new Error(`self avatar should stay near lower-left corner at ${width}x${height}`);
   }
 
@@ -540,6 +604,51 @@ for (const [width, height] of [[568, 320], [667, 375], [844, 390], [932, 430], [
   }
 }
 
+for (const safeCase of [
+  { width: 844, height: 390, insets: { left: 47, top: 0, right: 0, bottom: 21 }, label: 'left-notch landscape' },
+  { width: 844, height: 390, insets: { left: 0, top: 0, right: 47, bottom: 21 }, label: 'right-notch landscape' },
+  { width: 932, height: 430, insets: { left: 59, top: 8, right: 0, bottom: 24 }, label: 'tall safe-area landscape' },
+  { width: 844, height: 390, insets: null, label: 'missing safe-area landscape' },
+]) {
+  const layout = new TableLayout(safeCase.width, safeCase.height, {
+    safeAreaInsets: safeCase.insets,
+  }).build(layoutState);
+  const expectedLeft = (safeCase.insets && safeCase.insets.left ? safeCase.insets.left : 0) + layout.safe;
+  const expectedTop = (safeCase.insets && safeCase.insets.top ? safeCase.insets.top : 0) + layout.safe;
+  const expectedRight = safeCase.width - ((safeCase.insets && safeCase.insets.right ? safeCase.insets.right : 0) + layout.safe);
+  const expectedBottom = safeCase.height - ((safeCase.insets && safeCase.insets.bottom ? safeCase.insets.bottom : 0) + layout.safe);
+  if (
+    layout.contentBounds.x !== expectedLeft
+    || layout.contentBounds.y !== expectedTop
+    || layout.contentBounds.x + layout.contentBounds.width !== expectedRight
+    || layout.contentBounds.y + layout.contentBounds.height !== expectedBottom
+  ) {
+    throw new Error(`content bounds mismatch for ${safeCase.label}`);
+  }
+  visibleSafeRegions(layout).forEach((region) => {
+    assertWithinBounds(region, layout.contentBounds, `${region.type || 'region'} in ${safeCase.label}`);
+  });
+  const rendererForSafeArea = new TableRenderer({
+    getImage() { return null; },
+    getCardSprite() { return null; },
+    getCardBackSprite() { return null; },
+  });
+  [0, 1, 2, 3].forEach((seat) => {
+    const start = rendererForSafeArea.animationStartForSeat(seat, layout);
+    const front = rendererForSafeArea.animationEndForSeat(seat, layout);
+    const discard = rendererForSafeArea.discardAnimationEnd(seat, layout);
+    const claimed = rendererForSafeArea.claimedAnimationEnd(seat, layout);
+    const size = rendererForSafeArea.animationCardSize(layout);
+    [start, front, discard, claimed].forEach((point) => {
+      assertWithinBounds(
+        { x: point.x, y: point.y, width: size.width, height: size.height, type: 'animation-card' },
+        layout.contentBounds,
+        `animation endpoint seat ${seat} in ${safeCase.label}`
+      );
+    });
+  });
+}
+
 const splitDeck = createDeck(DEFAULT_RULES);
 const splitSeats = createSeats(DEFAULT_RULES);
 splitSeats[0].hand = takeCards(splitDeck, [
@@ -568,6 +677,113 @@ if (!splitLayout.handColumns[3].singleCollection || splitLayout.handColumns[3].c
 }
 if (!splitLayout.handColumns.every((column) => column.cards.length <= 6)) {
   throw new Error('every hand column should contain at most six cards');
+}
+
+const pairSingletonDeck = createDeck(DEFAULT_RULES);
+const pairSingletonSeats = createSeats(DEFAULT_RULES);
+pairSingletonSeats[0].hand = takeCards(pairSingletonDeck, [
+  'kong', 'kong',
+  'fu',
+]);
+const pairSingletonLayout = new TableLayout(844, 390).build({
+  ...layoutState,
+  seats: pairSingletonSeats,
+  playerActions: [],
+});
+const singletonColumn = pairSingletonLayout.handColumns.find((column) => column.singleCollection);
+if (!singletonColumn || singletonColumn.cards.map((card) => card.key).join(',') !== 'fu') {
+  throw new Error('initial singleton column should contain only true single cards');
+}
+if (!pairSingletonLayout.handColumns.find((column) => !column.singleCollection && column.cards.length === 2 && column.cards.every((card) => card.key === 'kong'))) {
+  throw new Error('initial singleton column should not mix pairs into the final single-card column');
+}
+
+const stableDiscardDeck = createDeck(DEFAULT_RULES);
+const stableDiscardSeats = createSeats(DEFAULT_RULES);
+stableDiscardSeats[0].hand = takeCards(stableDiscardDeck, [
+  'shang', 'shang',
+  'kong',
+]);
+const stableDiscardLayoutBuilder = new TableLayout(844, 390);
+let stableLayout = stableDiscardLayoutBuilder.build({
+  ...layoutState,
+  seats: stableDiscardSeats,
+  playerActions: [],
+});
+if (stableLayout.handColumns[0].cards.length !== 2 || stableLayout.handColumns[0].cards[0].key !== 'shang') {
+  throw new Error('stable discard setup should begin with a shang pair column');
+}
+stableDiscardSeats[0].hand = stableDiscardSeats[0].hand.filter((card) => !(card.key === 'shang' && card.copy === 0));
+stableLayout = stableDiscardLayoutBuilder.build({
+  ...layoutState,
+  seats: stableDiscardSeats,
+  playerActions: [],
+});
+if (
+  stableLayout.handColumns[0].singleCollection
+  || stableLayout.handColumns[0].cards.length !== 1
+  || stableLayout.handColumns[0].cards[0].key !== 'shang'
+) {
+  throw new Error('discard should keep a non-empty original hand column even when one card remains');
+}
+
+const stableMeldDeck = createDeck(DEFAULT_RULES);
+const stableMeldSeats = createSeats(DEFAULT_RULES);
+stableMeldSeats[0].hand = takeCards(stableMeldDeck, [
+  'shang', 'shang',
+  'da',
+  'ren',
+  'kong',
+]);
+const stableMeldLayoutBuilder = new TableLayout(844, 390);
+stableLayout = stableMeldLayoutBuilder.build({
+  ...layoutState,
+  seats: stableMeldSeats,
+  playerActions: [],
+});
+if (stableLayout.handColumns[0].cards.map((card) => card.key).join(',') !== 'shang,shang,da,ren') {
+  throw new Error('stable meld setup should begin with a same-phrase column');
+}
+stableMeldSeats[0].hand = stableMeldSeats[0].hand.filter((card) => (
+  card.key === 'shang' && card.copy === 1
+) || card.key === 'kong');
+stableLayout = stableMeldLayoutBuilder.build({
+  ...layoutState,
+  seats: stableMeldSeats,
+  playerActions: [],
+});
+if (
+  stableLayout.handColumns[0].singleCollection
+  || stableLayout.handColumns[0].cards.length !== 1
+  || stableLayout.handColumns[0].cards[0].key !== 'shang'
+) {
+  throw new Error('meld should keep a non-empty original hand column even when one card remains');
+}
+
+const emptyCollapseDeck = createDeck(DEFAULT_RULES);
+const emptyCollapseSeats = createSeats(DEFAULT_RULES);
+emptyCollapseSeats[0].hand = takeCards(emptyCollapseDeck, [
+  'shang', 'shang',
+  'kong', 'kong',
+  'fu',
+]);
+const emptyCollapseLayoutBuilder = new TableLayout(844, 390);
+stableLayout = emptyCollapseLayoutBuilder.build({
+  ...layoutState,
+  seats: emptyCollapseSeats,
+  playerActions: [],
+});
+if (stableLayout.handColumns.map((column) => column.cards[0].key).join(',') !== 'shang,kong,fu') {
+  throw new Error('empty collapse setup should begin with adjacent pair and singleton columns');
+}
+emptyCollapseSeats[0].hand = emptyCollapseSeats[0].hand.filter((card) => card.key !== 'shang');
+stableLayout = emptyCollapseLayoutBuilder.build({
+  ...layoutState,
+  seats: emptyCollapseSeats,
+  playerActions: [],
+});
+if (stableLayout.handColumns.map((column) => column.cards[0].key).join(',') !== 'kong,fu') {
+  throw new Error('empty hand columns should collapse while preserving remaining column order');
 }
 
 const collapsedDeck = createDeck(DEFAULT_RULES);
@@ -803,8 +1019,12 @@ if (!fakeCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === 'æ¸²æ
 if (!fakeCtx.calls.find((call) => call[0] === 'clearRect')) {
   throw new Error('renderer smoke test should exercise canvas drawing');
 }
-if (!fakeCtx.calls.find((call) => call[0] === 'drawImage' && call[1][0] && call[1][0].id === 'table-image')) {
+const tableDrawCall = fakeCtx.calls.find((call) => call[0] === 'drawImage' && call[1][0] && call[1][0].id === 'table-image');
+if (!tableDrawCall) {
   throw new Error('renderer should draw the table background image as the primary surface');
+}
+if (tableDrawCall[1][1] !== 0 || tableDrawCall[1][2] !== 0 || tableDrawCall[1][3] !== 667 || tableDrawCall[1][4] !== 375) {
+  throw new Error('renderer should draw the table background across the full canvas, not only safe content bounds');
 }
 if (fakeCtx.calls.find((call) => call[0] === 'createLinearGradient')) {
   throw new Error('renderer should not draw a generated table panel over the background');

@@ -30,7 +30,7 @@ TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose a
 - **THEN** 头像与两行点数 MUST 不遮挡可见 mini 牌、手牌或动作弹窗按钮
 
 ### Requirement: Responsive Card Table Layout
-系统 SHALL 在当前 canvas 尺寸内渲染背景优先的四人横屏牌桌。原始背景图 SHALL 在正常对局中作为主要可见桌面，渲染器 SHALL 将头像、点数、手牌、凑好牌、弃牌/打牌和动画牌直接放在配置位置上，而不是绘制常驻填充面板、桌面框、座位框、中心操作块或带框弃牌/凑牌区域。布局 SHALL 暴露不可见区域：玩家头像与两行点数、玩家前方动画终点、各玩家弃牌/打牌 mini 排列区、各玩家凑好牌 mini 排列区、我的手牌、动作弹窗、结果弹窗和保留控制命中区域。横屏布局 SHALL 使用更宽的屏幕展示更多手牌列和桌面信息。我的手牌 SHALL 使用动态牌列：每列最多 6 张牌，同一句话可以拆成多个相邻牌列，单字牌集中到最后牌列，空牌列在每次手牌变化后自动消失并让剩余牌列紧挨。canvas backing store SHALL 按设备渲染像素比设置，使牌桌、牌和文字在高密度手机屏幕上保持清晰，同时布局尺寸保持逻辑像素。
+系统 SHALL 在当前 canvas 尺寸内渲染背景优先的四人横屏牌桌。原始背景图 SHALL 在正常对局中作为主要可见桌面，渲染器 SHALL 将头像、点数、手牌、凑好牌、弃牌/打牌和动画牌直接放在配置位置上，而不是绘制常驻填充面板、桌面框、座位框、中心操作块或带框弃牌/凑牌区域。布局 SHALL 暴露不可见区域：玩家头像与两行点数、玩家前方动画终点、各玩家弃牌/打牌 mini 排列区、各玩家凑好牌 mini 排列区、我的手牌、动作弹窗、结果弹窗和保留控制命中区域。横屏布局 SHALL 使用更宽的屏幕展示更多手牌列和桌面信息。我的手牌 SHALL 使用稳定牌列：首次排序时每列最多 6 张牌，同一句话可以拆成多个相邻牌列，最后单牌列只收集真正单张牌；首次建列后，凑牌或出牌只从原牌列移除对应牌，非空牌列不得因为剩余数量变化而重新归入其他列，只有空牌列自动消失并让剩余牌列紧挨。canvas backing store SHALL 按设备渲染像素比设置，使牌桌、牌和文字在高密度手机屏幕上保持清晰，同时布局尺寸保持逻辑像素。
 
 #### Scenario: Canvas size changes at startup
 - **WHEN** 游戏在不同屏幕尺寸设备上启动
@@ -113,24 +113,38 @@ TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose a
 - **AND** 其他常驻操作区域 MUST 不与手牌竞争
 
 #### Scenario: Phrase cards split into capped columns
-- **WHEN** 同一句话中的可见手牌数量超过 6 张
+- **WHEN** 首次排序时同一句话中的可见手牌数量超过 6 张
 - **THEN** 布局 MUST 将该句话拆成多个相邻牌列
 - **AND** 每个牌列 MUST 最多包含 6 张牌
 - **AND** 拆列时 MUST 优先将当前数量最多的字拆成独立牌列
 
 #### Scenario: Phrase remainder stays together when small enough
-- **WHEN** 同一句话拆出最多字牌列后，剩余牌数量不超过 6 张且包含两个或更多不同字
+- **WHEN** 首次排序时同一句话拆出最多字牌列后，剩余牌数量不超过 6 张且包含两个或更多不同字
 - **THEN** 剩余牌 MUST 按原句字序保留在一个相邻牌列中
 
 #### Scenario: Splitting repeats until under cap
-- **WHEN** 同一句话拆出一个最多字牌列后剩余牌仍超过 6 张
-- **THEN** 布局 MUST 继续从剩余牌中拆出当前数量最多的字作为相邻牌列，直到剩余牌不超过 6 张或进入单字收集规则
+- **WHEN** 首次排序时同一句话拆出一个最多字牌列后剩余牌仍超过 6 张
+- **THEN** 布局 MUST 继续从剩余牌中拆出当前数量最多的字作为相邻牌列，直到剩余牌不超过 6 张或进入最后单牌列判断
 
-#### Scenario: Single-character phrase cards collect at the end
-- **WHEN** 某句话的剩余手牌只包含一个字
-- **THEN** 这些单字牌 MUST 不在原句位置单独成列
-- **AND** 所有这类单字牌 MUST 按稳定顺序收集到最后的单字牌列中
-- **AND** 单字牌列每列仍 MUST 最多包含 6 张，超过 6 张时 MUST 继续拆成相邻的最后牌列
+#### Scenario: Initial singleton cards collect at the end
+- **WHEN** 首次排序时某些手牌字在当前手牌中只有 1 张，且不需要保留在同句剩余组合列中
+- **THEN** 这些真正单张牌 MUST 按稳定顺序收集到最后的单牌列中
+- **AND** 最后单牌列每列仍 MUST 最多包含 6 张，超过 6 张时 MUST 继续拆成相邻的最后牌列
+
+#### Scenario: Initial singleton column excludes pairs
+- **WHEN** 首次排序时某句话的剩余手牌只包含一个字但该字有 2 张或更多
+- **THEN** 这些牌 MUST 作为该句话的独立牌列保留
+- **AND** 这些牌 MUST NOT 和最后单牌列中的真正单张牌混排
+
+#### Scenario: Non-empty hand columns keep identity after discard
+- **WHEN** 打牌后某个原本存在的手牌列仍包含至少 1 张牌
+- **THEN** 该列 MUST 保留在原来的列顺序位置
+- **AND** 该列剩余的牌 MUST NOT 因为数量变为 1 张而移动到最后单牌列
+
+#### Scenario: Non-empty hand columns keep identity after meld
+- **WHEN** 吃、碰、招或踏消耗手牌后某个原本存在的手牌列仍包含至少 1 张牌
+- **THEN** 该列 MUST 保留在原来的列顺序位置
+- **AND** 该列剩余的牌 MUST NOT 因为数量变为 1 张而移动到最后单牌列
 
 #### Scenario: Empty hand columns collapse
 - **WHEN** 打牌或凑牌后某个原本存在的手牌列不再包含任何牌
@@ -143,7 +157,8 @@ TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose a
 
 #### Scenario: Phrase stack order is stable
 - **WHEN** 手牌因摸牌、打牌、吃、碰、招或踏发生变化
-- **THEN** 布局 MUST 保持句子顺序、拆列顺序和单字收集列顺序稳定
+- **THEN** 布局 MUST 保持已建立手牌列的相对顺序
+- **AND** 非空牌列 MUST 不因实时牌面重新排序而改变列位置
 
 #### Scenario: Hand columns touch and center
 - **WHEN** 布局计算我的可见手牌区域
@@ -161,6 +176,44 @@ TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose a
 #### Scenario: Hand card aspect ratio is preserved
 - **WHEN** 布局计算我的可见手牌区域
 - **THEN** 牌区域宽高比 MUST 在小误差范围内保持 small atlas 牌面 `88x108` 的比例
+
+### Requirement: 横屏安全区适配
+系统 SHALL 在横屏全面屏设备上区分全屏背景区域和安全内容区域。背景图 SHALL 继续覆盖整个 canvas；头像、点数、手牌、弃牌/打牌 mini 排列区、凑好牌 mini 排列区、玩家前方动画终点、动作弹窗、结果弹窗、提示文字和可点击控制 SHALL 布局在安全内容区域内，避免进入刘海、灵动岛、圆角、Home Indicator 或系统手势遮挡区域。
+
+#### Scenario: 背景保持全屏
+- **WHEN** 横屏设备存在左侧或右侧安全区遮挡
+- **THEN** 渲染器 MUST 仍然把背景图片绘制到完整 canvas 宽高
+- **AND** 背景不得被安全内容区域裁剪或缩小
+
+#### Scenario: 可交互元素避开左右遮挡
+- **WHEN** 横屏设备报告左侧或右侧安全区 inset
+- **THEN** 头像、点数、手牌、弃牌/打牌区、凑牌区、动作弹窗、结果弹窗和控制按钮 MUST 位于安全内容区域内
+- **AND** 这些元素的可点击区域 MUST 不进入被遮挡的左侧或右侧区域
+
+#### Scenario: 纵向安全边距参与布局
+- **WHEN** 横屏设备报告顶部或底部安全区 inset
+- **THEN** 布局 MUST 将顶部和底部安全边距纳入可见元素位置计算
+- **AND** 我的手牌、自己头像、底部控制和结果弹窗 MUST 不进入底部系统手势遮挡区域
+
+#### Scenario: 安全区信息缺失时使用兜底边距
+- **WHEN** 微信运行时未提供 `safeArea` 或提供的数据无效
+- **THEN** 布局 MUST 使用现有保守 safe 边距作为安全内容区域
+- **AND** 游戏 MUST 正常渲染，不得因为安全区数据缺失而抛出异常
+
+#### Scenario: 横屏方向切换后更新安全区
+- **WHEN** 设备横屏方向或窗口信息发生变化，导致左右安全区 inset 改变
+- **THEN** 后续布局 MUST 使用最新安全区数据重新计算元素位置
+- **AND** 已有背景绘制仍 MUST 覆盖完整 canvas
+
+#### Scenario: 动画终点位于安全区内
+- **WHEN** 出牌、摸牌、无人要牌或有人要牌动画计算终点
+- **THEN** 玩家前方停留点、弃牌区终点和凑牌区终点 MUST 位于安全内容区域内
+- **AND** 动画使用的大图牌不得停在全面屏遮挡区域
+
+#### Scenario: 自动检查覆盖全面屏横屏
+- **WHEN** 运行布局与渲染自检脚本
+- **THEN** 检查 MUST 覆盖至少一个左侧大 inset 和一个右侧大 inset 的横屏设备场景
+- **AND** 检查 MUST 断言背景仍全屏绘制且关键 UI 区域在安全内容区域内
 
 ### Requirement: Human Card Selection
 系统 SHALL 允许真人玩家通过触摸选择和取消选择自己的手牌，包括动态拆列后的手牌列、最多 6 张的叠放列、相邻同字牌和最后单字收集列。
