@@ -10,7 +10,7 @@
     "format": "RGBA8888",
     "coordinate": "top-left origin",
     "naming": "card frames use size_key_orientation names: big|small|mini + card key + hl|v",
-    "note": "牌面帧已统一为 big_ren_v / small_ren_v / mini_ren_hl 形式；hl 表示水平左旋资源，使用时顺时针旋转 90 度，v 表示竖向资源。"
+    "note": "牌面帧已统一为 big_ren_v / small_ren_v / mini_ren_hl 形式；hl 表示水平左旋资源，使用时顺时针旋转 90 度，hr表示水平右旋资源，使用时需要逆时针旋转 90，v 表示竖向资源。"
   },
   "frames": {
     "small": {
@@ -1218,7 +1218,7 @@
       }
     },
     "mini": {
-      "mini_shou_hl": {
+      "mini_shou_hr": {
         "frame": {
           "x": 1237,
           "y": 503,
@@ -1338,7 +1338,7 @@
         "confidence": "high",
         "originalIndex": 40
       },
-      "mini_er_hl": {
+      "mini_er_hr": {
         "frame": {
           "x": 1140,
           "y": 691,
@@ -1362,7 +1362,7 @@
         "confidence": "medium",
         "originalIndex": 57
       },
-      "mini_tu_hl": {
+      "mini_tu_hr": {
         "frame": {
           "x": 1184,
           "y": 691,
@@ -1770,7 +1770,7 @@
         "confidence": "high",
         "originalIndex": 90
       },
-      "mini_shang_hl": {
+      "mini_shang_hr": {
         "frame": {
           "x": 1138,
           "y": 951,

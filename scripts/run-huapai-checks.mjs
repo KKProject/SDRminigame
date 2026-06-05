@@ -305,20 +305,20 @@ for (const size of ['big', 'small', 'mini']) {
     throw new Error(`missing nested atlas frame group ${size}`);
   }
   const frameNames = Object.keys(atlas.frames[size]);
-  const cardFrameNames = frameNames.filter((name) => new RegExp(`^${size}_[a-z0-9]+_(hl|hf|v)$`).test(name));
+  const cardFrameNames = frameNames.filter((name) => new RegExp(`^${size}_[a-z0-9]+_(hl|hf|hr|v)$`).test(name));
   if (cardFrameNames.length !== DEFAULT_RULES.cardSymbols.length) {
     throw new Error(`atlas ${size} group should contain 24 uniformly named card frames`);
   }
-  const cardKeys = cardFrameNames.map((name) => name.match(new RegExp(`^${size}_([a-z0-9]+)_(?:hl|hf|v)$`))[1]);
+  const cardKeys = cardFrameNames.map((name) => name.match(new RegExp(`^${size}_([a-z0-9]+)_(?:hl|hf|hr|v)$`))[1]);
   for (const symbol of DEFAULT_RULES.cardSymbols) {
     if (cardKeys.indexOf(symbol.key) < 0) {
-      throw new Error(`atlas ${size} group should contain ${size}_${symbol.key}_hl/hf/v`);
+      throw new Error(`atlas ${size} group should contain ${size}_${symbol.key}_hl/hf/hr/v`);
     }
   }
   for (const frameName of cardFrameNames) {
     const frame = atlas.frames[size][frameName];
     const isHorizontalLeft = frameName.endsWith('_hl');
-    const isHorizontalRight = frameName.endsWith('_hf');
+    const isHorizontalRight = frameName.endsWith('_hf') || frameName.endsWith('_hr');
     const isVertical = frameName.endsWith('_v');
     if ((isHorizontalLeft || isHorizontalRight) && frame.frame.w < frame.frame.h) {
       throw new Error(`atlas horizontal frame should be wider than tall: ${frameName}`);

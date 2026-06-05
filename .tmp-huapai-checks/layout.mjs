@@ -30,15 +30,17 @@ function createColumn(phrase, phraseIndex, groups, meta = {}) {
 }
 
 function phraseColumnData(hand, rules = DEFAULT_RULES) {
-  const phrases = rules.phrases || DEFAULT_RULES.phrases;
+  const sourceHand = Array.isArray(hand) ? hand : [];
+  const phrases = Array.isArray(rules.phrases) ? rules.phrases : DEFAULT_RULES.phrases;
   const columns = [];
   const singleGroups = [];
 
   phrases.forEach((phrase, phraseIndex) => {
-    const groups = phrase.keys.map((key, keyIndex) => ({
+    const phraseKeys = Array.isArray(phrase.keys) ? phrase.keys : [];
+    const groups = phraseKeys.map((key, keyIndex) => ({
       key,
       keyIndex,
-      cards: sortGroupCards(hand.filter((card) => card.phraseId === phrase.id && card.key === key)),
+      cards: sortGroupCards(sourceHand.filter((card) => card.phraseId === phrase.id && card.key === key)),
     }));
     let remaining = groups.map((group) => ({ ...group, cards: group.cards.slice() }));
 
@@ -81,7 +83,7 @@ function phraseColumnData(hand, rules = DEFAULT_RULES) {
     columns.push(createColumn(
       phrase,
       phraseIndex,
-      phrase.keys.map((key, keyIndex) => {
+      phraseKeys.map((key, keyIndex) => {
         const group = leftGroups.find((item) => item.key === key);
         return {
           key,

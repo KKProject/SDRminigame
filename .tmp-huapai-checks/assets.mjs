@@ -117,7 +117,7 @@ function sizeFromFrameName(name = '', groupSize = null) {
 
 function orientationFromFrameName(name = '') {
   const tokens = nameTokens(name);
-  if (tokens.indexOf('hf') >= 0) return 'hf';
+  if (tokens.indexOf('hf') >= 0 || tokens.indexOf('hr') >= 0) return 'hf';
   if (tokens.indexOf('hl') >= 0 || tokens.indexOf('horizontal') >= 0) return 'hl';
   if (tokens.indexOf('v') >= 0 || tokens.indexOf('vertical') >= 0) return 'v';
   return null;
