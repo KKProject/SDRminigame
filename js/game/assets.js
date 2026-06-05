@@ -117,20 +117,20 @@ function sizeFromFrameName(name = '', groupSize = null) {
 
 function orientationFromFrameName(name = '') {
   const tokens = nameTokens(name);
-  if (tokens.indexOf('hf') >= 0 || tokens.indexOf('hr') >= 0) return 'hf';
+  if (tokens.indexOf('hr') >= 0) return 'hr';
   if (tokens.indexOf('hl') >= 0 || tokens.indexOf('horizontal') >= 0) return 'hl';
   if (tokens.indexOf('v') >= 0 || tokens.indexOf('vertical') >= 0) return 'v';
   return null;
 }
 
 function frameNeedsCounterClockwiseRotation(name = '') {
-  return orientationFromFrameName(name) === 'hf';
+  return orientationFromFrameName(name) === 'hr';
 }
 
 function frameNeedsClockwiseRotation(frame, name = '') {
   const orientation = orientationFromFrameName(name);
   if (orientation === 'hl') return true;
-  if (orientation === 'hf') return false;
+  if (orientation === 'hr') return false;
   if (orientation === 'v') return false;
   if (!frame || !frame.frame) return false;
   return (frame.label || '').indexOf('横向') >= 0 || frame.frame.w > frame.frame.h;

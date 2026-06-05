@@ -58,7 +58,7 @@ The system SHALL render every configured card face with readable symbol text, co
 - **THEN** the renderer MUST draw that frame rotated clockwise by 90 degrees into aspect-correct card bounds
 
 #### Scenario: Horizontal-right card atlas face is available
-- **WHEN** a matched atlas frame name uses the `hf` orientation suffix
+- **WHEN** a matched atlas frame name uses the `hr` orientation suffix
 - **THEN** the renderer MUST draw that frame rotated counterclockwise by 90 degrees into aspect-correct card bounds
 
 #### Scenario: Vertical card atlas face is available

@@ -75,7 +75,7 @@ function makeTestAtlas() {
       big: {
         big_fu_v: frame(523, 3, 88, 307, '红色福-竖向'),
         big_shang_hl: frame(839, 591, 307, 88, '红色上-横向', 'meld', 'low'),
-        big_da_hf: frame(880, 591, 307, 88, '绿色大-横向', 'meld', 'low'),
+        big_da_hr: frame(880, 591, 307, 88, '绿色大-横向', 'meld', 'low'),
         tile_back_green_vertical: frame(247, 3, 88, 307, '绿色牌背-竖向', 'back'),
       },
       small: {
@@ -130,7 +130,7 @@ export function runSelfChecks() {
   assert(cardFrameMap.fu.bySize.big[0].name === 'big_fu_v', 'big vertical card should map from nested key name');
   assert(!cardFrameMap.fu.bySize.big[0].rotateCw, 'v card frame should not rotate');
   assert(cardFrameMap.shang.bySize.big[0].name === 'big_shang_hl' && cardFrameMap.shang.bySize.big[0].rotateCw, 'hl card frame should rotate clockwise');
-  assert(cardFrameMap.da.bySize.big[0].name === 'big_da_hf' && cardFrameMap.da.bySize.big[0].rotateCcw, 'hf card frame should rotate counterclockwise');
+  assert(cardFrameMap.da.bySize.big[0].name === 'big_da_hr' && cardFrameMap.da.bySize.big[0].rotateCcw, 'hr card frame should rotate counterclockwise');
   assert(cardFrameMap.shang.bySize.small[0].name === 'small_shang_v', 'small card should map from nested key name');
   assert(cardFrameMap.shang.bySize.mini[0].name === 'mini_shang_hl', 'mini card should map from nested key name');
   const legacyFrameMap = buildCardAtlasFrameMap(makeLegacyTestAtlas());
@@ -147,7 +147,7 @@ export function runSelfChecks() {
   assert(assetLoader.getCardFrame({ key: 'shang' }, 'mini').name === 'mini_shang_hl', 'card frame should prefer requested mini match');
   assert(assetLoader.getCardFrame({ key: 'fu' }, 'small').name === 'big_fu_v', 'missing requested size should fall back to another size');
   assert(assetLoader.getCardSprite({ key: 'shang' }, 'big').rotateCw, 'hl card sprite should carry clockwise rotation flag');
-  assert(assetLoader.getCardSprite({ key: 'da' }, 'big').rotateCcw, 'hf card sprite should carry counterclockwise rotation flag');
+  assert(assetLoader.getCardSprite({ key: 'da' }, 'big').rotateCcw, 'hr card sprite should carry counterclockwise rotation flag');
   assert(!assetLoader.getCardSprite({ key: 'fu' }, 'big').rotateCw, 'v card sprite should not rotate');
   assert(assetLoader.getCardSprite({ key: 'fu' }, 'small'), 'card sprite should resolve fallback size when image and frame are ready');
   assert(assetLoader.getCardBackFrame('vertical').name === 'tile_back_green_vertical', 'card back frame should resolve');
