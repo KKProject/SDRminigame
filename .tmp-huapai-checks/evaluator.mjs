@@ -8,6 +8,7 @@ import {
 import {
   countByKey,
   countByPhrase,
+  createSupportPairProof,
   nextSeat,
   removeCardsByKeys,
   sortCards,
@@ -112,24 +113,36 @@ export function isPreviousSeat(sourceSeat, seatIndex, rules = DEFAULT_RULES) {
   return nextSeat(sourceSeat, rules) === seatIndex;
 }
 
+export function responseSeatOrder(sourceSeat, rules = DEFAULT_RULES, options = {}) {
+  const includeSource = Boolean(options.includeSource);
+  const order = [];
+  let seat = includeSource ? sourceSeat : nextSeat(sourceSeat, rules);
+  while (order.length < rules.seatCount - (includeSource ? 0 : 1)) {
+    order.push(seat);
+    seat = nextSeat(seat, rules);
+  }
+  return order;
+}
+
 export function findChiActions(state, seatIndex, incomingCard, sourceSeat, sourceType, rules = DEFAULT_RULES) {
-  if (
-    sourceType === 'discard'
-    && rules.allowChiFromPreviousOnly
-    && !isPreviousSeat(sourceSeat, seatIndex, rules)
-  ) {
-    return [];
+  if (rules.allowChiFromPreviousOnly) {
+    const canChiSource = sourceType === 'draw'
+      ? sourceSeat === seatIndex || isPreviousSeat(sourceSeat, seatIndex, rules)
+      : isPreviousSeat(sourceSeat, seatIndex, rules);
+    if (!canChiSource) return [];
   }
 
   const seat = state.seats[seatIndex];
   if (seat.history && seat.history.chiLocked) return [];
+  if (phraseHasExactComplete(seat.hand, incomingCard.phraseId, rules)) return [];
 
   const phraseKeys = getPhraseKeysForKey(incomingCard.key, rules);
   const needed = phraseKeys.filter((key) => key !== incomingCard.key);
   const counts = countByKey(seat.hand);
   if (needed.length !== 2 || !needed.every((key) => counts[key] > 0)) return [];
 
-  const forced = isForcedPhrasePattern(seat.hand, incomingCard, rules);
+  const specialTazi = getSpecialTaziRequirement(seat.hand, incomingCard, rules, 'chi');
+  const forced = Boolean(specialTazi);
   return [{
     type: 'chi',
     seat: seatIndex,
@@ -141,6 +154,7 @@ export function findChiActions(state, seatIndex, incomingCard, sourceSeat, sourc
     priority: ACTION_PRIORITY.chi,
     label: ACTION_LABELS.chi,
     forced,
+    forcedPattern: forced ? specialTazi.pattern : null,
     createsChiLock: canPengWithIncoming(seat.hand, incomingCard),
   }];
 }
@@ -153,6 +167,7 @@ export function findPengActions(state, seatIndex, incomingCard, sourceSeat, sour
   const seat = state.seats[seatIndex];
   if (seat.history && seat.history.chiLocked) return [];
   if (!canPengWithIncoming(seat.hand, incomingCard)) return [];
+  const specialTazi = getSpecialTaziRequirement(seat.hand, incomingCard, rules, 'peng');
   return [{
     type: 'peng',
     seat: seatIndex,
@@ -162,7 +177,8 @@ export function findPengActions(state, seatIndex, incomingCard, sourceSeat, sour
     keys: [incomingCard.key, incomingCard.key],
     priority: ACTION_PRIORITY.peng,
     label: ACTION_LABELS.peng,
-    forced: isForcedPhrasePattern(seat.hand, incomingCard, rules),
+    forced: Boolean(specialTazi),
+    forcedPattern: specialTazi ? specialTazi.pattern : null,
   }];
 }
 
@@ -172,6 +188,16 @@ export function findZhaoActions(state, seatIndex, incomingCard, sourceSeat, sour
   const count = countByKey(seat.hand)[incomingCard.key] || 0;
   if (count < 3) return [];
   const keys = Array.from({ length: Math.min(count, 5) }).map(() => incomingCard.key);
+  const removed = removeCardsByKeys(seat.hand, keys);
+  const prospectiveMeld = {
+    type: 'zhao',
+    key: incomingCard.key,
+    cards: removed.removed.concat([incomingCard]),
+  };
+  const support = validateSupportPairObligations(
+    removed.cards,
+    seat.melds.filter((meld) => meld.cards.length >= 4).concat([prospectiveMeld]),
+  );
   return [{
     type: 'zhao',
     seat: seatIndex,
@@ -181,6 +207,7 @@ export function findZhaoActions(state, seatIndex, incomingCard, sourceSeat, sour
     keys,
     priority: ACTION_PRIORITY.zhao,
     label: ACTION_LABELS.zhao,
+    circleLossRisk: !support.valid,
   }];
 }
 
@@ -188,9 +215,16 @@ export function findTaActions(state, seatIndex, incomingCard, sourceType) {
   if (sourceType !== 'draw') return [];
   const actions = [];
   state.seats.forEach((owner) => {
+    if (owner.id !== seatIndex) return;
     owner.melds
       .filter((meld) => (meld.type === 'zhao' || meld.type === 'ta') && meld.key === incomingCard.key && meld.cards.length < 6)
       .forEach((meld) => {
+        const actingSeat = owner;
+        const prospectiveMeld = { ...meld, cards: meld.cards.concat([incomingCard]) };
+        const highOrderGroups = actingSeat.melds
+          .filter((item) => item.cards.length >= 4 && item.id !== meld.id)
+          .concat([prospectiveMeld]);
+        const support = validateSupportPairObligations(actingSeat.hand, highOrderGroups);
         actions.push({
           type: 'ta',
           seat: seatIndex,
@@ -201,6 +235,7 @@ export function findTaActions(state, seatIndex, incomingCard, sourceType) {
           keys: [],
           priority: ACTION_PRIORITY.ta,
           label: ACTION_LABELS.ta,
+          circleLossRisk: !support.valid,
         });
       });
   });
@@ -215,13 +250,15 @@ export function findSelfDrawActions(state, seatIndex, drawnCard, rules = DEFAULT
     .concat(findChiActions(state, seatIndex, drawnCard, seatIndex, 'draw', rules));
 }
 
-export function findResponseActions(state, sourceSeat, incomingCard, rules = DEFAULT_RULES) {
+export function findAppearingCardActions(state, sourceSeat, incomingCard, sourceType, rules = DEFAULT_RULES) {
   const actions = [];
-  state.seats.forEach((seat, seatIndex) => {
-    if (seatIndex === sourceSeat) return;
+  const order = responseSeatOrder(sourceSeat, rules, { includeSource: sourceType === 'draw' });
+  order.forEach((seatIndex, responseIndex) => {
+    const seat = state.seats[seatIndex];
 
-    if (rules.allowDiscardWin) {
-      const win = evaluateWin(seat.hand.concat([incomingCard]), seat.melds, 'discard', rules, {
+    const allowWin = sourceType === 'draw' ? rules.allowSelfDrawWin : rules.allowDiscardWin;
+    if (allowWin) {
+      const win = evaluateWin(seat.hand.concat([incomingCard]), seat.melds, sourceType === 'draw' && seatIndex === sourceSeat ? 'self' : sourceType, rules, {
         jiangPhraseId: state.jiangPhraseId,
       });
       if (win.isWin) {
@@ -230,21 +267,27 @@ export function findResponseActions(state, sourceSeat, incomingCard, rules = DEF
           seat: seatIndex,
           card: incomingCard,
           sourceSeat,
-          sourceType: 'discard',
+          sourceType,
           keys: [],
           priority: ACTION_PRIORITY.hu,
           label: ACTION_LABELS.hu,
+          responseIndex,
           win,
         });
       }
     }
 
-    actions.push(...findZhaoActions(state, seatIndex, incomingCard, sourceSeat, 'discard', rules));
-    actions.push(...findPengActions(state, seatIndex, incomingCard, sourceSeat, 'discard', rules));
-    actions.push(...findChiActions(state, seatIndex, incomingCard, sourceSeat, 'discard', rules));
+    actions.push(...findTaActions(state, seatIndex, incomingCard, sourceType).map((action) => ({ ...action, responseIndex })));
+    actions.push(...findZhaoActions(state, seatIndex, incomingCard, sourceSeat, sourceType, rules).map((action) => ({ ...action, responseIndex })));
+    actions.push(...findPengActions(state, seatIndex, incomingCard, sourceSeat, sourceType, rules).map((action) => ({ ...action, responseIndex })));
+    actions.push(...findChiActions(state, seatIndex, incomingCard, sourceSeat, sourceType, rules).map((action) => ({ ...action, responseIndex })));
   });
 
-  return actions.sort((a, b) => b.priority - a.priority || a.seat - b.seat);
+  return actions.sort((a, b) => b.priority - a.priority || a.responseIndex - b.responseIndex || a.seat - b.seat);
+}
+
+export function findResponseActions(state, sourceSeat, incomingCard, rules = DEFAULT_RULES) {
+  return findAppearingCardActions(state, sourceSeat, incomingCard, 'discard', rules);
 }
 
 export function highestPriorityActions(actions) {
@@ -254,7 +297,8 @@ export function highestPriorityActions(actions) {
 }
 
 export function filterHighestPriority(actions) {
-  const sorted = actions.slice().sort((a, b) => b.priority - a.priority || a.seat - b.seat);
+  const safeActions = actions.filter((action) => !action.circleLossRisk || action.forced);
+  const sorted = safeActions.slice().sort((a, b) => b.priority - a.priority || (a.responseIndex || 0) - (b.responseIndex || 0) || a.seat - b.seat);
   const top = highestPriorityActions(sorted);
   if (!top.length || top[0].type !== 'peng') return top;
 
@@ -270,11 +314,37 @@ export function filterHighestPriority(actions) {
 }
 
 export function isForcedPhrasePattern(hand, incomingCard, rules = DEFAULT_RULES) {
+  return Boolean(getSpecialTaziRequirement(hand, incomingCard, rules));
+}
+
+export function getSpecialTaziRequirement(hand, incomingCard, rules = DEFAULT_RULES, actionType = null) {
   const phraseKeys = getPhraseKeysForKey(incomingCard.key, rules);
-  const phraseCards = hand.filter((card) => phraseKeys.indexOf(card.key) >= 0).concat([incomingCard]);
-  if (phraseCards.length < 3) return false;
+  if (phraseKeys.length !== 3) return null;
+  const phraseCards = hand.filter((card) => phraseKeys.indexOf(card.key) >= 0);
+  if (phraseCards.length !== 3) return null;
+  const [x, y, z] = phraseKeys;
   const counts = countByKey(phraseCards);
-  return phraseKeys.some((key) => counts[key] >= 2) && phraseKeys.some((key) => counts[key] === 1);
+  const signature = phraseKeys.map((key) => key.repeat(counts[key] || 0)).join('');
+  const table = {
+    [x + x + y]: { pattern: 'xxy', chiKey: z, pengKey: x },
+    [y + y + z]: { pattern: 'yyz', chiKey: x, pengKey: y },
+    [z + z + x]: { pattern: 'zzx', chiKey: y, pengKey: z },
+    [z + z + y]: { pattern: 'zzy', chiKey: x, pengKey: z },
+  };
+  const match = table[signature];
+  if (!match) return null;
+  if (incomingCard.key === match.chiKey && (!actionType || actionType === 'chi')) {
+    return { actionType: 'chi', pattern: match.pattern, missingKey: match.chiKey };
+  }
+  if (incomingCard.key === match.pengKey && (!actionType || actionType === 'peng')) {
+    return { actionType: 'peng', pattern: match.pattern, missingKey: match.pengKey };
+  }
+  return null;
+}
+
+export function createChiPenaltyKey(actionOrCard) {
+  const card = actionOrCard.card || actionOrCard;
+  return `${card.phraseId}:${card.key}`;
 }
 
 function supportPairsNeeded(size) {
@@ -295,16 +365,93 @@ function availablePairSources(cards, excludeIds = []) {
 
 export function validateSupportPairs(hand, sameKeyGroupCards, rules = DEFAULT_RULES) {
   const needed = supportPairsNeeded(sameKeyGroupCards.length);
-  if (!needed) return { valid: true, needed, pairKeys: [], pairSources: [] };
+  if (!needed) {
+    return createSupportPairProof({
+      groupKey: sameKeyGroupCards[0] ? sameKeyGroupCards[0].key : null,
+      groupSize: sameKeyGroupCards.length,
+      needed,
+      valid: true,
+    });
+  }
   const pairSources = availablePairSources(hand, sameKeyGroupCards.map((card) => card.id));
   const totalPairs = pairSources.reduce((total, source) => total + source.pairs, 0);
   const distinctNeeded = sameKeyGroupCards.length >= 5 ? needed : 1;
-  return {
+  return createSupportPairProof({
+    groupKey: sameKeyGroupCards[0] ? sameKeyGroupCards[0].key : null,
+    groupSize: sameKeyGroupCards.length,
     valid: totalPairs >= needed && pairSources.length >= distinctNeeded,
     needed,
     pairKeys: pairSources.slice(0, needed).map((source) => source.key),
     pairSources,
     reason: `招踏${sameKeyGroupCards.length}张需要${needed}对`,
+  });
+}
+
+function chooseDistinctPairKeys(pairCounts, needed) {
+  const keys = Object.keys(pairCounts).filter((key) => pairCounts[key] > 0);
+  const results = [];
+
+  function walk(start, selected) {
+    if (selected.length === needed) {
+      results.push(selected.slice());
+      return;
+    }
+    for (let i = start; i < keys.length; i++) {
+      selected.push(keys[i]);
+      walk(i + 1, selected);
+      selected.pop();
+    }
+  }
+
+  walk(0, []);
+  return results;
+}
+
+export function validateSupportPairObligations(hand, highOrderGroups = [], rules = DEFAULT_RULES) {
+  const obligations = highOrderGroups
+    .filter((group) => group && Array.isArray(group.cards) && group.cards.length >= 4)
+    .map((group) => ({
+      group,
+      needed: supportPairsNeeded(group.cards.length),
+    }))
+    .filter((item) => item.needed > 0)
+    .sort((a, b) => b.needed - a.needed);
+
+  if (!obligations.length) return { valid: true, proofs: [] };
+
+  const pairCounts = availablePairSources(hand).reduce((counts, source) => {
+    counts[source.key] = source.pairs;
+    return counts;
+  }, {});
+  const proofs = [];
+
+  function allocate(index) {
+    if (index >= obligations.length) return true;
+    const obligation = obligations[index];
+    const choices = chooseDistinctPairKeys(pairCounts, obligation.needed);
+    for (let i = 0; i < choices.length; i++) {
+      const keys = choices[i];
+      keys.forEach((key) => { pairCounts[key] -= 1; });
+      proofs[index] = createSupportPairProof({
+        groupKey: obligation.group.key || (obligation.group.cards[0] && obligation.group.cards[0].key),
+        groupSize: obligation.group.cards.length,
+        needed: obligation.needed,
+        pairKeys: keys,
+        pairSources: keys.map((key) => ({ key, pairs: 1 })),
+        valid: true,
+      });
+      if (allocate(index + 1)) return true;
+      keys.forEach((key) => { pairCounts[key] += 1; });
+      proofs[index] = null;
+    }
+    return false;
+  }
+
+  const valid = allocate(0);
+  return {
+    valid,
+    proofs: valid ? proofs.filter(Boolean) : [],
+    reason: valid ? '' : '招踏对子不足或对子被复用',
   };
 }
 
@@ -319,6 +466,9 @@ function phraseHasExactComplete(hand, phraseId, rules = DEFAULT_RULES) {
 
 export function isLegalDiscard(seat, card, rules = DEFAULT_RULES) {
   const history = seat.history || { discardPhraseCounts: {} };
+  if (history.forcedDiscardCardId && card.id !== history.forcedDiscardCardId) {
+    return { legal: false, reason: '特殊搭子凑牌后必须先打出剩余牌' };
+  }
   if (phraseHasExactComplete(seat.hand, card.phraseId, rules)) {
     return { legal: false, reason: '不能打出原句中的牌' };
   }
@@ -332,6 +482,10 @@ export function isLegalDiscard(seat, card, rules = DEFAULT_RULES) {
     return { legal: false, reason: '四张同句最多只能打一张' };
   }
   return { legal: true };
+}
+
+export function getLegalDiscards(seat, rules = DEFAULT_RULES) {
+  return (seat.hand || []).filter((card) => isLegalDiscard(seat, card, rules).legal);
 }
 
 function buildDoorOptions(counts, rules) {
@@ -446,6 +600,10 @@ function cardColorBase(symbol) {
   return symbol && symbol.position === 0 ? 4 : 2;
 }
 
+function naturalKeziBase(symbol) {
+  return cardColorBase(symbol) * 2;
+}
+
 function applyJiangMultiplier(amount, symbol, jiangPhraseId) {
   const multiplier = symbol && symbol.phraseId === jiangPhraseId ? 4 : 1;
   return {
@@ -457,13 +615,15 @@ function applyJiangMultiplier(amount, symbol, jiangPhraseId) {
 export function scoreOperationMeld(meld, rules = DEFAULT_RULES, context = {}) {
   if (!meld || !Array.isArray(meld.cards) || !meld.cards.length) return null;
   if (meld.type === 'chi') {
+    const symbol = meld.cards[0];
+    const result = applyJiangMultiplier(1, symbol, context.jiangPhraseId || null);
     return {
       type: 'chi',
       key: meld.key || meld.cards[0].key,
       text: meld.label || '吃',
       baseFu: 1,
-      multiplier: 1,
-      fu: 1,
+      multiplier: result.multiplier,
+      fu: result.amount,
       description: '吃牌句子',
     };
   }
@@ -471,8 +631,9 @@ export function scoreOperationMeld(meld, rules = DEFAULT_RULES, context = {}) {
   const key = meld.key || meld.cards[0].key;
   const symbols = createSymbolMap(rules);
   const symbol = symbols[key] || meld.cards[0];
-  const base = cardColorBase(symbol);
-  const baseFu = base + Math.max(0, meld.cards.length - 3) * base;
+  const increment = cardColorBase(symbol);
+  const base = meld.type === 'peng' ? increment : naturalKeziBase(symbol);
+  const baseFu = base + Math.max(0, meld.cards.length - 3) * increment;
   const result = applyJiangMultiplier(baseFu, symbol, context.jiangPhraseId || null);
   return {
     type: meld.type || 'peng',
@@ -522,10 +683,11 @@ export function calculateHuScoring(doors, rules = DEFAULT_RULES, context = {}) {
     .filter((door) => door.type === 'same' && door.keys.length >= 3)
     .forEach((door) => {
       const symbol = symbols[door.key];
-      const base = cardColorBase(symbol);
+      const increment = cardColorBase(symbol);
+      const base = door.meldType === 'peng' ? increment : naturalKeziBase(symbol);
       const baseResult = applyJiangMultiplier(base, symbol, jiangPhraseId);
       entries.push({
-        type: 'kezi',
+        type: door.meldType === 'peng' ? 'peng' : 'natural-keitzi',
         key: door.key,
         text: symbol ? symbol.text : door.key,
         baseFu: base,
@@ -537,7 +699,7 @@ export function calculateHuScoring(doors, rules = DEFAULT_RULES, context = {}) {
 
       const extraCards = Math.max(0, door.keys.length - 3);
       if (extraCards) {
-        const extraBase = extraCards * base;
+        const extraBase = extraCards * increment;
         const extraResult = applyJiangMultiplier(extraBase, symbol, jiangPhraseId);
         entries.push({
           type: door.meldType === 'ta' ? 'ta' : 'zhao',
@@ -552,31 +714,23 @@ export function calculateHuScoring(doors, rules = DEFAULT_RULES, context = {}) {
       }
     });
 
-  const sameGroupsByColor = doors
-    .filter((door) => door.type === 'same' && door.keys.length >= 3)
-    .reduce((groups, door) => {
-      const symbol = symbols[door.key];
-      const colorKey = symbol && symbol.position === 0 ? 'red' : `${symbol ? symbol.position : 'other'}`;
-      groups[colorKey] = (groups[colorKey] || 0) + 1;
-      return groups;
-    }, {});
-
-  Object.keys(sameGroupsByColor).forEach((colorKey) => {
-    const count = sameGroupsByColor[colorKey];
-    if (count < 3) return;
-    const isRed = colorKey === 'red';
-    const fu = (isRed ? 8 : 4) + Math.max(0, count - 3) * (isRed ? 4 : 2);
-    entries.push({
-      type: 'kezi-run',
-      key: colorKey,
-      text: isRed ? '红字' : '黑绿字',
-      baseFu: fu,
-      multiplier: 1,
-      fu,
-      description: `${isRed ? '红字' : '黑绿字'}${count}个刻子累计`,
+  doors
+    .filter((door) => door.type === 'xyz')
+    .forEach((door) => {
+      const key = door.keys[0];
+      const symbol = symbols[key];
+      const result = applyJiangMultiplier(1, symbol, jiangPhraseId);
+      entries.push({
+        type: 'xyz',
+        key,
+        text: symbol ? symbol.phraseText : key,
+        baseFu: 1,
+        multiplier: result.multiplier,
+        fu: result.amount,
+        description: `${symbol ? symbol.phraseText : key}原句`,
+      });
+      totalFu += result.amount;
     });
-    totalFu += fu;
-  });
 
   const grade = classifyHuGrade(doors, totalFu);
   const points = pointValueForGrade(grade, rules);
@@ -646,13 +800,19 @@ export function isListening(hand, melds = [], rules = DEFAULT_RULES, options = {
 }
 
 export function buildCircleLossResult(loser, seats, reason, rules = DEFAULT_RULES) {
+  const point = rules.circleLossPoint || rules.basePoint || 1;
+  const winners = seats.map((seat) => seat.id).filter((seat) => seat !== loser);
   return {
     type: 'circle-loss',
     loser,
-    winners: seats.map((seat) => seat.id).filter((seat) => seat !== loser),
+    winners,
     reason,
     summary: `${seats[loser].name}进圈，三家赢`,
-    score: rules.scoring.circleLossPenalty,
+    score: point,
+    settlement: {
+      point,
+      payments: winners.map((winner) => ({ from: loser, to: winner, points: point })),
+    },
   };
 }
 

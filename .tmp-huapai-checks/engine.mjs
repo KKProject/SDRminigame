@@ -1,23 +1,38 @@
-import { chooseAcceptTakeover, chooseDiscard, chooseResponse, chooseSelfDrawAction } from './ai.mjs';
-import { createDeck, createSeats, nextSeat, removeCardsByIds, shuffleDeck, sortCards } from './cards.mjs';
+import { chooseAcceptTakeover, chooseDiscard, chooseResponse } from './ai.mjs';
+import {
+  createActionHistoryEntry,
+  createAppearingCard,
+  createDeck,
+  createSeats,
+  nextSeat,
+  removeCardsByIds,
+  shuffleDeck,
+  sortCards,
+} from './cards.mjs';
 import {
   ACTION_LABELS,
+  APPEARING_CARD_SOURCES,
   DEFAULT_RULES,
+  DRAW_ROUND_REASONS,
   PHASES,
+  RESULT_TYPES,
 } from './rules.mjs';
 import {
   applyMeldCards,
   buildCircleLossResult,
+  createChiPenaltyKey,
   dealOpeningHands,
   evaluateWin,
   filterHighestPriority,
+  findAppearingCardActions,
   findResponseActions,
-  findSelfDrawActions,
   findTakeoverEligibleSeats,
+  getLegalDiscards,
   hasKezi,
   hasTriplet,
   isLegalDiscard,
   isListening,
+  validateSupportPairObligations,
   validateSupportPairs,
 } from './evaluator.mjs';
 
@@ -27,10 +42,12 @@ export default class HuapaiEngine {
     this.music = music;
     this.rules = rules;
     this.aiTimer = null;
+    this.advanceTimer = null;
   }
 
   startRound(seed, dealerSeat) {
     if (this.aiTimer) clearTimeout(this.aiTimer);
+    if (this.advanceTimer) clearTimeout(this.advanceTimer);
     const roundDealer = typeof dealerSeat === 'number'
       ? dealerSeat
       : (typeof this.databus.nextDealerSeat === 'number' ? this.databus.nextDealerSeat : this.rules.dealerSeat);
@@ -56,6 +73,7 @@ export default class HuapaiEngine {
       takeoverQueue: [],
       jiangCard: opening.jiangCard,
       jiangPhraseId: opening.jiangPhraseId,
+      appearingCard: null,
       drawnCard: null,
       selectedCardId: null,
       recentDiscard: null,
@@ -159,29 +177,55 @@ export default class HuapaiEngine {
   }
 
   finishDrawRound(reason) {
+    if (this.advanceTimer) clearTimeout(this.advanceTimer);
     const state = this.databus;
     const nextDealer = nextSeat(state.slippedDealer, this.rules);
     state.nextDealerSeat = nextDealer;
     state.phase = PHASES.RESULT;
     state.playerActions = [];
     state.result = {
-      type: 'draw-round',
+      type: RESULT_TYPES.DRAW_ROUND,
+      reasonCode: DRAW_ROUND_REASONS.SLIP_NO_TAKEOVER,
       nextDealer,
       reason,
       summary: `${reason}，下局${state.seats[nextDealer].name}坐庄`,
     };
   }
 
+  finishLowDeckDrawRound() {
+    if (this.advanceTimer) clearTimeout(this.advanceTimer);
+    const state = this.databus;
+    state.nextDealerSeat = state.dealerSeat;
+    state.phase = PHASES.RESULT;
+    state.playerActions = [];
+    state.pendingActions = [];
+    state.appearingCard = null;
+    state.drawnCard = null;
+    state.result = {
+      type: RESULT_TYPES.DRAW_ROUND,
+      reasonCode: DRAW_ROUND_REASONS.LOW_DECK,
+      nextDealer: state.dealerSeat,
+      reason: '牌堆少于15张',
+      summary: '牌堆少于15张流局，庄家不变',
+    };
+  }
+
   enterDiscardPhase(seatIndex, feedback) {
     const state = this.databus;
+    const seat = state.seats[seatIndex];
+    if (seat.hand.length && !getLegalDiscards(seat, this.rules).length) {
+      this.finishCircleLoss(seatIndex, '没有可合法打出的牌，进圈');
+      return;
+    }
     state.currentSeat = seatIndex;
+    state.appearingCard = null;
     state.drawnCard = null;
     state.selectedCardId = null;
     state.pendingActions = [];
     state.playerActions = [];
-    state.phase = state.seats[seatIndex].isHuman ? PHASES.HUMAN_DISCARD : PHASES.AI_THINKING;
+    state.phase = seat.isHuman ? PHASES.HUMAN_DISCARD : PHASES.AI_THINKING;
     this.setFeedback(feedback);
-    if (!state.seats[seatIndex].isHuman) {
+    if (!seat.isHuman) {
       this.scheduleAI(() => this.aiDiscard(seatIndex));
     }
   }
@@ -231,10 +275,37 @@ export default class HuapaiEngine {
         return;
       }
       seat.hand = seat.hand.filter((item) => item.id !== cardId);
+      this.clearForcedDiscardIfSatisfied(seat, card);
     }
+
+    if (!drawn && seat.history.pendingTakeoverListeningCheck) {
+      seat.history.pendingTakeoverListeningCheck = false;
+      seat.history.listening = isListening(seat.hand, seat.melds, this.rules, {
+        requiresKezi: true,
+        jiangPhraseId: this.databus.jiangPhraseId,
+      });
+      if (!seat.history.listening) {
+        this.finishCircleLoss(seatIndex, '接庄后三次凑牌并出牌后仍未听牌');
+        return;
+      }
+    }
+
+    const source = drawn ? APPEARING_CARD_SOURCES.DRAW : APPEARING_CARD_SOURCES.DISCARD;
+    state.appearingCard = createAppearingCard({
+      card,
+      source,
+      sourceSeat: seatIndex,
+      responseStartSeat: drawn ? seatIndex : nextSeat(seatIndex, this.rules),
+      allowSourceSeatResponse: Boolean(drawn),
+    });
 
     seat.discards.push(card);
     seat.history.discardPhraseCounts[card.phraseId] = (seat.history.discardPhraseCounts[card.phraseId] || 0) + 1;
+    seat.history.actionHistory.push(createActionHistoryEntry('discard', {
+      cardId: card.id,
+      key: card.key,
+      source,
+    }));
     state.drawnCard = null;
     state.selectedCardId = null;
     state.recentDiscard = { seat: seatIndex, card };
@@ -244,25 +315,96 @@ export default class HuapaiEngine {
     this.handleResponseWindow(actions, seatIndex);
   }
 
+  discardUnclaimedDraw(seatIndex, card) {
+    const state = this.databus;
+    const seat = state.seats[seatIndex];
+    seat.discards.push(card);
+    seat.history.discardPhraseCounts[card.phraseId] = (seat.history.discardPhraseCounts[card.phraseId] || 0) + 1;
+    seat.history.actionHistory.push(createActionHistoryEntry('auto-discard-draw', {
+      cardId: card.id,
+      key: card.key,
+      source: APPEARING_CARD_SOURCES.DRAW,
+    }));
+    state.drawnCard = null;
+    state.appearingCard = null;
+    state.recentDiscard = { seat: seatIndex, card, source: APPEARING_CARD_SOURCES.DRAW, unclaimed: true };
+    this.setFeedback(`${seat.name}摸牌无人可用，${card.text}进入弃牌区`);
+    this.scheduleNextDrawAfterDiscard(seatIndex);
+  }
+
   handleResponseWindow(actions, sourceSeat) {
     const state = this.databus;
     state.pendingActions = actions;
-    const humanActions = actions.filter((action) => action.seat === state.humanSeat);
-
-    if (humanActions.length) {
-      state.playerActions = humanActions.concat([{ type: 'pass', seat: state.humanSeat, label: ACTION_LABELS.pass }]);
-      state.phase = PHASES.HUMAN_RESPONSE;
-      this.setFeedback(this.describeActions('你可以响应这张牌', humanActions));
+    if (!actions.length) {
+      this.resolveUnclaimedAppearingCard(sourceSeat);
       return;
     }
 
-    const aiAction = chooseResponse(actions);
+    const responseSeat = actions[0].seat;
+    const responseActions = actions.filter((action) => action.seat === responseSeat);
+    state.currentSeat = responseSeat;
+
+    if (responseSeat === state.humanSeat) {
+      state.playerActions = responseActions.concat([{ type: 'pass', seat: state.humanSeat, label: ACTION_LABELS.pass }]);
+      state.phase = PHASES.HUMAN_RESPONSE;
+      this.setFeedback(this.describeActions('你可以响应这张牌', responseActions));
+      return;
+    }
+
+    const aiAction = chooseResponse(responseActions);
     if (aiAction) {
       this.scheduleAI(() => this.applyAction(aiAction));
       return;
     }
 
-    this.beginTurn(nextSeat(sourceSeat, this.rules), true);
+    this.handleResponseWindow(actions.filter((action) => action.seat !== responseSeat), sourceSeat);
+  }
+
+  resolveUnclaimedAppearingCard(sourceSeat) {
+    const state = this.databus;
+    if (state.drawnCard) {
+      this.discardUnclaimedDraw(sourceSeat, state.drawnCard);
+      return;
+    }
+    state.pendingActions = [];
+    state.playerActions = [];
+    state.appearingCard = null;
+    if (state.recentDiscard) {
+      state.recentDiscard.unclaimed = true;
+      state.recentDiscard.resolved = true;
+    }
+    this.setFeedback(`${state.seats[sourceSeat].name}打出的牌无人响应，进入弃牌区`);
+    this.scheduleNextDrawAfterDiscard(sourceSeat);
+  }
+
+  scheduleNextDrawAfterDiscard(sourceSeat) {
+    if (this.advanceTimer) clearTimeout(this.advanceTimer);
+    const state = this.databus;
+    const next = nextSeat(sourceSeat, this.rules);
+    state.currentSeat = sourceSeat;
+    state.pendingActions = [];
+    state.playerActions = [];
+    state.phase = PHASES.AI_THINKING;
+    this.advanceTimer = setTimeout(() => {
+      this.advanceTimer = null;
+      if (state.phase === PHASES.RESULT) return;
+      this.beginTurn(next, true);
+    }, this.rules.unclaimedDiscardSettleMs);
+  }
+
+  scheduleAfterMeldAnimation(seatIndex, label) {
+    if (this.advanceTimer) clearTimeout(this.advanceTimer);
+    const state = this.databus;
+    state.currentSeat = seatIndex;
+    state.pendingActions = [];
+    state.playerActions = [];
+    state.phase = PHASES.AI_THINKING;
+    this.setFeedback(`${state.seats[seatIndex].name}${label}，等待动作完成`);
+    this.advanceTimer = setTimeout(() => {
+      this.advanceTimer = null;
+      if (state.phase === PHASES.RESULT) return;
+      this.afterGroupingAction(seatIndex, label);
+    }, this.rules.meldActionSettleMs);
   }
 
   handlePlayerAction(action) {
@@ -295,19 +437,6 @@ export default class HuapaiEngine {
 
   passHumanResponse() {
     const state = this.databus;
-    if (state.drawnCard) {
-      const forcedDrawAction = state.pendingActions.find((action) => action.seat === state.humanSeat && action.forced);
-      if (forcedDrawAction) {
-        this.finishCircleLoss(state.humanSeat, `必须${forcedDrawAction.label}，放弃后进圈`);
-        return;
-      }
-      const card = state.drawnCard;
-      state.playerActions = [];
-      state.pendingActions = [];
-      this.discardCard(state.humanSeat, card.id, { drawnCard: card });
-      return;
-    }
-
     const forcedAction = state.pendingActions.find((action) => action.seat === state.humanSeat && action.forced);
     if (forcedAction) {
       this.finishCircleLoss(state.humanSeat, `必须${forcedAction.label}，放弃后进圈`);
@@ -316,18 +445,50 @@ export default class HuapaiEngine {
 
     state.pendingActions
       .filter((action) => action.type === 'chi' && action.seat === state.humanSeat)
-      .forEach((action) => state.seats[state.humanSeat].history.declinedChiKeys.push(action.card.key));
+      .forEach((action) => {
+        const key = createChiPenaltyKey(action);
+        state.seats[state.humanSeat].history.declinedChiPenaltyKeys.push(key);
+        state.seats[state.humanSeat].history.declinedChiKeys.push(action.card.key);
+      });
 
     const remaining = state.pendingActions.filter((action) => action.seat !== state.humanSeat);
     state.pendingActions = remaining;
     state.playerActions = [];
-    const aiAction = chooseResponse(remaining);
-    if (aiAction) {
-      this.scheduleAI(() => this.applyAction(aiAction));
-      return;
+    const source = state.appearingCard
+      ? state.appearingCard.sourceSeat
+      : (state.recentDiscard ? state.recentDiscard.seat : state.currentSeat);
+    this.handleResponseWindow(remaining, source);
+  }
+
+  validateSeatSupportPairs(seat) {
+    const highOrderGroups = seat.melds.filter((meld) => (meld.type === 'zhao' || meld.type === 'ta') && meld.cards.length >= 4);
+    const support = validateSupportPairObligations(seat.hand, highOrderGroups, this.rules);
+    seat.history.supportPairProofs = support.proofs || [];
+    return support;
+  }
+
+  setForcedRemainderDiscard(seat, action, consumedCards) {
+    if (!action.forced) return;
+    const consumedIds = new Set(consumedCards.map((card) => card.id));
+    const remaining = seat.hand.filter((card) => (
+      card.phraseId === action.card.phraseId
+      && !consumedIds.has(card.id)
+    ));
+    if (remaining.length === 1) {
+      seat.history.forcedDiscardCardId = remaining[0].id;
+      seat.history.forcedAction = {
+        type: action.type,
+        pattern: action.forcedPattern || null,
+        phraseId: action.card.phraseId,
+      };
     }
-    const source = state.recentDiscard ? state.recentDiscard.seat : state.currentSeat;
-    this.beginTurn(nextSeat(source, this.rules), true);
+  }
+
+  clearForcedDiscardIfSatisfied(seat, card) {
+    if (seat.history.forcedDiscardCardId === card.id) {
+      seat.history.forcedDiscardCardId = null;
+      seat.history.forcedAction = null;
+    }
   }
 
   applyAction(action) {
@@ -348,8 +509,12 @@ export default class HuapaiEngine {
       return;
     }
 
-    if (action.type === 'chi' && seat.history.declinedChiKeys.indexOf(incoming.key) >= 0) {
+    if (action.type === 'chi' && seat.history.declinedChiPenaltyKeys.indexOf(createChiPenaltyKey(action)) >= 0) {
       this.finishCircleLoss(action.seat, '前次放弃吃牌后再次选择吃，进圈');
+      return;
+    }
+    if ((action.type === 'peng' || action.type === 'zhao') && seat.history.chiLocked) {
+      this.finishCircleLoss(action.seat, '碰吃冲突选择吃后又进行碰招踏，进圈');
       return;
     }
 
@@ -360,6 +525,7 @@ export default class HuapaiEngine {
 
     const applied = applyMeldCards(seat, incoming, action, this.rules);
     seat.hand = applied.hand;
+    this.setForcedRemainderDiscard(seat, action, applied.cards);
     const meld = {
       id: `${action.type}-${Date.now()}-${Math.random()}`,
       type: action.type,
@@ -369,7 +535,13 @@ export default class HuapaiEngine {
       from: action.sourceSeat,
     };
     seat.melds.push(meld);
-    if (action.type === 'chi' && action.createsChiLock) seat.history.chiLocked = true;
+    if (action.type === 'chi' && action.createsChiLock) {
+      seat.history.chiLocked = true;
+      seat.history.chiLockSource = {
+        phraseId: incoming.phraseId,
+        key: incoming.key,
+      };
+    }
 
     if (action.type === 'zhao') {
       const support = validateSupportPairs(seat.hand, meld.cards, this.rules);
@@ -379,24 +551,32 @@ export default class HuapaiEngine {
         needed: support.needed,
         pairKeys: support.pairKeys || [],
       });
-      if (!support.valid) {
-        this.finishCircleLoss(action.seat, support.reason);
+      seat.history.supportPairProofs.push(support);
+      const allSupport = support.valid ? this.validateSeatSupportPairs(seat) : support;
+      if (!allSupport.valid) {
+        this.finishCircleLoss(action.seat, allSupport.reason || support.reason);
         return;
       }
     }
 
+    state.appearingCard = null;
     state.drawnCard = null;
     state.recentDiscard = null;
     state.pendingActions = [];
     state.playerActions = [];
     state.currentSeat = action.seat;
     if (this.music) this.music.playCue('meld');
-    this.afterGroupingAction(action.seat, action.label);
+    this.scheduleAfterMeldAnimation(action.seat, action.label);
   }
 
   applyTa(action) {
     const state = this.databus;
     const owner = state.seats[action.ownerSeat];
+    const actingSeat = state.seats[action.seat];
+    if (actingSeat.history.chiLocked) {
+      this.finishCircleLoss(action.seat, '碰吃冲突选择吃后又进行碰招踏，进圈');
+      return;
+    }
     const meld = owner.melds.find((item) => item.id === action.meldId);
     if (!meld || !state.drawnCard) {
       this.setFeedback('无法踏牌');
@@ -412,15 +592,18 @@ export default class HuapaiEngine {
       needed: support.needed,
       pairKeys: support.pairKeys || [],
     });
-    if (!support.valid) {
-      this.finishCircleLoss(action.seat, support.reason);
+    state.seats[action.seat].history.supportPairProofs.push(support);
+    const allSupport = support.valid ? this.validateSeatSupportPairs(actingSeat) : support;
+    if (!allSupport.valid) {
+      this.finishCircleLoss(action.seat, allSupport.reason || support.reason);
       return;
     }
+    state.appearingCard = null;
     state.drawnCard = null;
     state.pendingActions = [];
     state.playerActions = [];
     if (this.music) this.music.playCue('meld');
-    this.afterGroupingAction(action.seat, ACTION_LABELS.ta);
+    this.scheduleAfterMeldAnimation(action.seat, ACTION_LABELS.ta);
   }
 
   afterGroupingAction(seatIndex, label) {
@@ -431,13 +614,8 @@ export default class HuapaiEngine {
     }
     if (seat.history.takeover) {
       seat.history.takeoverOperations += 1;
-      seat.history.listening = isListening(seat.hand, seat.melds, this.rules, {
-        requiresKezi: true,
-        jiangPhraseId: this.databus.jiangPhraseId,
-      });
-      if (seat.history.takeoverOperations >= this.rules.takeoverOperationLimit && !seat.history.listening) {
-        this.finishCircleLoss(seatIndex, '接庄后三次凑牌仍未听牌');
-        return;
+      if (seat.history.takeoverOperations >= this.rules.takeoverOperationLimit) {
+        seat.history.pendingTakeoverListeningCheck = true;
       }
     }
     this.enterDiscardPhase(seatIndex, `${label}后，请出牌`);
@@ -454,6 +632,10 @@ export default class HuapaiEngine {
       this.enterDiscardPhase(seatIndex, '请出牌');
       return;
     }
+    if (state.deck.length < this.rules.lowDeckDrawThreshold) {
+      this.finishLowDeckDrawRound();
+      return;
+    }
     if (!state.deck.length) {
       this.finishDraw();
       return;
@@ -461,39 +643,21 @@ export default class HuapaiEngine {
 
     const seat = state.seats[seatIndex];
     const drawnCard = state.deck.shift();
-    state.drawnCard = drawnCard;
-    const win = evaluateWin(seat.hand.concat([drawnCard]), seat.melds, 'self', this.rules, {
-      jiangPhraseId: state.jiangPhraseId,
+    state.appearingCard = createAppearingCard({
+      card: drawnCard,
+      source: APPEARING_CARD_SOURCES.DRAW,
+      sourceSeat: seatIndex,
+      responseStartSeat: seatIndex,
+      allowSourceSeatResponse: true,
     });
-    if (win.isWin && this.rules.allowSelfDrawWin) {
-      if (seat.isHuman) {
-        state.phase = PHASES.HUMAN_RESPONSE;
-        state.playerActions = [{ type: 'hu', seat: seatIndex, label: ACTION_LABELS.hu, win }, { type: 'pass', seat: seatIndex, label: ACTION_LABELS.pass }];
-        this.setFeedback('你摸成了，可以胡牌');
-      } else {
-        this.scheduleAI(() => this.finishWin(seatIndex, drawnCard, win));
-      }
-      return;
-    }
-
-    const actions = filterHighestPriority(findSelfDrawActions(state, seatIndex, drawnCard, this.rules));
+    state.drawnCard = drawnCard;
+    const actions = filterHighestPriority(findAppearingCardActions(state, seatIndex, drawnCard, APPEARING_CARD_SOURCES.DRAW, this.rules));
     if (!actions.length) {
-      this.setFeedback(`${seat.name}摸牌无法凑牌，自动打出${drawnCard.text}`);
-      this.discardCard(seatIndex, drawnCard.id, { drawnCard });
+      this.discardUnclaimedDraw(seatIndex, drawnCard);
       return;
     }
 
-    if (seat.isHuman) {
-      state.phase = PHASES.HUMAN_RESPONSE;
-      state.playerActions = actions.concat([{ type: 'pass', seat: seatIndex, label: ACTION_LABELS.pass }]);
-      this.setFeedback(this.describeActions(`摸到${drawnCard.text}`, actions));
-    } else {
-      this.scheduleAI(() => {
-        const action = chooseSelfDrawAction(actions);
-        if (action) this.applyAction(action);
-        else this.discardCard(seatIndex, drawnCard.id, { drawnCard });
-      });
-    }
+    this.handleResponseWindow(actions, seatIndex);
   }
 
   aiDiscard(seatIndex) {
@@ -524,43 +688,63 @@ export default class HuapaiEngine {
 
   finishWin(winner, card, win) {
     if (this.aiTimer) clearTimeout(this.aiTimer);
+    if (this.advanceTimer) clearTimeout(this.advanceTimer);
     this.databus.phase = PHASES.RESULT;
     this.databus.pendingActions = [];
     this.databus.playerActions = [];
     this.databus.selectedCardId = null;
+    this.databus.appearingCard = null;
     this.databus.drawnCard = null;
+    const point = win.points || 0;
+    const payers = this.databus.seats.map((seat) => seat.id).filter((seat) => seat !== winner);
+    const payments = payers.map((payer) => ({ from: payer, to: winner, points: point }));
+    payments.forEach((payment) => {
+      this.databus.seats[payment.from].score -= payment.points;
+      this.databus.seats[payment.to].score += payment.points;
+    });
     this.databus.result = {
-      type: 'win',
+      type: RESULT_TYPES.WIN,
       winner,
       card,
       summary: win.summary,
-      score: win.score,
+      score: point * payers.length,
       scoring: win.scoring,
       grade: win.grade,
       points: win.points,
+      settlement: {
+        point,
+        payments,
+      },
       jiangPhraseId: this.databus.jiangPhraseId,
       pattern: win.pattern,
       doors: win.doors,
     };
-    this.databus.seats[winner].score += win.score || 0;
     if (this.music) this.music.playCue('win');
   }
 
   finishCircleLoss(loser, reason) {
     if (this.aiTimer) clearTimeout(this.aiTimer);
+    if (this.advanceTimer) clearTimeout(this.advanceTimer);
     const result = buildCircleLossResult(loser, this.databus.seats, reason, this.rules);
     this.databus.phase = PHASES.RESULT;
     this.databus.pendingActions = [];
     this.databus.playerActions = [];
     this.databus.selectedCardId = null;
+    this.databus.appearingCard = null;
     this.databus.drawnCard = null;
     this.databus.result = result;
+    result.settlement.payments.forEach((payment) => {
+      this.databus.seats[payment.from].score -= payment.points;
+      this.databus.seats[payment.to].score += payment.points;
+    });
   }
 
   finishDraw() {
     if (this.aiTimer) clearTimeout(this.aiTimer);
+    if (this.advanceTimer) clearTimeout(this.advanceTimer);
     this.databus.phase = PHASES.RESULT;
     this.databus.playerActions = [];
-    this.databus.result = { type: 'draw', summary: '荒庄' };
+    this.databus.appearingCard = null;
+    this.databus.result = { type: RESULT_TYPES.DRAW, reasonCode: DRAW_ROUND_REASONS.EXHAUSTED_DECK, summary: '荒庄' };
   }
 }

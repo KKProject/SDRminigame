@@ -1,8 +1,5 @@
-# huapai-scoring Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change align-with-reorganized-shangdaren-rules. Update Purpose after archive.
-## Requirements
 ### Requirement: Fu Calculation
 The system SHALL calculate Shang Da Ren fu after a legal hu using the winning doors, concealed natural groups, exposed action groups, card colors, zhao/ta increments, phrase doors, and the round's jiang phrase. The system SHALL calculate each scoring door's base fu and increments first, then apply the jiang multiplier if that door belongs to the jiang phrase.
 

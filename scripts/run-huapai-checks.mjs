@@ -203,12 +203,71 @@ if (databus.result.type !== 'draw') {
   throw new Error('draw result was not created');
 }
 
-const responseSeats = createSeats(DEFAULT_RULES, 1);
-const responseDeck = createDeck(DEFAULT_RULES);
+engine.handleResponseWindow([
+  { type: 'peng', seat: 1, responseIndex: 0, priority: 3, label: '碰' },
+  { type: 'peng', seat: 0, responseIndex: 1, priority: 3, label: '碰' },
+], 3);
+if (databus.phase !== PHASES.AI_THINKING || databus.playerActions.length) {
+  throw new Error('AI response ownership should not prompt the human player');
+}
+if (engine.aiTimer) clearTimeout(engine.aiTimer);
+
+const transitionRules = { ...DEFAULT_RULES, unclaimedDiscardSettleMs: 5, aiDelayMs: 1000 };
+engine.rules = transitionRules;
+const transitionSeats = createSeats(transitionRules, 0);
+const transitionDeck = createDeck(transitionRules);
+const unclaimedCard = transitionDeck.shift();
+transitionSeats[1].discards.push(unclaimedCard);
+databus.setRoundState({
+  rules: transitionRules,
+  seats: transitionSeats,
+  deck: transitionDeck,
+  phase: PHASES.AI_THINKING,
+  currentSeat: 1,
+  humanSeat: 0,
+  dealerSeat: 0,
+  nextDealerSeat: 0,
+  slippedDealer: null,
+  takeoverDealer: null,
+  takeoverQueue: [],
+  jiangCard: null,
+  jiangPhraseId: null,
+  appearingCard: { card: unclaimedCard, source: 'discard', sourceSeat: 1 },
+  drawnCard: null,
+  selectedCardId: null,
+  recentDiscard: { seat: 1, card: unclaimedCard },
+  pendingActions: [],
+  playerActions: [],
+  feedback: '',
+  result: null,
+  muted: false,
+  round: 2,
+});
+const deckBeforeUnclaimedAdvance = databus.deck.length;
+engine.resolveUnclaimedAppearingCard(1);
+if (
+  databus.deck.length !== deckBeforeUnclaimedAdvance
+  || !databus.recentDiscard.unclaimed
+  || databus.currentSeat !== 1
+) {
+  throw new Error('unclaimed card should enter discard area before next player draws');
+}
+await new Promise((resolve) => setTimeout(resolve, transitionRules.unclaimedDiscardSettleMs + 10));
+if (databus.deck.length >= deckBeforeUnclaimedAdvance) {
+  throw new Error('next player should draw only after unclaimed discard settles');
+}
+if (engine.aiTimer) clearTimeout(engine.aiTimer);
+if (engine.advanceTimer) clearTimeout(engine.advanceTimer);
+engine.rules = DEFAULT_RULES;
+
+const fastMeldRules = { ...DEFAULT_RULES, meldActionSettleMs: 5 };
+engine.rules = fastMeldRules;
+const responseSeats = createSeats(fastMeldRules, 1);
+const responseDeck = createDeck(fastMeldRules);
 responseSeats[0].hand = ['da', 'ren'].map((key) => responseDeck.splice(responseDeck.findIndex((card) => card.key === key), 1)[0]);
 responseSeats[3].hand = [responseDeck.splice(responseDeck.findIndex((card) => card.key === 'shang'), 1)[0]];
 databus.setRoundState({
-  rules: DEFAULT_RULES,
+  rules: fastMeldRules,
   seats: responseSeats,
   deck: responseDeck,
   phase: PHASES.AI_THINKING,
@@ -236,9 +295,14 @@ if (databus.phase !== PHASES.HUMAN_RESPONSE || !databus.playerActions.find((acti
   throw new Error('human response prompt was not created');
 }
 engine.handlePlayerAction(databus.playerActions.find((action) => action.type === 'chi'));
+if (databus.phase !== PHASES.AI_THINKING || !databus.seats[0].melds.length) {
+  throw new Error('human meld should wait for its animation before discard phase');
+}
+await new Promise((resolve) => setTimeout(resolve, fastMeldRules.meldActionSettleMs + 10));
 if (databus.phase !== PHASES.HUMAN_DISCARD || !databus.seats[0].melds.length) {
   throw new Error('human meld action did not resolve');
 }
+engine.rules = DEFAULT_RULES;
 
 const takeoverSeats = createSeats(DEFAULT_RULES, 0);
 const takeoverDeck = createDeck(DEFAULT_RULES);
@@ -304,17 +368,20 @@ databus.setRoundState({
 });
 engine.discardCard(3, dealerChiSeats[3].hand[0].id);
 const dealerChi = databus.playerActions.find((action) => action.type === 'chi');
+engine.rules = fastMeldRules;
 engine.handlePlayerAction(dealerChi);
+await new Promise((resolve) => setTimeout(resolve, fastMeldRules.meldActionSettleMs + 10));
 if (databus.result.type !== 'circle-loss' || databus.result.loser !== 0) {
   throw new Error('dealer chi that removes last kezi should circle-loss');
 }
+engine.rules = DEFAULT_RULES;
 
 engine.finishWin(0, databus.seats[0].hand[0], { summary: 'scripted win', score: 1, pattern: 'scripted', doors: [] });
-if (databus.result.type !== 'win') {
+if (databus.result.type !== 'win' || databus.result.settlement.payments.length !== 3) {
   throw new Error('win result was not created');
 }
 engine.finishCircleLoss(0, 'scripted circle-loss');
-if (databus.result.type !== 'circle-loss' || databus.result.winners.length !== 3) {
+if (databus.result.type !== 'circle-loss' || databus.result.winners.length !== 3 || databus.result.settlement.payments.length !== 3) {
   throw new Error('circle-loss result was not created');
 }
 engine.finishDrawRound('scripted draw-round');
@@ -813,8 +880,8 @@ const operationFu = calculateOperationFu([
   { type: 'peng', label: '碰', key: 'da', cards: takeCards(fuDeck, ['da', 'da', 'da']) },
   { type: 'zhao', label: '招', key: 'shang', cards: takeCards(fuDeck, ['shang', 'shang', 'shang', 'shang']) },
 ], DEFAULT_RULES, { jiangPhraseId: 'sdr' });
-if (operationFu.totalFu !== 41 || operationFu.entries.find((entry) => entry.type === 'chi').fu !== 1) {
-  throw new Error('operation fu should include chi=1 and color/jiang scores for peng and zhao');
+if (operationFu.totalFu !== 60 || operationFu.entries.find((entry) => entry.type === 'chi').fu !== 4) {
+  throw new Error('operation fu should include jiang chi=4 and color/jiang scores for peng and natural zhao');
 }
 if (calculateOperationFu(createSeats(DEFAULT_RULES)[0].melds, DEFAULT_RULES).totalFu !== 0) {
   throw new Error('new round operation fu should derive as zero from empty exposed melds');

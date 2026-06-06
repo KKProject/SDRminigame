@@ -104,14 +104,66 @@ export function removeCardsByKeys(cards, keys) {
   return { cards: kept, removed };
 }
 
+export function createAppearingCard({
+  card,
+  source,
+  sourceSeat,
+  responseStartSeat,
+  allowSourceSeatResponse = false,
+}) {
+  return {
+    card,
+    source,
+    sourceSeat,
+    responseStartSeat,
+    allowSourceSeatResponse,
+    claimedBy: null,
+    resolved: false,
+  };
+}
+
+export function createSupportPairProof({
+  groupKey,
+  groupSize,
+  needed,
+  pairKeys = [],
+  pairSources = [],
+  valid = false,
+  reason = '',
+}) {
+  return {
+    groupKey,
+    groupSize,
+    needed,
+    pairKeys,
+    pairSources,
+    valid,
+    reason,
+  };
+}
+
+export function createActionHistoryEntry(type, detail = {}) {
+  return {
+    type,
+    at: Date.now(),
+    ...detail,
+  };
+}
+
 export function createSeatHistory() {
   return {
     declinedChiKeys: [],
+    declinedChiPenaltyKeys: [],
     chiLocked: false,
+    chiLockSource: null,
+    forcedDiscardCardId: null,
+    forcedAction: null,
     supportPairObligations: [],
+    supportPairProofs: [],
     discardPhraseCounts: {},
     takeover: false,
     takeoverOperations: 0,
+    pendingTakeoverListeningCheck: false,
     listening: false,
     circleLoss: false,
     actionHistory: [],

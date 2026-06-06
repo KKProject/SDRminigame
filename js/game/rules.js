@@ -27,6 +27,35 @@ export const ACTION_LABELS = {
   restart: '再来一局',
 };
 
+export const APPEARING_CARD_SOURCES = {
+  DRAW: 'draw',
+  DISCARD: 'discard',
+};
+
+export const RESULT_TYPES = {
+  WIN: 'win',
+  CIRCLE_LOSS: 'circle-loss',
+  DRAW: 'draw',
+  DRAW_ROUND: 'draw-round',
+};
+
+export const CIRCLE_LOSS_REASONS = {
+  RULE_VIOLATION: 'rule-violation',
+  SUPPORT_PAIR_FAILURE: 'support-pair-failure',
+  TAKEOVER_NOT_LISTENING: 'takeover-not-listening',
+  DECLINED_CHI_LATER_CHI: 'declined-chi-later-chi',
+  ILLEGAL_DISCARD: 'illegal-discard',
+  NO_LEGAL_DISCARD: 'no-legal-discard',
+  CHI_LOCK_VIOLATION: 'chi-lock-violation',
+  DEALER_NO_KEZI: 'dealer-no-kezi',
+};
+
+export const DRAW_ROUND_REASONS = {
+  SLIP_NO_TAKEOVER: 'slip-no-takeover',
+  LOW_DECK: 'low-deck',
+  EXHAUSTED_DECK: 'exhausted-deck',
+};
+
 export const PHRASES = [
   { id: 'sdr', text: '上大人', chars: ['上', '大', '人'], keys: ['shang', 'da', 'ren'] },
   { id: 'kyj', text: '孔乙己', chars: ['孔', '乙', '己'], keys: ['kong', 'yi', 'ji'] },
@@ -68,18 +97,29 @@ export const DEFAULT_RULES = {
   idleHandSize: 22,
   targetDoorCount: 8,
   aiDelayMs: 650,
+  unclaimedDiscardSettleMs: 800,
+  meldActionSettleMs: 800,
   allowDiscardWin: true,
   allowSelfDrawWin: true,
   allowChiFromPreviousOnly: true,
   takeoverOperationLimit: 3,
   basePoint: 1,
+  lowDeckDrawThreshold: 15,
+  actionOrder: ['hu', 'ta', 'zhao', 'peng', 'chi'],
+  circleLossPoint: 1,
+  huPayments: {
+    '屁胡': 1,
+    '小甲': 2,
+    '大甲': 2,
+    '场': 4,
+  },
   cardSymbols: buildSymbols(),
   phrases: PHRASES,
   scoring: {
-    baseWin: 10,
-    selfDrawBonus: 4,
-    discardWinBonus: 2,
-    circleLossPenalty: 30,
+    baseWin: 1,
+    selfDrawBonus: 0,
+    discardWinBonus: 0,
+    circleLossPenalty: 1,
   },
 };
 

@@ -16,6 +16,7 @@ export default class DataBus {
   takeoverQueue = [];
   jiangCard = null;
   jiangPhraseId = null;
+  appearingCard = null;
   drawnCard = null;
   selectedCardId = null;
   recentDiscard = null;
@@ -50,6 +51,7 @@ export default class DataBus {
       takeoverQueue: [],
       jiangCard: null,
       jiangPhraseId: null,
+      appearingCard: null,
       drawnCard: null,
       selectedCardId: null,
       recentDiscard: null,

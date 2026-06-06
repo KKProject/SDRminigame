@@ -1,22 +1,4 @@
-# huapai-game-rules Specification
-
-## Purpose
-TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose after archive.
-## Requirements
-### Requirement: Configurable Shang Da Ren Deck
-The system SHALL create the Shang Da Ren deck from exactly 8 configured phrases: `上大人`, `孔乙己`, `化三千`, `七十土`, `尔小生`, `福禄寿`, `佳作仁`, and `八九子`. Each phrase SHALL contain 3 characters, each character SHALL have 6 copies, and each character SHALL be colored by phrase position: first red, second green, third black.
-
-#### Scenario: Default deck is created
-- **WHEN** a new round starts with the default rule configuration
-- **THEN** the system MUST create a shuffled 144-card deck containing 6 copies of each of the 24 configured characters exactly once per copy id
-
-#### Scenario: Deck supports rule variants
-- **WHEN** the rule configuration changes phrase definitions, copies per character, or color rules
-- **THEN** the system MUST use the updated configuration without requiring changes to table rendering or AI modules
-
-#### Scenario: Card colors are assigned
-- **WHEN** cards are created for any configured phrase
-- **THEN** the first character MUST render as red, the second as green, and the third as black
+## MODIFIED Requirements
 
 ### Requirement: Round Setup
 The system SHALL initialize a four-seat Shang Da Ren round with a counterclockwise seating order, one dealer, shuffled deck, opening-deal state, jiang-card state, empty exposed action areas, empty discard piles, action-history state, forced-action state, chi-decline penalty state, discard-restriction counters, takeover state, and active turn state.
@@ -163,13 +145,6 @@ The system SHALL detect winning hands using the eight-door Shang Da Ren rule. A 
 - **WHEN** multiple players can hu with the same appearing card
 - **THEN** the system MUST award hu only to the first legal player in the current response order
 
-### Requirement: Round Restart
-The system SHALL allow the player to start a fresh round after a win or draw without reloading the minigame.
-
-#### Scenario: Result restart
-- **WHEN** the player taps restart on the result overlay
-- **THEN** the system MUST clear previous round state and begin a new shuffled round
-
 ### Requirement: Opening Deal And Dealer Takeover
 The system SHALL implement the revised opening flow: four players draw counterclockwise with the dealer drawing first, the dealer receives 23 cards, each idle player receives 22 cards, the dealer's final drawn card becomes the jiang card, and every character in the jiang card's phrase is treated as jiang for the round. If the dealer's 23-card hand contains no three-of-a-kind or larger same-character group, the dealer SHALL slip; each following player with at least one three-of-a-kind or larger same-character group SHALL be offered dealer takeover in turn. If nobody accepts takeover, or no idle player has a three-of-a-kind, the round SHALL be a slip draw-round and the next round's dealer SHALL be the slipped dealer's next player.
 
@@ -258,4 +233,3 @@ The system SHALL reject discards from protected complete phrases, enforce phrase
 #### Scenario: No legal discard exists
 - **WHEN** a player is required to discard, cannot legally discard any hand card, and does not have a legal hu
 - **THEN** the system MUST end the round as circle-loss for that player
-

@@ -19,17 +19,22 @@ import {
   buildCircleLossResult,
   calculateOperationFu,
   calculateHuScoring,
+  createChiPenaltyKey,
   dealOpeningHands,
   evaluateWin,
   filterHighestPriority,
   findResponseActions,
   findSelfDrawActions,
+  findTaActions,
   findTakeoverEligibleSeats,
+  getLegalDiscards,
+  getSpecialTaziRequirement,
   hasKezi,
   hasTriplet,
   isLegalDiscard,
   isListening,
   pointValueForGrade,
+  validateSupportPairObligations,
   validateSupportPairs,
 } from './evaluator';
 
@@ -114,12 +119,73 @@ function makeLegacyTestAtlas() {
   };
 }
 
+const SDR_RULE_TEST_CASES = [
+  ['T001', '牌组数量'],
+  ['T002', '发牌数量'],
+  ['T003', '将牌判断'],
+  ['T004', '庄家不滑庄'],
+  ['T005', '庄家滑庄'],
+  ['T006', '可接庄'],
+  ['T007', '滑庄流局'],
+  ['T008', '牌堆不足流局'],
+  ['T009', '摸牌不入手'],
+  ['T010', '摸牌可胡'],
+  ['T011', '操作优先级'],
+  ['T012', '多人可胡'],
+  ['T013', '普通吃'],
+  ['T014', '吃牌计福'],
+  ['T015', '将牌原句'],
+  ['T016', '碰红字'],
+  ['T017', '碰将牌红字'],
+  ['T018', '自然红刻子'],
+  ['T019', '自然将红刻子'],
+  ['T020', '碰后招'],
+  ['T021', '自然刻子招'],
+  ['T022', '招牌对子'],
+  ['T023', '五张对子'],
+  ['T024', '六张对子'],
+  ['T025', '对子不足'],
+  ['T026', '禁拆原句'],
+  ['T027', '可打多余牌'],
+  ['T028', '八门胡'],
+  ['T029', '无 xy'],
+  ['T030', '多个 xy'],
+  ['T031', '小甲'],
+  ['T032', '大甲'],
+  ['T033', '场'],
+  ['T034', '屁胡'],
+  ['T035', '等级优先'],
+  ['T036', '进圈赔付'],
+  ['T037', '胡牌赔付'],
+  ['T038', '自摸'],
+  ['T039', '点炮'],
+  ['T040', '截胡'],
+].map(([id, scenario]) => ({ id, scenario }));
+
 export function runSelfChecks() {
+  assert(SDR_RULE_TEST_CASES.length === 40, 'T001-T040 rule test skeleton should include 40 cases');
+  SDR_RULE_TEST_CASES.forEach((testCase, index) => {
+    assert(testCase.id === `T${String(index + 1).padStart(3, '0')}`, `missing rule test skeleton ${index + 1}`);
+    assert(Boolean(testCase.scenario), `${testCase.id} should describe its scenario`);
+  });
+
   const deck = createDeck(DEFAULT_RULES);
   assert(deck.length === 144, 'deck should contain 144 cards');
   assert(DEFAULT_RULES.phrases.length === 8, 'must configure 8 phrases');
+  assert(DEFAULT_RULES.cardSymbols.length === 24, 'must configure 24 card symbols');
+  assert(DEFAULT_RULES.copiesPerSymbol === 6, 'each symbol should have 6 configured copies');
+  assert(DEFAULT_RULES.lowDeckDrawThreshold === 15, 'low-deck draw threshold should be 15 cards');
+  assert(DEFAULT_RULES.actionOrder.join(',') === 'hu,ta,zhao,peng,chi', 'action order should follow hu > ta > zhao > peng > chi');
   assert(PHRASES.map((phrase) => phrase.text).join(' ') === '上大人 孔乙己 化三千 七十土 尔小生 福禄寿 佳作仁 八九子', 'phrase list mismatch');
-  assert(deck.filter((card) => card.key === 'shang').length === 6, 'each character should have 6 copies');
+  DEFAULT_RULES.phrases.forEach((phrase) => {
+    assert(phrase.keys.length === 3, `${phrase.text} should have 3 symbols`);
+    phrase.keys.forEach((key, position) => {
+      const copies = deck.filter((card) => card.key === key);
+      assert(copies.length === 6, `${key} should have 6 copies`);
+      assert(copies.every((card) => card.phraseId === phrase.id), `${key} should keep phrase id`);
+      assert(copies.every((card) => card.position === position), `${key} should keep phrase position`);
+    });
+  });
   assert(deck.find((card) => card.key === 'shang').color === '#d92d20', 'first phrase card should be red');
   assert(deck.find((card) => card.key === 'da').color === '#079455', 'middle phrase card should be green');
   assert(deck.find((card) => card.key === 'ren').color === '#1d2939', 'last phrase card should be black');
@@ -156,7 +222,11 @@ export function runSelfChecks() {
   const opening = dealOpeningHands(createDeck(DEFAULT_RULES), 0, DEFAULT_RULES);
   assert(opening.hands[0].length === 23, 'dealer should receive 23 cards');
   assert(opening.hands[1].length === 22 && opening.hands[2].length === 22 && opening.hands[3].length === 22, 'idle players should receive 22 cards');
+  assert(opening.hands.reduce((total, hand) => total + hand.length, 0) === 89, 'opening deal should distribute 89 cards');
+  assert(opening.deck.length === 55, 'opening deal should leave 55 cards in deck');
   assert(opening.jiangCard && opening.jiangPhraseId === opening.jiangCard.phraseId, 'jiang card phrase should be marked');
+  const jiangPhrase = DEFAULT_RULES.phrases.find((phrase) => phrase.id === opening.jiangPhraseId);
+  assert(jiangPhrase && jiangPhrase.keys.length === 3 && jiangPhrase.keys.indexOf(opening.jiangCard.key) >= 0, 'jiang phrase should include the jiang card and all three phrase keys');
   assert(opening.dealLog.slice(0, 4).map((item) => item.seat).join(',') === '0,1,2,3', 'opening deal should start with dealer and continue counterclockwise');
   const dealerDraws = opening.dealLog.filter((item) => item.seat === 0);
   assert(dealerDraws[dealerDraws.length - 1].card.id === opening.jiangCard.id, 'dealer final opening draw should be jiang card');
@@ -167,10 +237,17 @@ export function runSelfChecks() {
   assert(!hasTriplet(seats[0].hand), 'dealer should have no triplet');
   assert(findTakeoverEligibleSeats(seats, 0, DEFAULT_RULES)[0] === 1, 'seat 1 should be takeover eligible');
 
+  const noTakeoverSeats = createSeats(DEFAULT_RULES, 0);
+  noTakeoverSeats[0].hand = cardsFor(['shang', 'da', 'ren']);
+  noTakeoverSeats[1].hand = cardsFor(['kong', 'yi', 'ji']);
+  noTakeoverSeats[2].hand = cardsFor(['hua', 'san', 'qian']);
+  noTakeoverSeats[3].hand = cardsFor(['qi', 'shi', 'tu']);
+  assert(findTakeoverEligibleSeats(noTakeoverSeats, 0, DEFAULT_RULES).length === 0, 'no idle player without kezi base should be takeover eligible');
+
   const state = makeState();
   state.seats[0].hand = cardsFor(['da', 'ren']);
   state.seats[3].hand = cardsFor(['shang']);
-  state.seats[1].hand = cardsFor(['shang', 'shang', 'shang']);
+  state.seats[1].hand = cardsFor(['shang', 'shang', 'shang', 'da', 'da']);
   const discard = state.seats[3].hand[0];
   let actions = filterHighestPriority(findResponseActions(state, 3, discard, DEFAULT_RULES));
   assert(actions[0].type === 'zhao', 'zhao should outrank chi');
@@ -181,12 +258,25 @@ export function runSelfChecks() {
   actions = findResponseActions(pengState, 2, pengState.seats[2].hand[0], DEFAULT_RULES);
   assert(actions.find((action) => action.type === 'peng'), 'peng should be available');
   assert(chooseResponse(actions).priority >= ACTION_PRIORITY.peng, 'AI should choose a priority response');
+  assert(actions.every((action) => typeof action.responseIndex === 'number'), 'response actions should carry response order index');
 
   const chiPengState = makeState();
   chiPengState.seats[0].hand = cardsFor(['shang', 'shang', 'da', 'ren']);
   chiPengState.seats[3].hand = cardsFor(['shang']);
   const chiPengActions = filterHighestPriority(findResponseActions(chiPengState, 3, chiPengState.seats[3].hand[0], DEFAULT_RULES));
   assert(chiPengActions.find((action) => action.type === 'peng') && chiPengActions.find((action) => action.type === 'chi'), 'xxyz receiving x should offer both peng and chi');
+  assert(chiPengActions.every((action) => action.priority === ACTION_PRIORITY.peng || action.createsChiLock), 'priority filtering should keep only top tier plus same-player chi-peng conflict');
+  const specialTaziHand = cardsFor(['shang', 'shang', 'da']);
+  assert(getSpecialTaziRequirement(specialTaziHand, cardsFor(['ren'])[0], DEFAULT_RULES, 'chi').pattern === 'xxy', 'xxy plus z should require chi');
+  assert(getSpecialTaziRequirement(specialTaziHand, cardsFor(['shang'])[0], DEFAULT_RULES, 'peng').pattern === 'xxy', 'xxy plus x should require peng');
+  assert(createChiPenaltyKey({ card: cardsFor(['ren'])[0] }) === 'sdr:ren', 'chi penalty key should include phrase and missing card');
+  ['shang', 'da', 'ren'].forEach((incomingKey) => {
+    const protectedPhraseState = makeState();
+    protectedPhraseState.seats[0].hand = cardsFor(['shang', 'da', 'ren']);
+    protectedPhraseState.seats[3].hand = cardsFor([incomingKey]);
+    const protectedPhraseActions = findResponseActions(protectedPhraseState, 3, protectedPhraseState.seats[3].hand[0], DEFAULT_RULES);
+    assert(!protectedPhraseActions.find((action) => action.seat === 0 && action.type === 'chi'), `exact complete phrase must not offer chi for appearing ${incomingKey}`);
+  });
 
   const zhaoHand = cardsFor(['shang', 'shang', 'shang', 'da', 'da']);
   const zhaoCard = cardsFor(['shang'])[0];
@@ -194,9 +284,34 @@ export function runSelfChecks() {
   zhaoState.seats[0].hand = zhaoHand;
   actions = findSelfDrawActions(zhaoState, 0, zhaoCard, DEFAULT_RULES);
   assert(actions.find((action) => action.type === 'zhao'), 'self-draw zhao should be available');
+  const unsafeZhaoState = makeState();
+  unsafeZhaoState.seats[0].hand = cardsFor(['shang', 'shang', 'shang']);
+  const unsafeZhaoCard = cardsFor(['shang'])[0];
+  const unsafeZhaoActions = findSelfDrawActions(unsafeZhaoState, 0, unsafeZhaoCard, DEFAULT_RULES);
+  assert(unsafeZhaoActions.find((action) => action.type === 'zhao').circleLossRisk, 'zhao without support pair should be marked as circle-loss risk');
+  assert(!filterHighestPriority(unsafeZhaoActions).find((action) => action.type === 'zhao'), 'unsafe optional zhao should not block a safer lower-priority action');
+  assert(chooseResponse([
+    { type: 'zhao', seat: 1, priority: ACTION_PRIORITY.zhao, circleLossRisk: true },
+    { type: 'peng', seat: 1, priority: ACTION_PRIORITY.peng },
+  ]).type === 'peng', 'AI should choose safe peng instead of optional zhao that immediately circle-losses');
   assert(validateSupportPairs(zhaoHand, zhaoHand.slice(0, 3).concat([zhaoCard]), DEFAULT_RULES).valid, '4-card zhao should be supported by one pair');
   assert(!validateSupportPairs(cardsFor(['da', 'da', 'da', 'da']), cardsFor(['shang', 'shang', 'shang', 'shang', 'shang']), DEFAULT_RULES).valid, '5-card zhao needs two distinct pair sources');
   assert(!validateSupportPairs(cardsFor(['da', 'da', 'da', 'da']), cardsFor(['shang', 'shang', 'shang', 'shang', 'shang', 'shang']), DEFAULT_RULES).valid, '6-card ta needs three valid pair sources');
+  assert(!validateSupportPairObligations(cardsFor(['da', 'da']), [
+    { key: 'shang', cards: cardsFor(['shang', 'shang', 'shang', 'shang']) },
+    { key: 'kong', cards: cardsFor(['kong', 'kong', 'kong', 'kong']) },
+  ], DEFAULT_RULES).valid, 'the same support pair must not be reused by multiple high-order groups');
+  const taOwnerState = makeState();
+  taOwnerState.seats[0].hand = cardsFor(['da', 'da']);
+  taOwnerState.seats[0].melds = [{
+    id: 'human-zhao',
+    type: 'zhao',
+    key: 'shang',
+    cards: cardsFor(['shang', 'shang', 'shang', 'shang']),
+  }];
+  const taIncoming = cardsFor(['shang'])[0];
+  assert(findTaActions(taOwnerState, 0, taIncoming, 'draw').length === 1, 'zhao owner should receive ta action');
+  assert(findTaActions(taOwnerState, 1, taIncoming, 'draw').length === 0, 'another AI seat must not auto-ta the human zhao group');
 
   const winCards = cardsFor([
     'shang', 'shang', 'shang',
@@ -222,6 +337,17 @@ export function runSelfChecks() {
     'fu', 'lu', 'shou',
   ]), [], 'self', DEFAULT_RULES);
   assert(!noXy.isWin, 'missing xy must fail');
+  const multiXy = evaluateWin(cardsFor([
+    'shang', 'da',
+    'kong', 'yi',
+    'hua', 'hua', 'hua',
+    'san', 'san', 'san',
+    'qian', 'qian', 'qian',
+    'qi', 'shi', 'tu',
+    'er', 'xiao', 'sheng',
+    'fu', 'lu', 'shou',
+  ]), [], 'self', DEFAULT_RULES);
+  assert(!multiXy.isWin, 'multiple xy doors must fail');
 
   const discardSeat = createSeats(DEFAULT_RULES, 0)[0];
   discardSeat.hand = cardsFor(['shang', 'da', 'ren', 'kong']);
@@ -229,7 +355,9 @@ export function runSelfChecks() {
   const extraPhraseSeat = createSeats(DEFAULT_RULES, 0)[0];
   extraPhraseSeat.hand = cardsFor(['shang', 'shang', 'da', 'ren']);
   assert(isLegalDiscard(extraPhraseSeat, extraPhraseSeat.hand[0], DEFAULT_RULES).legal, 'xxyz should allow one extra-card discard');
+  assert(getLegalDiscards(discardSeat, DEFAULT_RULES).length === 1, 'only non-protected phrase cards should remain legal discard candidates');
   assert(buildCircleLossResult(0, createSeats(DEFAULT_RULES), '测试进圈').type === 'circle-loss', 'circle-loss result should be created');
+  assert(buildCircleLossResult(0, createSeats(DEFAULT_RULES), '测试进圈').settlement.payments.length === 3, 'circle-loss should pay three players');
   assert(chooseDiscard({ hand: cardsFor(['shang', 'shang', 'kong']) }, DEFAULT_RULES), 'AI should choose discard');
   assert(typeof isListening(cardsFor(['shang', 'shang']), [], DEFAULT_RULES) === 'boolean', 'listening evaluator should return boolean');
   assert(hasKezi(cardsFor(['shang', 'shang', 'shang']), []), 'three same cards should count as kezi');
@@ -245,7 +373,7 @@ export function runSelfChecks() {
     { type: 'xx', key: 'fu', keys: ['fu', 'fu'] },
     { type: 'xy', keys: ['jia', 'zuo'] },
   ], DEFAULT_RULES, { jiangPhraseId: 'sdr' });
-  assert(scoring.totalFu >= 24 && scoring.hasJiangMultiplier, 'scoring should apply jiang multiplier');
+  assert(scoring.totalFu >= 44 && scoring.hasJiangMultiplier, 'scoring should apply phrase fu, natural kezi fu, zhao fu, and jiang multiplier');
   assert(pointValueForGrade('屁胡', DEFAULT_RULES) === 1, 'pi hu should settle 1 point');
   assert(pointValueForGrade('小甲', DEFAULT_RULES) === 2, 'jia hands should settle 2 points');
   assert(pointValueForGrade('场', DEFAULT_RULES) === 4, 'chang should settle 4 points');
@@ -254,8 +382,8 @@ export function runSelfChecks() {
     { type: 'peng', label: '碰', key: 'da', cards: cardsFor(['da', 'da', 'da']) },
     { type: 'zhao', label: '招', key: 'shang', cards: cardsFor(['shang', 'shang', 'shang', 'shang']) },
   ], DEFAULT_RULES, { jiangPhraseId: 'sdr' });
-  assert(operationScoring.entries.find((entry) => entry.type === 'chi').fu === 1, 'chi should count one operation fu');
-  assert(operationScoring.totalFu === 1 + 8 + 32, 'operation fu should score chi, peng, zhao and jiang multiplier');
+  assert(operationScoring.entries.find((entry) => entry.type === 'chi').fu === 4, 'jiang chi should count four operation fu');
+  assert(operationScoring.totalFu === 4 + 8 + 48, 'operation fu should score chi, peng, natural zhao and jiang multiplier');
 
   const layoutSeats = createSeats(DEFAULT_RULES, 0);
   layoutSeats[0].hand = cardsFor([

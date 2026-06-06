@@ -522,7 +522,8 @@ export default class TableRenderer {
       ctx.fillText(result.summary || '', area.x + 24, area.y + 112);
       if (result.scoring) {
         const jiangPhrase = state.rules.phrases.find((phrase) => phrase.id === result.jiangPhraseId);
-        ctx.fillText(`将：${jiangPhrase ? jiangPhrase.text : '-'}  等级：${result.grade}  福：${result.scoring.totalFu}  分：${result.points}`, area.x + 24, area.y + 142);
+        const payment = result.settlement ? `每家赔${result.settlement.point}分` : `分：${result.points}`;
+        ctx.fillText(`将：${jiangPhrase ? jiangPhrase.text : '-'}  等级：${result.grade}  福：${result.scoring.totalFu}  ${payment}`, area.x + 24, area.y + 142);
         const detail = result.scoring.entries
           .slice(0, 3)
           .map((entry) => `${entry.description}+${entry.fu}`)
@@ -532,7 +533,7 @@ export default class TableRenderer {
     } else if (result.type === 'circle-loss') {
       ctx.fillText(`输家：${state.seats[result.loser].name}`, area.x + 24, area.y + 82);
       ctx.fillText(`赢家：${result.winners.map((seat) => state.seats[seat].name).join('、')}`, area.x + 24, area.y + 112);
-      ctx.fillText(result.reason || '', area.x + 24, area.y + 142);
+      ctx.fillText(`${result.reason || ''}${result.settlement ? `，每家赔${result.settlement.point}分` : ''}`, area.x + 24, area.y + 142);
     } else if (result.type === 'draw-round') {
       ctx.fillText(result.summary || '流局，重新开局', area.x + 24, area.y + 86);
     } else {

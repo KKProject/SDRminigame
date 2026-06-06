@@ -1,8 +1,5 @@
-# huapai-ai-opponents Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose after archive.
-## Requirements
 ### Requirement: AI Turn Execution
 The system SHALL allow each AI opponent to choose whether to accept eligible dealer takeover, draw, evaluate legal wins and appearing-card grouping actions, obey required chi/peng/zhao/ta operations, choose a legal discard, and end its turn without human input. AI SHALL never add a drawn appearing card to hand unless a legal action claims it.
 
@@ -62,4 +59,3 @@ The system SHALL delay visible AI decisions briefly enough for the player to per
 #### Scenario: AI forced action still shows progression
 - **WHEN** an AI performs a mandatory chi, peng, zhao, ta, or circle-loss resolution
 - **THEN** the system MUST still show a brief visible progression state before applying the result
-

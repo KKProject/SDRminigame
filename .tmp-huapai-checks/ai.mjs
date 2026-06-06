@@ -33,9 +33,13 @@ export function chooseDiscard(seat, rules = DEFAULT_RULES) {
 
 export function chooseResponse(actions) {
   if (!actions.length) return null;
-  return actions.slice().sort((a, b) => {
+  const safeActions = actions.filter((action) => !action.circleLossRisk);
+  const candidates = safeActions.length ? safeActions : actions.filter((action) => action.forced);
+  if (!candidates.length) return null;
+  return candidates.slice().sort((a, b) => {
     if (b.priority !== a.priority) return b.priority - a.priority;
     if (a.forced !== b.forced) return a.forced ? -1 : 1;
+    if ((a.responseIndex || 0) !== (b.responseIndex || 0)) return (a.responseIndex || 0) - (b.responseIndex || 0);
     return a.seat - b.seat;
   })[0];
 }
