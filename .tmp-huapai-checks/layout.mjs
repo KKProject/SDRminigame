@@ -3,7 +3,19 @@ import { DEFAULT_RULES } from './rules.mjs';
 
 export const HAND_CARD_SOURCE_WIDTH = 88;
 export const HAND_CARD_SOURCE_HEIGHT = 108;
-export const HAND_STACK_SOURCE_STEP = 40;
+export const HAND_STACK_SOURCE_STEP = 54;
+const HAND_SIZE_STACK_COUNT = 6;
+const ACTION_BUTTON_HEIGHT = 50;
+const ACTION_BUTTON_ASPECT_RATIOS = {
+  acceptTakeover: 191 / 114,
+  declineTakeover: 192 / 115,
+  hu: 113 / 116,
+  zhao: 113 / 116,
+  ta: 113 / 116,
+  peng: 113 / 116,
+  chi: 113 / 116,
+  pass: 94 / 97,
+};
 export const CARD_SOURCE_WIDTH = HAND_CARD_SOURCE_WIDTH;
 export const CARD_SOURCE_HEIGHT = HAND_CARD_SOURCE_HEIGHT;
 export const CARD_ASPECT_RATIO = HAND_CARD_SOURCE_WIDTH / HAND_CARD_SOURCE_HEIGHT;
@@ -429,10 +441,10 @@ function createTableZones(bounds, topBar, handY, actionY, seatPanels, isLandscap
   };
 }
 
-function createActionModal(bounds, handY, playerActions, result) {
+function createActionModal(bounds, handY, playerActions, result, isLandscape = false) {
   const hasActions = playerActions.length > 0;
-  const modalWidth = Math.min(bounds.width, Math.max(220, Math.floor(bounds.width * 0.46)));
-  const modalHeight = hasActions ? 92 : 0;
+  const modalWidth = bounds.width;
+  const modalHeight = hasActions ? ACTION_BUTTON_HEIGHT : 0;
   const modalY = Math.max(bounds.y + 54, handY - modalHeight - 12);
   return rect(
     Math.floor(bounds.x + (bounds.width - modalWidth) / 2),
@@ -445,9 +457,10 @@ function createActionModal(bounds, handY, playerActions, result) {
 
 function computeAspectCardWidth(handWidth, columnCount, handAreaHeight, maxStack) {
   const horizontalLimit = Math.floor(handWidth / columnCount);
+  const sizingStack = Math.max(maxStack, HAND_SIZE_STACK_COUNT);
   const verticalLimit = Math.floor(
     (handAreaHeight * HAND_CARD_SOURCE_WIDTH)
-    / (HAND_CARD_SOURCE_HEIGHT + HAND_STACK_SOURCE_STEP * Math.max(0, maxStack - 1))
+    / (HAND_CARD_SOURCE_HEIGHT + HAND_STACK_SOURCE_STEP * Math.max(0, sizingStack - 1))
   );
   return Math.max(8, Math.min(horizontalLimit, verticalLimit));
 }
@@ -599,7 +612,7 @@ export default class TableLayout {
     const handWidth = contentBounds.width;
     const handBottom = contentBounds.y + contentBounds.height - (isLandscape ? 10 : 12);
     const handAreaHeight = isLandscape
-      ? Math.max(86, Math.min(148, Math.floor(height * 0.34)))
+      ? Math.max(140, Math.min(210, Math.floor(height * 0.46)))
       : Math.max(96, Math.min(170, Math.floor(height * 0.30)));
     const columns = this.stableHandColumns(player.hand, state, state.rules || DEFAULT_RULES);
     const columnCount = Math.max(1, columns.length);
@@ -629,27 +642,25 @@ export default class TableLayout {
       type: 'mute',
       action: { type: 'mute', label: state.muted ? '静' : '音' },
     });
-    const actionModal = createActionModal(contentBounds, handY, state.playerActions, state.phase === 'result');
+    const actionModal = createActionModal(contentBounds, handY, state.playerActions, state.phase === 'result', isLandscape);
     const buttonGap = isLandscape ? 8 : 6;
-    const buttonHeight = isLandscape ? 34 : 36;
-    const actionCount = Math.max(1, state.playerActions.length);
-    const buttonWidth = state.playerActions.length
-      ? Math.max(44, Math.min(72, Math.floor((actionModal.width - 28 - buttonGap * Math.max(0, actionCount - 1)) / actionCount)))
-      : 0;
-    const actionGroupWidth = state.playerActions.length
-      ? state.playerActions.length * buttonWidth + Math.max(0, state.playerActions.length - 1) * buttonGap
-      : 0;
-    const actionStartX = Math.floor(actionModal.x + (actionModal.width - actionGroupWidth) / 2);
-    const actionY = actionModal.visible
-      ? actionModal.y + actionModal.height - buttonHeight - 12
-      : Math.max(contentBounds.y, handY - buttonHeight - 8);
-    const actionButtons = state.playerActions.map((action, index) => rect(
-      actionStartX + index * (buttonWidth + buttonGap),
-      actionY,
-      buttonWidth,
-      buttonHeight,
-      { type: 'action', action }
+    const buttonHeight = ACTION_BUTTON_HEIGHT;
+    const actionButtonWidths = state.playerActions.map((action) => (
+      Math.round(buttonHeight * (ACTION_BUTTON_ASPECT_RATIOS[action.type] || 1))
     ));
+    const actionGroupWidth = actionButtonWidths.reduce((total, buttonWidth) => total + buttonWidth, 0)
+      + Math.max(0, state.playerActions.length - 1) * buttonGap;
+    const actionStartX = Math.floor(contentBounds.x + (contentBounds.width - actionGroupWidth) / 2);
+    const actionY = actionModal.visible
+      ? actionModal.y
+      : Math.max(contentBounds.y, handY - buttonHeight - 8);
+    let nextActionX = actionStartX;
+    const actionButtons = state.playerActions.map((action, index) => {
+      const buttonWidth = actionButtonWidths[index];
+      const button = rect(nextActionX, actionY, buttonWidth, buttonHeight, { type: 'action', action });
+      nextActionX += buttonWidth + buttonGap;
+      return button;
+    });
 
     if (state.phase === 'result') {
       actionButtons.push(rect(contentBounds.x + contentBounds.width / 2 - 52, contentBounds.y + contentBounds.height / 2 + (isLandscape ? 58 : 76), 104, 40, {

@@ -32,6 +32,9 @@ export default class TableInput {
     }
 
     if (region.type === 'action') {
+      if (this.renderer && this.renderer.markButtonPressed) {
+        this.renderer.markButtonPressed(region);
+      }
       this.engine.handlePlayerAction(region.action);
       return;
     }

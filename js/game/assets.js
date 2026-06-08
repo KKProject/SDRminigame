@@ -15,6 +15,10 @@ export const ASSET_MANIFEST = {
         small: ['tile_back_green_small', 'tile_back_red_small'],
       },
     },
+    actions: {
+      image: 'button',
+      path: 'images/action_buttons_named_atlas.json',
+    },
   },
   audio: {
     bgm: 'audio/bgmusic.mp3',
@@ -23,6 +27,17 @@ export const ASSET_MANIFEST = {
     win: '',
     tap: '',
   },
+};
+
+export const ACTION_ATLAS_FRAME_CONFIG = {
+  acceptTakeover: { originalIndex: 1, rotateCcw: true },
+  declineTakeover: { originalIndex: 4, rotateCcw: true },
+  hu: { originalIndex: 13, rotateCcw: true },
+  zhao: { originalIndex: 47, rotateCcw: true },
+  ta: { originalIndex: 36, rotateCcw: false },
+  peng: { originalIndex: 51, rotateCcw: true },
+  chi: { originalIndex: 27, rotateCcw: false },
+  pass: { originalIndex: 58, rotateCcw: false },
 };
 
 export const CARD_ATLAS_LABEL_KEYS = {
@@ -213,6 +228,16 @@ export function buildCardAtlasFrameMap(atlas, targetCount = 24) {
   return map;
 }
 
+export function buildAtlasOriginalIndexMap(atlas) {
+  if (!atlas || !atlas.frames) return {};
+  return Object.entries(atlas.frames).reduce((map, [name, frame]) => {
+    if (isValidFrame(frame) && typeof frame.originalIndex === 'number') {
+      map[frame.originalIndex] = { name, frame };
+    }
+    return map;
+  }, {});
+}
+
 function readJsonFile(path) {
   if (!path || typeof wx === 'undefined' || !wx.getFileSystemManager) return null;
   try {
@@ -229,6 +254,7 @@ export default class AssetLoader {
     this.images = {};
     this.atlases = {};
     this.cardAtlasFrames = {};
+    this.atlasOriginalIndexes = {};
     this.status = {};
   }
 
@@ -269,6 +295,7 @@ export default class AssetLoader {
     }
     this.atlases[name] = atlas;
     if (name === 'cards') this.cardAtlasFrames = buildCardAtlasFrameMap(atlas);
+    this.atlasOriginalIndexes[name] = buildAtlasOriginalIndexMap(atlas);
     this.status[`${name}Atlas`] = 'ready';
     return true;
   }
@@ -308,6 +335,21 @@ export default class AssetLoader {
       rotateCw: Boolean(options.rotateCw),
       rotateCcw: Boolean(options.rotateCcw),
     } : null;
+  }
+
+  getAtlasFrameByOriginalIndex(atlasName, originalIndex) {
+    const map = this.atlasOriginalIndexes[atlasName];
+    return map && map[originalIndex] ? map[originalIndex] : null;
+  }
+
+  getActionSprite(actionType) {
+    const config = ACTION_ATLAS_FRAME_CONFIG[actionType];
+    if (!config) return null;
+    const match = this.getAtlasFrameByOriginalIndex('actions', config.originalIndex);
+    if (!match) return null;
+    return this.getAtlasSprite(match.name, 'actions', {
+      rotateCcw: config.rotateCcw,
+    });
   }
 
   getCardFrame(card, size = 'big') {

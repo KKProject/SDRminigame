@@ -300,6 +300,14 @@ export function filterHighestPriority(actions) {
   const safeActions = actions.filter((action) => !action.circleLossRisk || action.forced);
   const sorted = safeActions.slice().sort((a, b) => b.priority - a.priority || (a.responseIndex || 0) - (b.responseIndex || 0) || a.seat - b.seat);
   const top = highestPriorityActions(sorted);
+  if (top.length && top[0].type === 'zhao') {
+    const topSeats = top.map((action) => action.seat);
+    const sameSeatChoices = sorted.filter((action) => (
+      ['peng', 'chi'].indexOf(action.type) >= 0
+      && topSeats.indexOf(action.seat) >= 0
+    ));
+    return top.concat(sameSeatChoices);
+  }
   if (!top.length || top[0].type !== 'peng') return top;
 
   const topPengSeats = top
@@ -512,11 +520,15 @@ function buildDoorOptions(counts, rules) {
       options.push({ type: 'xyz', keys: phrase, supportNeeded: 0 });
     }
     const index = phrase.indexOf(key);
-    const xyPairs = index >= 0
-      ? phrase.filter((_, phraseIndex) => phraseIndex !== (index + 2) % 3)
-      : [];
-    if (xyPairs.length === 2 && xyPairs.every((phraseKey) => counts[phraseKey] > 0)) {
-      options.push({ type: 'xy', keys: xyPairs, supportNeeded: 0 });
+    if (index >= 0) {
+      phrase
+        .filter((phraseKey) => phraseKey !== key)
+        .forEach((pairKey) => {
+          const xyPair = [key, pairKey];
+          if (xyPair.every((phraseKey) => counts[phraseKey] > 0)) {
+            options.push({ type: 'xy', keys: xyPair, supportNeeded: 0 });
+          }
+        });
     }
   }
 

@@ -41,10 +41,18 @@ const {
   HAND_STACK_SOURCE_STEP,
 } = await import(pathToFileURL(join(tempDir, 'layout.mjs')));
 const { default: TableRenderer } = await import(pathToFileURL(join(tempDir, 'renderer.mjs')));
-const { ASSET_MANIFEST, buildCardAtlasFrameMap } = await import(pathToFileURL(join(tempDir, 'assets.mjs')));
+const {
+  default: AssetLoader,
+  ACTION_ATLAS_FRAME_CONFIG,
+  ASSET_MANIFEST,
+  buildAtlasOriginalIndexMap,
+  buildCardAtlasFrameMap,
+} = await import(pathToFileURL(join(tempDir, 'assets.mjs')));
 const { createDeck, createSeats } = await import(pathToFileURL(join(tempDir, 'cards.mjs')));
 const { DEFAULT_RULES, PHASES } = await import(pathToFileURL(join(tempDir, 'rules.mjs')));
 const { calculateOperationFu } = await import(pathToFileURL(join(tempDir, 'evaluator.mjs')));
+const { evaluateWin } = await import(pathToFileURL(join(tempDir, 'evaluator.mjs')));
+const { findAppearingCardActions, filterHighestPriority } = await import(pathToFileURL(join(tempDir, 'evaluator.mjs')));
 
 runSelfChecks();
 
@@ -187,6 +195,13 @@ if (databus.seats.length !== DEFAULT_RULES.seatCount) {
 
 if (databus.seats[databus.dealerSeat].hand.length !== DEFAULT_RULES.dealerHandSize) {
   throw new Error('dealer opening hand size mismatch');
+}
+if (
+  DEFAULT_RULES.aiDelayMs < 850
+  || DEFAULT_RULES.unclaimedDiscardSettleMs < 1200
+  || DEFAULT_RULES.meldActionSettleMs < 1200
+) {
+  throw new Error('default animation settle timings should leave enough room for visible card transitions');
 }
 if (!databus.seats.every((seat) => seat.id === databus.dealerSeat || seat.hand.length === DEFAULT_RULES.idleHandSize)) {
   throw new Error('idle opening hand size mismatch');
@@ -376,9 +391,50 @@ if (databus.result.type !== 'circle-loss' || databus.result.loser !== 0) {
 }
 engine.rules = DEFAULT_RULES;
 
+const beginTurnClearSeats = createSeats(DEFAULT_RULES);
+const beginTurnClearDeck = createDeck(DEFAULT_RULES);
+const staleRecentDiscard = beginTurnClearDeck.shift();
+databus.setRoundState({
+  ...databus,
+  rules: DEFAULT_RULES,
+  seats: beginTurnClearSeats,
+  deck: beginTurnClearDeck,
+  phase: PHASES.AI_THINKING,
+  currentSeat: 1,
+  humanSeat: 0,
+  dealerSeat: 0,
+  nextDealerSeat: 0,
+  slippedDealer: null,
+  takeoverDealer: null,
+  takeoverQueue: [],
+  jiangCard: null,
+  jiangPhraseId: null,
+  drawnCard: null,
+  selectedCardId: null,
+  recentDiscard: { seat: 3, card: staleRecentDiscard, resolved: true },
+  pendingActions: [],
+  playerActions: [],
+  feedback: '',
+  result: null,
+  muted: false,
+  round: 5,
+});
+engine.beginTurn(1, true);
+if (databus.recentDiscard && databus.recentDiscard.card.id === staleRecentDiscard.id) {
+  throw new Error('new drawn turn should clear stale recent discard state');
+}
+if (engine.aiTimer) clearTimeout(engine.aiTimer);
+if (engine.advanceTimer) clearTimeout(engine.advanceTimer);
+
+databus.recentDiscard = { seat: 1, card: databus.seats[0].hand[0] };
+engine.aiTimer = setTimeout(() => {}, 1000);
+engine.advanceTimer = setTimeout(() => {}, 1000);
 engine.finishWin(0, databus.seats[0].hand[0], { summary: 'scripted win', score: 1, pattern: 'scripted', doors: [] });
 if (databus.result.type !== 'win' || databus.result.settlement.payments.length !== 3) {
   throw new Error('win result was not created');
+}
+if (databus.recentDiscard || engine.aiTimer || engine.advanceTimer || databus.pendingActions.length || databus.playerActions.length) {
+  throw new Error('win result should stop all pending turn state and timers');
 }
 engine.finishCircleLoss(0, 'scripted circle-loss');
 if (databus.result.type !== 'circle-loss' || databus.result.winners.length !== 3 || databus.result.settlement.payments.length !== 3) {
@@ -398,12 +454,21 @@ if (ASSET_MANIFEST.images.cardFront !== 'images/element.png') {
 if (!ASSET_MANIFEST.atlases || ASSET_MANIFEST.atlases.cards.path !== 'images/element.atlas.json') {
   throw new Error('default card atlas metadata must be images/element.atlas.json');
 }
+if (
+  !ASSET_MANIFEST.atlases.actions
+  || ASSET_MANIFEST.atlases.actions.image !== 'button'
+  || ASSET_MANIFEST.atlases.actions.path !== 'images/action_buttons_named_atlas.json'
+) {
+  throw new Error('default action atlas must use images/actions.png and action_buttons_named_atlas.json');
+}
 if (ASSET_MANIFEST.audio.bgm !== 'audio/bgmusic.mp3') {
   throw new Error('default background music must be audio/bgmusic.mp3');
 }
 await access(join(root, ASSET_MANIFEST.images.table));
 await access(join(root, ASSET_MANIFEST.images.cardFront));
 await access(join(root, ASSET_MANIFEST.atlases.cards.path));
+await access(join(root, ASSET_MANIFEST.images.button));
+await access(join(root, ASSET_MANIFEST.atlases.actions.path));
 await access(join(root, ASSET_MANIFEST.audio.bgm));
 
 const atlas = JSON.parse(await readFile(join(root, ASSET_MANIFEST.atlases.cards.path), 'utf8'));
@@ -467,6 +532,58 @@ if (first24CardMap.shang.bySize.mini[0].size !== 'mini') {
   throw new Error('shang mini frame should be mapped to mini size');
 }
 
+const actionAtlas = JSON.parse(await readFile(join(root, ASSET_MANIFEST.atlases.actions.path), 'utf8'));
+const actionIndexMap = buildAtlasOriginalIndexMap(actionAtlas);
+const expectedActionIndexes = {
+  acceptTakeover: [1, true],
+  declineTakeover: [4, true],
+  hu: [13, true],
+  zhao: [47, true],
+  ta: [36, false],
+  peng: [51, true],
+  chi: [27, false],
+  pass: [58, false],
+};
+Object.entries(expectedActionIndexes).forEach(([type, [originalIndex, rotateCcw]]) => {
+  if (!actionIndexMap[originalIndex]) {
+    throw new Error(`action atlas should contain originalIndex ${originalIndex} for ${type}`);
+  }
+  const config = ACTION_ATLAS_FRAME_CONFIG[type];
+  if (!config || config.originalIndex !== originalIndex || config.rotateCcw !== rotateCcw) {
+    throw new Error(`action atlas config mismatch for ${type}`);
+  }
+});
+const actionLoader = new AssetLoader({
+  ...ASSET_MANIFEST,
+  atlases: {
+    ...ASSET_MANIFEST.atlases,
+    actions: {
+      ...ASSET_MANIFEST.atlases.actions,
+      data: actionAtlas,
+    },
+  },
+});
+actionLoader.setAtlas('actions', actionAtlas);
+actionLoader.images.button = { id: 'actions-image' };
+actionLoader.status.button = 'ready';
+Object.entries(expectedActionIndexes).forEach(([type, [, rotateCcw]]) => {
+  const sprite = actionLoader.getActionSprite(type);
+  if (!sprite || sprite.rotateCcw !== rotateCcw) {
+    throw new Error(`action loader should return the configured sprite rotation for ${type}`);
+  }
+});
+if (actionLoader.getActionSprite('restart') !== null) {
+  throw new Error('unmapped action buttons should not receive an action atlas sprite');
+}
+const missingActionLoader = new AssetLoader({
+  images: {},
+  atlases: {},
+  audio: {},
+});
+if (missingActionLoader.getActionSprite('chi') !== null) {
+  throw new Error('missing action atlas should safely return no sprite');
+}
+
 const layoutSeats = createSeats(DEFAULT_RULES);
 layoutSeats[0].hand = createDeck(DEFAULT_RULES).slice(0, DEFAULT_RULES.dealerHandSize);
 const layoutState = {
@@ -490,6 +607,27 @@ function takeCards(deck, keys) {
     if (index < 0) throw new Error(`missing card ${key} in test deck`);
     return deck.splice(index, 1)[0];
   });
+}
+
+const multiActionDeck = createDeck(DEFAULT_RULES);
+const multiActionSeats = createSeats(DEFAULT_RULES);
+multiActionSeats[0].hand = takeCards(multiActionDeck, [
+  'shang', 'da', 'ren', 'ren', 'ren',
+  'fu', 'fu',
+]);
+multiActionSeats[3].hand = takeCards(multiActionDeck, ['ren']);
+const multiActionIncoming = multiActionSeats[3].hand[0];
+const multiActions = filterHighestPriority(findAppearingCardActions({
+  ...layoutState,
+  seats: multiActionSeats,
+  recentDiscard: { seat: 3, card: multiActionIncoming },
+  drawnCard: null,
+  pendingActions: [],
+  playerActions: [],
+}, 3, multiActionIncoming, 'discard', DEFAULT_RULES));
+const multiActionTypes = multiActions.map((action) => action.type).sort().join(',');
+if (multiActionTypes !== 'chi,peng,zhao') {
+  throw new Error('xyzzz plus incoming z should offer zhao, peng and chi choices to the same responding player');
 }
 
 function intersects(a, b) {
@@ -585,6 +723,18 @@ for (const [width, height] of [[568, 320], [667, 375], [844, 390], [932, 430], [
   if (layout.seatStatusAreas.bottom.x > layout.safe + 1 || layout.seatStatusAreas.bottom.avatar.y < height / 2) {
     throw new Error(`self avatar should stay near lower-left corner at ${width}x${height}`);
   }
+  layout.actionButtons
+    .filter((button) => ACTION_ATLAS_FRAME_CONFIG[button.action.type])
+    .forEach((button) => {
+      const actionConfig = ACTION_ATLAS_FRAME_CONFIG[button.action.type];
+      const actionFrame = actionIndexMap[actionConfig.originalIndex].frame.frame;
+      const expectedRatio = actionConfig.rotateCcw
+        ? actionFrame.h / actionFrame.w
+        : actionFrame.w / actionFrame.h;
+      if (button.height !== 50 || Math.abs((button.width / button.height) - expectedRatio) > 0.025) {
+        throw new Error(`action button ${button.action.type} should use 50px height and atlas aspect ratio at ${width}x${height}`);
+      }
+    });
 
   if (layout.handCards.length) {
     const ratio = layout.handCards[0].width / layout.handCards[0].height;
@@ -874,6 +1024,37 @@ if (columnIndexes.join(',') !== '0,1,2' || splitLayout.handCards.some((card) => 
   throw new Error('empty split columns should collapse while preserving remaining order');
 }
 
+const fixedSizeDeck = createDeck(DEFAULT_RULES);
+const fixedSizeSeats = createSeats(DEFAULT_RULES);
+fixedSizeSeats[0].hand = takeCards(fixedSizeDeck, [
+  'shang', 'da', 'ren',
+  'kong', 'yi', 'ji',
+  'hua', 'san', 'qian',
+  'qi', 'shi', 'tu',
+  'er', 'xiao', 'sheng',
+  'fu', 'lu', 'shou',
+  'jia', 'zuo', 'ren2',
+  'ba', 'jiu',
+]);
+const fixedSizeLayoutBuilder = new TableLayout(844, 390);
+const fullHandLayout = fixedSizeLayoutBuilder.build({
+  ...layoutState,
+  seats: fixedSizeSeats,
+  playerActions: [],
+});
+fixedSizeSeats[0].hand = fixedSizeSeats[0].hand.slice(0, 3);
+const shortHandLayout = fixedSizeLayoutBuilder.build({
+  ...layoutState,
+  seats: fixedSizeSeats,
+  playerActions: [],
+});
+if (shortHandLayout.cardWidth > fullHandLayout.cardWidth || shortHandLayout.cardHeight > fullHandLayout.cardHeight) {
+  throw new Error('hand cards should not grow larger when fewer hand columns remain');
+}
+if (Math.abs(shortHandLayout.cardStep - Math.round(shortHandLayout.cardHeight * 0.5)) > 1) {
+  throw new Error('hand phrase stack offset should be 50 percent of card height');
+}
+
 const fuDeck = createDeck(DEFAULT_RULES);
 const operationFu = calculateOperationFu([
   { type: 'chi', label: '吃', cards: takeCards(fuDeck, ['shang', 'da', 'ren']) },
@@ -885,6 +1066,27 @@ if (operationFu.totalFu !== 60 || operationFu.entries.find((entry) => entry.type
 }
 if (calculateOperationFu(createSeats(DEFAULT_RULES)[0].melds, DEFAULT_RULES).totalFu !== 0) {
   throw new Error('new round operation fu should derive as zero from empty exposed melds');
+}
+const userWinDeck = createDeck(DEFAULT_RULES);
+const userWinCards = takeCards(userWinDeck, [
+  'qi', 'shi', 'tu',
+  'ba', 'jiu', 'zi',
+  'da', 'da', 'da',
+  'kong', 'yi', 'ji',
+  'hua', 'qian',
+  'sheng', 'sheng', 'sheng', 'sheng',
+  'fu', 'lu', 'shou',
+  'ren2', 'ren2',
+]);
+const userWin = evaluateWin(userWinCards, [], 'discard', DEFAULT_RULES);
+if (
+  !userWin.isWin
+  || userWin.doors.filter((door) => door.type === 'xy').length !== 1
+  || !userWin.doors.find((door) => door.type === 'xy' && door.keys.join(',') === 'hua,qian')
+  || !userWin.doors.find((door) => door.type === 'same' && door.key === 'sheng' && door.keys.length === 4)
+  || !userWin.doors.find((door) => door.type === 'xx' && door.key === 'ren2')
+) {
+  throw new Error('win evaluation should accept non-adjacent same-phrase xy doors such as hua+qian with a support pair');
 }
 
 function createFakeRenderContext() {
@@ -904,8 +1106,10 @@ function createFakeRenderContext() {
     save: () => calls.push(['save']),
     restore: () => calls.push(['restore']),
     translate: (...args) => calls.push(['translate', args]),
+    scale: (...args) => calls.push(['scale', args]),
     rotate: (...args) => calls.push(['rotate', args]),
     fillText: (...args) => calls.push(['fillText', args]),
+    strokeText: (...args) => calls.push(['strokeText', args]),
     measureText: (text) => ({ width: String(text || '').length * 7 }),
     createLinearGradient: (...args) => {
       calls.push(['createLinearGradient', args]);
@@ -969,9 +1173,146 @@ directionRenderer.drawClaimedColumns(
 if (miniPositions.map((item) => `${item.x}:${item.y}`).join(',') !== '100:20,100:40,100:60,116:20,116:40,116:60') {
   throw new Error('claimed melds should render each meld as one left-to-right vertical column with no gap');
 }
-const animationSize = directionRenderer.animationCardSize(new TableLayout(667, 375).build(layoutState));
+const discardResolutionLayout = new TableLayout(667, 375).build(layoutState);
+const animationSize = directionRenderer.animationCardSize(discardResolutionLayout);
 if (Math.abs((animationSize.width / animationSize.height) - (88 / 307)) > 0.01) {
   throw new Error('big-card animation should preserve the big atlas card ratio');
+}
+let animatedCards = [];
+const easingRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+easingRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size, options) => {
+  animatedCards.push({ card, x, y, cardWidth, cardHeight, size, options });
+};
+easingRenderer.animation = easingRenderer.createCardAnimation(
+  'draw-test',
+  renderDeck[0],
+  { x: 0, y: 0 },
+  { x: 100, y: 0 },
+  'to-front',
+  1000
+);
+easingRenderer.animation.startedAt -= 500;
+easingRenderer.drawCardAnimation({}, discardResolutionLayout);
+if (
+  animatedCards.length !== 1
+  || animatedCards[0].x <= 50
+  || animatedCards[0].cardWidth <= animationSize.width
+  || !animatedCards[0].options
+  || !animatedCards[0].options.glow
+) {
+  throw new Error('card animation should ease forward, scale up mid-flight and draw with glow');
+}
+animatedCards = [];
+easingRenderer.animation.startedAt -= 500;
+easingRenderer.drawCardAnimation({}, discardResolutionLayout);
+if (
+  animatedCards.length !== 1
+  || Math.abs(animatedCards[0].cardWidth - animationSize.width) > 0.01
+  || Math.abs(animatedCards[0].cardHeight - animationSize.height) > 0.01
+  || easingRenderer.animation
+) {
+  throw new Error('card animation should settle back to the normal big-card size and clear itself');
+}
+const preemptRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+const staleCard = renderDeck[20];
+const activeResponseCard = renderDeck[21];
+preemptRenderer.animation = preemptRenderer.createCardAnimation(
+  `discard-zone:1:${staleCard.id}`,
+  staleCard,
+  preemptRenderer.animationEndForSeat(1, discardResolutionLayout),
+  preemptRenderer.discardAnimationEnd(1, discardResolutionLayout),
+  'to-discard',
+  500
+);
+preemptRenderer.lastDiscardEvent = {
+  seat: 1,
+  card: staleCard,
+  holdPosition: preemptRenderer.animationEndForSeat(1, discardResolutionLayout),
+};
+preemptRenderer.lastEventSignature = `discard:1:${staleCard.id}`;
+preemptRenderer.updateAnimation({
+  ...layoutState,
+  recentDiscard: { seat: 2, card: activeResponseCard },
+  pendingActions: [{ type: 'peng', seat: 0 }],
+  playerActions: [{ type: 'peng', seat: 0 }, { type: 'pass', seat: 0 }],
+  drawnCard: null,
+  currentSeat: 0,
+  phase: PHASES.HUMAN_RESPONSE,
+}, discardResolutionLayout);
+if (
+  !preemptRenderer.animation
+  || preemptRenderer.animation.card.id !== activeResponseCard.id
+  || preemptRenderer.lastDiscardEvent.card.id !== activeResponseCard.id
+) {
+  throw new Error('current response card should preempt stale resolving animations');
+}
+const drawnResponseCard = renderDeck[22];
+const drawPreemptRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+drawPreemptRenderer.animation = drawPreemptRenderer.createCardAnimation(
+  `discard-zone:1:${staleCard.id}`,
+  staleCard,
+  drawPreemptRenderer.animationEndForSeat(1, discardResolutionLayout),
+  drawPreemptRenderer.discardAnimationEnd(1, discardResolutionLayout),
+  'to-discard',
+  500
+);
+drawPreemptRenderer.lastDiscardEvent = {
+  seat: 1,
+  card: staleCard,
+  holdPosition: drawPreemptRenderer.animationEndForSeat(1, discardResolutionLayout),
+};
+drawPreemptRenderer.lastEventSignature = `discard:1:${staleCard.id}`;
+const drawnResponseState = {
+  ...layoutState,
+  recentDiscard: null,
+  drawnCard: drawnResponseCard,
+  currentSeat: 0,
+  pendingActions: [{ type: 'zhao', seat: 0, card: drawnResponseCard }],
+  playerActions: [{ type: 'zhao', seat: 0, card: drawnResponseCard }, { type: 'pass', seat: 0, label: '过' }],
+  phase: PHASES.HUMAN_RESPONSE,
+};
+drawPreemptRenderer.updateAnimation(drawnResponseState, discardResolutionLayout);
+if (!drawPreemptRenderer.animation || drawPreemptRenderer.animation.card.id !== drawnResponseCard.id) {
+  throw new Error('drawn response card should preempt stale resolving animations');
+}
+drawPreemptRenderer.animation.startedAt -= drawPreemptRenderer.animation.duration;
+drawPreemptRenderer.drawCard = () => {};
+drawPreemptRenderer.drawCardAnimation({}, discardResolutionLayout);
+let heldDraws = [];
+drawPreemptRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size, options) => {
+  heldDraws.push({ card, size, options });
+};
+drawPreemptRenderer.drawHeldDrawFallback({}, drawnResponseState, discardResolutionLayout);
+if (
+  heldDraws.length !== 1
+  || heldDraws[0].card.id !== drawnResponseCard.id
+  || heldDraws[0].size !== 'big'
+  || !heldDraws[0].options.glow
+) {
+  throw new Error('drawn response card should remain visible at the player front while action prompt is open');
+}
+let staleDiscardDraws = [];
+drawPreemptRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size, options) => {
+  staleDiscardDraws.push({ card, size, options });
+};
+drawPreemptRenderer.drawHeldDiscardFallback({}, {
+  ...drawnResponseState,
+  recentDiscard: { seat: 1, card: staleCard },
+}, discardResolutionLayout);
+if (staleDiscardDraws.length) {
+  throw new Error('stale recent discard should not remain visible while a drawn response card prompt is open');
 }
 if (!directionRenderer.shouldHoldRecentDiscard({
   ...layoutState,
@@ -981,7 +1322,6 @@ if (!directionRenderer.shouldHoldRecentDiscard({
 }, 1)) {
   throw new Error('recent discard should remain at the player front while responses are pending');
 }
-const discardResolutionLayout = new TableLayout(667, 375).build(layoutState);
 const pendingDiscardCard = renderDeck[24];
 const pendingDiscardState = {
   ...layoutState,
@@ -1069,6 +1409,201 @@ if (passRenderer.animation.stage !== 'to-discard' || passRenderer.animation.card
 if (passRenderer.resolvingDiscardMiniId(1) !== pendingDiscardCard.id) {
   throw new Error('discard mini card should stay hidden until the discard animation completes');
 }
+if (!passRenderer.effects.find((effect) => effect.kind === 'text' && effect.label === '过')) {
+  throw new Error('passed discard should create a short pass text effect');
+}
+
+const effectRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+const effectCtx = createFakeRenderContext();
+effectRenderer.addTextEffect('碰', 120, 80, { startedAt: Date.now() - 80 });
+effectRenderer.drawEffects(effectCtx, discardResolutionLayout);
+if (
+  !effectCtx.calls.find((call) => call[0] === 'strokeText' && call[1][0] === '碰')
+  || !effectCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === '碰')
+) {
+  throw new Error('action text effect should draw stroke and fill text');
+}
+effectRenderer.effects[0].startedAt -= effectRenderer.effects[0].duration;
+effectRenderer.updateEffects({ ...layoutState, seats: createSeats(DEFAULT_RULES), result: null }, discardResolutionLayout);
+if (effectRenderer.effects.length) {
+  throw new Error('expired text effects should be cleaned up');
+}
+
+const resultEffectRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+resultEffectRenderer.updateResultEffects({
+  ...layoutState,
+  result: { type: 'win', winner: 0 },
+  round: 9,
+}, discardResolutionLayout, Date.now());
+if (!resultEffectRenderer.effects.find((effect) => effect.label === '胡' && effect.fontSize > 70)) {
+  throw new Error('win result should create a prominent hu text effect');
+}
+resultEffectRenderer.animation = resultEffectRenderer.createCardAnimation(
+  `discard-zone:1:${pendingDiscardCard.id}`,
+  pendingDiscardCard,
+  resultEffectRenderer.animationEndForSeat(1, discardResolutionLayout),
+  resultEffectRenderer.discardAnimationEnd(1, discardResolutionLayout),
+  'to-discard',
+  500
+);
+resultEffectRenderer.lastDiscardEvent = {
+  seat: 1,
+  card: pendingDiscardCard,
+  holdPosition: resultEffectRenderer.animationEndForSeat(1, discardResolutionLayout),
+};
+resultEffectRenderer.comboAnimations = [{ cards: [pendingDiscardCard], startedAt: Date.now(), duration: 500 }];
+resultEffectRenderer.updateAnimation({
+  ...layoutState,
+  phase: PHASES.RESULT,
+  result: { type: 'win', winner: 0 },
+  recentDiscard: { seat: 1, card: pendingDiscardCard },
+}, discardResolutionLayout);
+if (resultEffectRenderer.animation || resultEffectRenderer.lastDiscardEvent || resultEffectRenderer.comboAnimations.length) {
+  throw new Error('win result should clear moving card animations and prevent later card motion');
+}
+
+const buttonFeedbackRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+const buttonLayout = new TableLayout(667, 375).build(layoutState);
+buttonFeedbackRenderer.updateEffects(layoutState, buttonLayout);
+buttonFeedbackRenderer.buttonPanelStartedAt = Date.now() - 40;
+const buttonCtx = createFakeRenderContext();
+buttonFeedbackRenderer.drawButtons(buttonCtx, layoutState, buttonLayout);
+const enterScale = buttonCtx.calls.find((call) => call[0] === 'scale');
+if (!enterScale || enterScale[1][0] === 1) {
+  throw new Error('action buttons should draw with an entry scale animation');
+}
+buttonFeedbackRenderer.markButtonPressed(buttonLayout.actionButtons[0]);
+const beforeButton = { ...buttonLayout.actionButtons[0] };
+const pressedVisual = buttonFeedbackRenderer.buttonVisual(buttonLayout.actionButtons[0]);
+if (!pressedVisual.pressed || pressedVisual.scale >= 1 || buttonLayout.actionButtons[0].x !== beforeButton.x) {
+  throw new Error('pressed action button should shrink visually without changing its hit region');
+}
+
+const imageButtonRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+  getActionSprite(type) {
+    if (type === 'chi') {
+      return {
+        image: { id: 'actions-image' },
+        frame: { frame: { x: 0, y: 0, w: 113, h: 116 } },
+        rotateCw: false,
+        rotateCcw: false,
+      };
+    }
+    if (type === 'peng') {
+      return {
+        image: { id: 'actions-image' },
+        frame: { frame: { x: 0, y: 0, w: 116, h: 113 } },
+        rotateCw: false,
+        rotateCcw: true,
+      };
+    }
+    return null;
+  },
+});
+const actionButtonRegion = { x: 10, y: 20, width: 54, height: 34 };
+const unrotatedBounds = imageButtonRenderer.actionSpriteBounds(imageButtonRenderer.assets.getActionSprite('chi'), actionButtonRegion);
+const rotatedBounds = imageButtonRenderer.actionSpriteBounds(imageButtonRenderer.assets.getActionSprite('peng'), actionButtonRegion);
+if (
+  !unrotatedBounds
+  || !rotatedBounds
+  || Math.abs((unrotatedBounds.width / unrotatedBounds.height) - (113 / 116)) > 0.01
+  || Math.abs((rotatedBounds.width / rotatedBounds.height) - (113 / 116)) > 0.01
+  || Math.abs((unrotatedBounds.x + unrotatedBounds.width / 2) - (actionButtonRegion.x + actionButtonRegion.width / 2)) > 0.01
+  || Math.abs((rotatedBounds.y + rotatedBounds.height / 2) - (actionButtonRegion.y + actionButtonRegion.height / 2)) > 0.01
+) {
+  throw new Error('action atlas sprites should be aspect-correct and centered after applying rotation');
+}
+let actionSpriteDraws = [];
+imageButtonRenderer.drawAtlasSprite = (ctx, sprite, x, y, width, height, selected, options) => {
+  actionSpriteDraws.push({ sprite, x, y, width, height, selected, options });
+};
+const imageButtonCtx = createFakeRenderContext();
+imageButtonRenderer.drawButton(imageButtonCtx, actionButtonRegion, '吃', false, {}, 'chi');
+imageButtonRenderer.drawButton(imageButtonCtx, actionButtonRegion, '碰', false, {}, 'peng');
+if (
+  actionSpriteDraws.length !== 2
+  || actionSpriteDraws.some((draw) => !draw.options || draw.options.border !== false)
+  || imageButtonCtx.calls.find((call) => call[0] === 'fillText')
+) {
+  throw new Error('mapped action buttons should draw atlas sprites without canvas text or card borders');
+}
+const fallbackButtonCtx = createFakeRenderContext();
+imageButtonRenderer.drawButton(fallbackButtonCtx, actionButtonRegion, '再来一局', false, {}, 'restart');
+if (!fallbackButtonCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === '再来一局')) {
+  throw new Error('unmapped or missing action sprites should fall back to the existing text button');
+}
+
+const comboRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+const comboCards = renderDeck.slice(0, 3);
+comboRenderer.previousHandCards = [
+  { card: comboCards[0], x: 20, y: 260, width: 36, height: 126 },
+  { card: comboCards[1], x: 56, y: 260, width: 36, height: 126 },
+];
+comboRenderer.lastDiscardEvent = {
+  seat: 3,
+  card: comboCards[2],
+  holdPosition: { x: 210, y: 80 },
+};
+comboRenderer.lastMeldSignatures = {};
+const comboState = {
+  ...layoutState,
+  seats: createSeats(DEFAULT_RULES),
+};
+comboState.seats[0].melds = [{ id: 'combo-test', type: 'chi', label: '吃', cards: comboCards }];
+comboRenderer.updateMeldEffects(comboState, discardResolutionLayout, Date.now());
+if (
+  comboRenderer.comboAnimations.length !== 1
+  || comboRenderer.comboAnimations[0].cards.length !== 3
+  || comboRenderer.resolvingClaimedMiniIds(comboState, 0).length !== 3
+) {
+  throw new Error('chi meld should create a three-card combo animation and hide all moving mini cards');
+}
+const comboCtx = createFakeRenderContext();
+let comboDraws = [];
+comboRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size, options) => {
+  comboDraws.push({ card, options, size });
+};
+comboRenderer.drawEffects(comboCtx, discardResolutionLayout);
+if (comboDraws.length !== 3 || comboDraws.some((draw) => draw.size !== 'big' || !draw.options.glow)) {
+  throw new Error('chi combo animation should draw all grouped cards as glowing big cards');
+}
+const fallbackComboRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+fallbackComboRenderer.lastDiscardEvent = {
+  seat: 3,
+  card: comboCards[2],
+  holdPosition: { x: 210, y: 80 },
+};
+fallbackComboRenderer.createChiComboAnimation(0, { type: 'chi', cards: comboCards }, discardResolutionLayout, Date.now());
+if (
+  fallbackComboRenderer.comboAnimations.length !== 1
+  || fallbackComboRenderer.comboAnimations[0].cards.length !== 1
+  || fallbackComboRenderer.comboAnimations[0].cards[0].id !== comboCards[2].id
+) {
+  throw new Error('chi combo animation should fall back to only the incoming card when source hand positions are unavailable');
+}
 renderer.layout = new TableLayout(667, 375);
 const fakeCtx = createFakeRenderContext();
 renderer.render(fakeCtx, {
@@ -1083,8 +1618,8 @@ renderer.render(fakeCtx, {
 if (!renderer.lastLayout || !renderer.lastLayout.centerFocus || !renderer.lastLayout.seatPanels.bottom) {
   throw new Error('renderer should keep the placement table layout after rendering');
 }
-if (!fakeCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === '渲染检查')) {
-  throw new Error('renderer should draw modal feedback in the placement layout');
+if (fakeCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === '渲染检查')) {
+  throw new Error('renderer should hide action prompt text while image action buttons are visible');
 }
 if (!fakeCtx.calls.find((call) => call[0] === 'clearRect')) {
   throw new Error('renderer smoke test should exercise canvas drawing');

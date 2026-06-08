@@ -1,0 +1,931 @@
+{
+  "meta": {
+    "app": "ChatGPT semantic atlas",
+    "image": "e3062575-31a1-418a-9904-a5dd64244861.159e5.png",
+    "size": {
+      "w": 1895,
+      "h": 470
+    },
+    "count": 61,
+    "coordinate": "top-left origin",
+    "format": "RGBA8888",
+    "note": "按钮/圆牌已按图片内容语义命名；confidence=low 的条目建议人工校对。"
+  },
+  "frames": {
+    "btn_vertical_kai_1": {
+      "frame": {
+        "x": 122,
+        "y": 2,
+        "w": 114,
+        "h": 191
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "开",
+      "category": "button_vertical",
+      "confidence": "low",
+      "originalName": "sprite_001",
+      "originalIndex": 1
+    },
+    "coin_red_x2": {
+      "frame": {
+        "x": 240,
+        "y": 2,
+        "w": 115,
+        "h": 115
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "x2",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_002",
+      "originalIndex": 2
+    },
+    "coin_lao": {
+      "frame": {
+        "x": 358,
+        "y": 2,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "捞",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_003",
+      "originalIndex": 3
+    },
+    "btn_vertical_kai_2": {
+      "frame": {
+        "x": 3,
+        "y": 3,
+        "w": 115,
+        "h": 192
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "开",
+      "category": "button_vertical",
+      "confidence": "low",
+      "originalName": "sprite_004",
+      "originalIndex": 4
+    },
+    "btn_vertical_fanwang": {
+      "frame": {
+        "x": 477,
+        "y": 3,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "翻王",
+      "category": "button_vertical",
+      "confidence": "medium",
+      "originalName": "sprite_005",
+      "originalIndex": 5
+    },
+    "coin_yao": {
+      "frame": {
+        "x": 596,
+        "y": 3,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "咬",
+      "category": "coin",
+      "confidence": "medium",
+      "originalName": "sprite_006",
+      "originalIndex": 6
+    },
+    "coin_shi": {
+      "frame": {
+        "x": 714,
+        "y": 3,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "十",
+      "category": "coin",
+      "confidence": "medium",
+      "originalName": "sprite_007",
+      "originalIndex": 7
+    },
+    "coin_cai": {
+      "frame": {
+        "x": 832,
+        "y": 3,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "菜",
+      "category": "coin",
+      "confidence": "low",
+      "originalName": "sprite_008",
+      "originalIndex": 8
+    },
+    "coin_daopai": {
+      "frame": {
+        "x": 950,
+        "y": 3,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "倒牌",
+      "category": "coin",
+      "confidence": "low",
+      "originalName": "sprite_009",
+      "originalIndex": 9
+    },
+    "coin_sa": {
+      "frame": {
+        "x": 1068,
+        "y": 3,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "扫",
+      "category": "coin",
+      "confidence": "medium",
+      "originalName": "sprite_010",
+      "originalIndex": 10
+    },
+    "coin_chi_1": {
+      "frame": {
+        "x": 1186,
+        "y": 3,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "吃",
+      "category": "coin",
+      "confidence": "low",
+      "originalName": "sprite_011",
+      "originalIndex": 11
+    },
+    "coin_cai_2": {
+      "frame": {
+        "x": 1304,
+        "y": 3,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "菜",
+      "category": "coin",
+      "confidence": "low",
+      "originalName": "sprite_012",
+      "originalIndex": 12
+    },
+    "coin_chu_red": {
+      "frame": {
+        "x": 1422,
+        "y": 3,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "出",
+      "category": "coin_red",
+      "confidence": "high",
+      "originalName": "sprite_013",
+      "originalIndex": 13
+    },
+    "coin_ping": {
+      "frame": {
+        "x": 1540,
+        "y": 3,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "平",
+      "category": "coin",
+      "confidence": "medium",
+      "originalName": "sprite_014",
+      "originalIndex": 14
+    },
+    "coin_shi_2": {
+      "frame": {
+        "x": 1658,
+        "y": 3,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "十",
+      "category": "coin",
+      "confidence": "medium",
+      "originalName": "sprite_015",
+      "originalIndex": 15
+    },
+    "coin_mojiang": {
+      "frame": {
+        "x": 1776,
+        "y": 3,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "摸将",
+      "category": "coin",
+      "confidence": "medium",
+      "originalName": "sprite_016",
+      "originalIndex": 16
+    },
+    "coin_zou": {
+      "frame": {
+        "x": 509,
+        "y": 118,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "走",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_017",
+      "originalIndex": 17
+    },
+    "coin_tuo": {
+      "frame": {
+        "x": 625,
+        "y": 118,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "拖",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_018",
+      "originalIndex": 18
+    },
+    "coin_nian": {
+      "frame": {
+        "x": 741,
+        "y": 118,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "粘",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_019",
+      "originalIndex": 19
+    },
+    "coin_tuo_2": {
+      "frame": {
+        "x": 857,
+        "y": 118,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "拖",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_020",
+      "originalIndex": 20
+    },
+    "coin_tian": {
+      "frame": {
+        "x": 973,
+        "y": 118,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "填",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_021",
+      "originalIndex": 21
+    },
+    "coin_qiang": {
+      "frame": {
+        "x": 1089,
+        "y": 118,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "抢",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_022",
+      "originalIndex": 22
+    },
+    "coin_pao": {
+      "frame": {
+        "x": 1205,
+        "y": 118,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "跑",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_023",
+      "originalIndex": 23
+    },
+    "coin_gui": {
+      "frame": {
+        "x": 1321,
+        "y": 118,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "鬼",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_024",
+      "originalIndex": 24
+    },
+    "coin_hua": {
+      "frame": {
+        "x": 1437,
+        "y": 118,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "滑",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_025",
+      "originalIndex": 25
+    },
+    "coin_zhua": {
+      "frame": {
+        "x": 1553,
+        "y": 118,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "抓",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_026",
+      "originalIndex": 26
+    },
+    "coin_deng": {
+      "frame": {
+        "x": 1669,
+        "y": 118,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "登",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_027",
+      "originalIndex": 27
+    },
+    "coin_wai": {
+      "frame": {
+        "x": 1786,
+        "y": 120,
+        "w": 79,
+        "h": 79
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "歪",
+      "category": "coin",
+      "confidence": "medium",
+      "originalName": "sprite_028",
+      "originalIndex": 28
+    },
+    "number_2": {
+      "frame": {
+        "x": 393,
+        "y": 121,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "2",
+      "category": "number",
+      "confidence": "high",
+      "originalName": "sprite_029",
+      "originalIndex": 29
+    },
+    "btn_chupai": {
+      "frame": {
+        "x": 155,
+        "y": 199,
+        "w": 232,
+        "h": 82
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "出牌",
+      "category": "button",
+      "confidence": "high",
+      "originalName": "sprite_030",
+      "originalIndex": 30
+    },
+    "btn_zuozhuang": {
+      "frame": {
+        "x": 5,
+        "y": 201,
+        "w": 142,
+        "h": 147
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "坐庄",
+      "category": "button_round",
+      "confidence": "high",
+      "originalName": "sprite_031",
+      "originalIndex": 31
+    },
+    "number_1": {
+      "frame": {
+        "x": 1812,
+        "y": 205,
+        "w": 79,
+        "h": 79
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "1",
+      "category": "number",
+      "confidence": "high",
+      "originalName": "sprite_032",
+      "originalIndex": 32
+    },
+    "coin_chi": {
+      "frame": {
+        "x": 553,
+        "y": 236,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "吃",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_033",
+      "originalIndex": 33
+    },
+    "coin_qian": {
+      "frame": {
+        "x": 669,
+        "y": 236,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "欠",
+      "category": "coin",
+      "confidence": "medium",
+      "originalName": "sprite_034",
+      "originalIndex": 34
+    },
+    "coin_zhua_2": {
+      "frame": {
+        "x": 785,
+        "y": 236,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "抓",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_035",
+      "originalIndex": 35
+    },
+    "coin_tiao": {
+      "frame": {
+        "x": 901,
+        "y": 236,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "跳",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_036",
+      "originalIndex": 36
+    },
+    "coin_piao": {
+      "frame": {
+        "x": 1017,
+        "y": 236,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "漂",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_037",
+      "originalIndex": 37
+    },
+    "coin_ta": {
+      "frame": {
+        "x": 1133,
+        "y": 236,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "踏",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_038",
+      "originalIndex": 38
+    },
+    "coin_jiao": {
+      "frame": {
+        "x": 1249,
+        "y": 236,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "绞",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_039",
+      "originalIndex": 39
+    },
+    "coin_guan": {
+      "frame": {
+        "x": 1365,
+        "y": 236,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "观",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_040",
+      "originalIndex": 40
+    },
+    "coin_ding": {
+      "frame": {
+        "x": 1481,
+        "y": 236,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "丁",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_041",
+      "originalIndex": 41
+    },
+    "coin_chu": {
+      "frame": {
+        "x": 1597,
+        "y": 236,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "出",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_042",
+      "originalIndex": 42
+    },
+    "btn_quxiao": {
+      "frame": {
+        "x": 1713,
+        "y": 236,
+        "w": 94,
+        "h": 97
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "取消",
+      "category": "button_round_green",
+      "confidence": "high",
+      "originalName": "sprite_043",
+      "originalIndex": 43
+    },
+    "coin_gang": {
+      "frame": {
+        "x": 437,
+        "y": 241,
+        "w": 113,
+        "h": 116
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "杠",
+      "category": "coin",
+      "confidence": "high",
+      "originalName": "sprite_044",
+      "originalIndex": 44
+    },
+    "btn_lianglong": {
+      "frame": {
+        "x": 199,
+        "y": 289,
+        "w": 232,
+        "h": 82
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "亮拢",
+      "category": "button",
+      "confidence": "high",
+      "originalName": "sprite_045",
+      "originalIndex": 45
+    },
+    "btn_buchupai": {
+      "frame": {
+        "x": 2,
+        "y": 352,
+        "w": 191,
+        "h": 114
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "不出牌",
+      "category": "button",
+      "confidence": "high",
+      "originalName": "sprite_046",
+      "originalIndex": 46
+    },
+    "coin_rotated_01": {
+      "frame": {
+        "x": 647,
+        "y": 355,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "",
+      "category": "coin_rotated",
+      "confidence": "low",
+      "originalName": "sprite_047",
+      "originalIndex": 47
+    },
+    "coin_rotated_02": {
+      "frame": {
+        "x": 765,
+        "y": 355,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "",
+      "category": "coin_rotated",
+      "confidence": "low",
+      "originalName": "sprite_048",
+      "originalIndex": 48
+    },
+    "coin_rotated_03": {
+      "frame": {
+        "x": 883,
+        "y": 355,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "",
+      "category": "coin_rotated",
+      "confidence": "low",
+      "originalName": "sprite_049",
+      "originalIndex": 49
+    },
+    "coin_rotated_04": {
+      "frame": {
+        "x": 1001,
+        "y": 355,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "",
+      "category": "coin_rotated",
+      "confidence": "low",
+      "originalName": "sprite_050",
+      "originalIndex": 50
+    },
+    "coin_pei": {
+      "frame": {
+        "x": 1119,
+        "y": 355,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "配",
+      "category": "coin",
+      "confidence": "medium",
+      "originalName": "sprite_051",
+      "originalIndex": 51
+    },
+    "coin_zhou": {
+      "frame": {
+        "x": 1237,
+        "y": 355,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "州",
+      "category": "coin",
+      "confidence": "low",
+      "originalName": "sprite_052",
+      "originalIndex": 52
+    },
+    "coin_men": {
+      "frame": {
+        "x": 1355,
+        "y": 355,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "闷",
+      "category": "coin",
+      "confidence": "medium",
+      "originalName": "sprite_053",
+      "originalIndex": 53
+    },
+    "coin_fu": {
+      "frame": {
+        "x": 1473,
+        "y": 355,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "芙",
+      "category": "coin",
+      "confidence": "low",
+      "originalName": "sprite_054",
+      "originalIndex": 54
+    },
+    "coin_cai_3": {
+      "frame": {
+        "x": 1591,
+        "y": 355,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "裁",
+      "category": "coin",
+      "confidence": "low",
+      "originalName": "sprite_055",
+      "originalIndex": 55
+    },
+    "coin_mo": {
+      "frame": {
+        "x": 1709,
+        "y": 355,
+        "w": 116,
+        "h": 113
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "摸",
+      "category": "coin",
+      "confidence": "low",
+      "originalName": "sprite_056",
+      "originalIndex": 56
+    },
+    "btn_huazhuang": {
+      "frame": {
+        "x": 453,
+        "y": 360,
+        "w": 94,
+        "h": 97
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "滑庄",
+      "category": "button_round_green",
+      "confidence": "high",
+      "originalName": "sprite_057",
+      "originalIndex": 57
+    },
+    "btn_guo": {
+      "frame": {
+        "x": 551,
+        "y": 360,
+        "w": 94,
+        "h": 97
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "过",
+      "category": "button_round_green",
+      "confidence": "high",
+      "originalName": "sprite_058",
+      "originalIndex": 58
+    },
+    "number_5": {
+      "frame": {
+        "x": 282,
+        "y": 377,
+        "w": 81,
+        "h": 81
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "5",
+      "category": "number",
+      "confidence": "high",
+      "originalName": "sprite_059",
+      "originalIndex": 59
+    },
+    "number_4": {
+      "frame": {
+        "x": 198,
+        "y": 378,
+        "w": 79,
+        "h": 79
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "4",
+      "category": "number",
+      "confidence": "high",
+      "originalName": "sprite_060",
+      "originalIndex": 60
+    },
+    "number_3": {
+      "frame": {
+        "x": 368,
+        "y": 378,
+        "w": 79,
+        "h": 79
+      },
+      "rotated": false,
+      "trimmed": true,
+      "text": "3",
+      "category": "number",
+      "confidence": "high",
+      "originalName": "sprite_061",
+      "originalIndex": 61
+    }
+  }
+}

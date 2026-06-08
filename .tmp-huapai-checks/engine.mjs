@@ -627,6 +627,7 @@ export default class HuapaiEngine {
     state.pendingActions = [];
     state.playerActions = [];
     state.selectedCardId = null;
+    state.recentDiscard = null;
 
     if (!needsDraw) {
       this.enterDiscardPhase(seatIndex, '请出牌');
@@ -687,14 +688,21 @@ export default class HuapaiEngine {
   }
 
   finishWin(winner, card, win) {
-    if (this.aiTimer) clearTimeout(this.aiTimer);
-    if (this.advanceTimer) clearTimeout(this.advanceTimer);
+    if (this.aiTimer) {
+      clearTimeout(this.aiTimer);
+      this.aiTimer = null;
+    }
+    if (this.advanceTimer) {
+      clearTimeout(this.advanceTimer);
+      this.advanceTimer = null;
+    }
     this.databus.phase = PHASES.RESULT;
     this.databus.pendingActions = [];
     this.databus.playerActions = [];
     this.databus.selectedCardId = null;
     this.databus.appearingCard = null;
     this.databus.drawnCard = null;
+    this.databus.recentDiscard = null;
     const point = win.points || 0;
     const payers = this.databus.seats.map((seat) => seat.id).filter((seat) => seat !== winner);
     const payments = payers.map((payer) => ({ from: payer, to: winner, points: point }));
