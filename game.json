@@ -1,3 +1,6 @@
 {
-  "deviceOrientation": "landscape"
+  "deviceOrientation": "landscape",
+  "loadingImageInfo": {
+    "path": "images/icon.png"
+  }
 }
