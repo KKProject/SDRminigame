@@ -309,7 +309,7 @@ export default class HuapaiEngine {
     state.drawnCard = null;
     state.selectedCardId = null;
     state.recentDiscard = { seat: seatIndex, card };
-    if (this.music) this.music.playCue('discard');
+    if (this.music) this.music.playCardVoice(card);
 
     const actions = filterHighestPriority(findResponseActions(state, seatIndex, card, this.rules));
     this.handleResponseWindow(actions, seatIndex);
@@ -565,7 +565,7 @@ export default class HuapaiEngine {
     state.pendingActions = [];
     state.playerActions = [];
     state.currentSeat = action.seat;
-    if (this.music) this.music.playCue('meld');
+    if (this.music) this.music.playActionVoice(action.type);
     this.scheduleAfterMeldAnimation(action.seat, action.label);
   }
 
@@ -602,7 +602,7 @@ export default class HuapaiEngine {
     state.drawnCard = null;
     state.pendingActions = [];
     state.playerActions = [];
-    if (this.music) this.music.playCue('meld');
+    if (this.music) this.music.playActionVoice('ta');
     this.scheduleAfterMeldAnimation(action.seat, ACTION_LABELS.ta);
   }
 
@@ -652,6 +652,7 @@ export default class HuapaiEngine {
       allowSourceSeatResponse: true,
     });
     state.drawnCard = drawnCard;
+    if (this.music) this.music.playCardVoice(drawnCard);
     const actions = filterHighestPriority(findAppearingCardActions(state, seatIndex, drawnCard, APPEARING_CARD_SOURCES.DRAW, this.rules));
     if (!actions.length) {
       this.discardUnclaimedDraw(seatIndex, drawnCard);
@@ -727,7 +728,7 @@ export default class HuapaiEngine {
       pattern: win.pattern,
       doors: win.doors,
     };
-    if (this.music) this.music.playCue('win');
+    if (this.music) this.music.playActionVoice('hu');
   }
 
   finishCircleLoss(loser, reason) {

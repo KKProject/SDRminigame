@@ -11,10 +11,20 @@ function createAudio(src, loop = false) {
   return audio;
 }
 
+function createAudioMap(sources = {}) {
+  return Object.keys(sources).reduce((map, name) => {
+    const audio = createAudio(sources[name]);
+    if (audio) map[name] = audio;
+    return map;
+  }, {});
+}
+
 export default class Music {
   muted = false;
   bgmAudio = null;
   cues = {};
+  cardVoiceCues = {};
+  actionVoiceCues = {};
   bgmStarted = false;
 
   constructor() {
@@ -23,10 +33,12 @@ export default class Music {
 
     this.bgmAudio = createAudio(ASSET_MANIFEST.audio.bgm, true);
     Object.keys(ASSET_MANIFEST.audio).forEach((name) => {
-      if (name !== 'bgm') {
+      if (name !== 'bgm' && typeof ASSET_MANIFEST.audio[name] === 'string') {
         this.cues[name] = createAudio(ASSET_MANIFEST.audio[name]);
       }
     });
+    this.cardVoiceCues = createAudioMap(ASSET_MANIFEST.audio.cardVoices);
+    this.actionVoiceCues = createAudioMap(ASSET_MANIFEST.audio.actionVoices);
     this.playBackground();
   }
 
@@ -45,6 +57,22 @@ export default class Music {
     if (this.muted) return;
     this.playBackground();
     const audio = this.cues[name];
+    if (!audio) return;
+    audio.currentTime = 0;
+    this.safePlay(audio);
+  }
+
+  playCardVoice(card) {
+    if (this.muted || !card) return;
+    const audio = this.cardVoiceCues[card.key];
+    if (!audio) return;
+    audio.currentTime = 0;
+    this.safePlay(audio);
+  }
+
+  playActionVoice(type) {
+    if (this.muted) return;
+    const audio = this.actionVoiceCues[type];
     if (!audio) return;
     audio.currentTime = 0;
     this.safePlay(audio);

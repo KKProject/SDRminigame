@@ -185,7 +185,7 @@ const databus = {
     Object.assign(this, state);
   },
 };
-const engine = new HuapaiEngine(databus, { playCue() {}, setMuted() {} }, DEFAULT_RULES);
+const engine = new HuapaiEngine(databus, { playCue() {}, playCardVoice() {}, playActionVoice() {}, setMuted() {} }, DEFAULT_RULES);
 engine.startRound(1001);
 if (engine.aiTimer) clearTimeout(engine.aiTimer);
 
