@@ -373,6 +373,17 @@ export default class OnlineController {
 
   handleCardTap(cardId) {
     const state = this.databus;
+    // 滑庄选牌阶段：本机座位旋转后恒为 0，原庄家是当前行动方时可选牌交给接庄者。
+    if (state.phase === 'dealer-gift' && state.currentSeat === 0) {
+      if (state.selectedCardId === cardId) {
+        this.sendOp({ kind: 'dealerGift', cardId });
+        state.selectedCardId = null;
+        return;
+      }
+      state.selectedCardId = cardId;
+      state.feedback = '再次点击此牌即可交给接庄者';
+      return;
+    }
     if (state.phase !== 'human-discard' || state.currentSeat !== 0) {
       state.feedback = '现在还不能出牌';
       return;

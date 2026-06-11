@@ -1,4 +1,4 @@
-import { chooseAcceptTakeover, chooseDiscard, chooseResponse } from './ai';
+import { chooseAcceptTakeover, chooseDealerGift, chooseDiscard, chooseResponse } from './ai';
 import {
   createActionHistoryEntry,
   createAppearingCard,
@@ -20,6 +20,7 @@ import {
 import {
   applyMeldCards,
   buildCircleLossResult,
+  computePhraseTripletLocks,
   createChiPenaltyKey,
   dealOpeningHands,
   evaluateWin,
@@ -57,6 +58,8 @@ export default class HuapaiEngine {
 
     seats.forEach((seat, seatIndex) => {
       seat.hand = opening.hands[seatIndex];
+      // 锁定「发牌那一刻」各句原句数，作为整局出牌不破坏原句的固定下限。
+      seat.history.lockedPhraseTriplets = computePhraseTripletLocks(seat.hand, this.rules);
     });
 
     this.databus.setRoundState({
@@ -144,17 +147,11 @@ export default class HuapaiEngine {
     }, `${seat.name}考虑是否接庄`);
   }
 
+  // 接庄：接庄者成为新庄家。不再固定转移将牌，改由原庄家选一张牌交给接庄者。
+  // 将牌句（jiangPhraseId，计福用）保持不变。
   acceptTakeover(seatIndex) {
     const state = this.databus;
-    const slipped = state.seats[state.slippedDealer];
     const taker = state.seats[seatIndex];
-    const jiang = state.jiangCard;
-
-    if (jiang) {
-      const removed = removeCardsByIds(slipped.hand, [jiang.id]);
-      slipped.hand = removed.cards;
-      taker.hand = sortCards(taker.hand.concat(removed.removed), this.rules);
-    }
 
     state.seats.forEach((seat) => {
       seat.isDealer = seat.id === seatIndex;
@@ -165,7 +162,46 @@ export default class HuapaiEngine {
     state.takeoverDealer = seatIndex;
     state.takeoverQueue = [];
     state.playerActions = [];
-    this.enterDiscardPhase(seatIndex, `${taker.name}接庄，先出牌`);
+    this.enterDealerGiftPhase(state.slippedDealer, seatIndex);
+  }
+
+  // 原庄家选牌阶段：真人等待点牌提交，AI 立即选保留价值最低的牌交出。
+  enterDealerGiftPhase(slippedSeat, takerSeat) {
+    const state = this.databus;
+    const slipped = state.seats[slippedSeat];
+    state.currentSeat = slippedSeat;
+    state.pendingActions = [];
+    state.playerActions = [];
+    state.appearingCard = null;
+    state.drawnCard = null;
+    state.selectedCardId = null;
+    if (slipped.isHuman) {
+      state.phase = PHASES.DEALER_GIFT;
+      this.setFeedback(`你滑庄，请选择一张牌交给接庄的${state.seats[takerSeat].name}`);
+      return;
+    }
+    this.scheduleAI(() => {
+      const card = chooseDealerGift(slipped, this.rules);
+      const cardId = card ? card.id : (slipped.hand[0] && slipped.hand[0].id);
+      this.applyDealerGift(slippedSeat, cardId);
+    }, `${slipped.name}选择交给接庄者的牌`);
+  }
+
+  // 执行原庄家送牌：从原庄家手牌移除指定牌交给接庄者，随后接庄者先出牌。
+  applyDealerGift(slippedSeat, cardId) {
+    const state = this.databus;
+    const slipped = state.seats[slippedSeat];
+    const taker = state.seats[state.takeoverDealer];
+    const card = slipped.hand.find((item) => item.id === cardId);
+    if (!card) {
+      this.setFeedback('没有这张牌');
+      return;
+    }
+    const removed = removeCardsByIds(slipped.hand, [card.id]);
+    slipped.hand = removed.cards;
+    taker.hand = sortCards(taker.hand.concat(removed.removed), this.rules);
+    state.selectedCardId = null;
+    this.enterDiscardPhase(state.takeoverDealer, `${taker.name}接庄，先出牌`);
   }
 
   declineTakeover(seatIndex) {
@@ -232,6 +268,16 @@ export default class HuapaiEngine {
 
   handleCardTap(cardId) {
     const state = this.databus;
+    // 滑庄选牌阶段：原庄家（本机人类）选一张牌交给接庄者，二次点击确认。
+    if (state.phase === PHASES.DEALER_GIFT && state.currentSeat === state.humanSeat) {
+      if (state.selectedCardId === cardId) {
+        this.applyDealerGift(state.humanSeat, cardId);
+        return;
+      }
+      state.selectedCardId = cardId;
+      this.setFeedback('再次点击此牌即可交给接庄者');
+      return;
+    }
     if (state.phase !== PHASES.HUMAN_DISCARD || state.currentSeat !== state.humanSeat) {
       this.setFeedback('现在还不能出牌');
       return;

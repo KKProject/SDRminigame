@@ -472,22 +472,44 @@ function phraseHasExactComplete(hand, phraseId, rules = DEFAULT_RULES) {
   return phrase.keys.every((key) => counts[key] === 1);
 }
 
+// 计算一手牌中各句「发牌那一刻」能组成的完整原句数（用于锁定下限）。
+// 原句 = 某句三字各至少一张可凑成的一组，该句原句数 = min(cx, cy, cz)。
+// 在 startRound 发牌后调用，结果写入 seat.history.lockedPhraseTriplets，之后不再变。
+export function computePhraseTripletLocks(hand, rules = DEFAULT_RULES) {
+  const counts = countByKey(hand);
+  return rules.phrases.reduce((locks, phrase) => {
+    const min = Math.min(...phrase.keys.map((key) => counts[key] || 0));
+    if (min > 0) locks[phrase.id] = min;
+    return locks;
+  }, {});
+}
+
+// 判断打出 card 是否会破坏「需保留的完整原句（xyz）」。
+// 下限以发牌锁定的原句数 N0 为准：摸牌不抬高（用 N0 封顶），吃碰消耗后用当前值兜底。
+// 实际下限 floor = min(当前原句数 before, N0)，打出后原句数 after < floor 即破坏。
+//   xxyyz 最多打 2 张且 z 不可打；xxyz 最多打 1 张且仅 x 可打；
+//   xyyzzz 最多打 3 张且 x 不可打；摸到额外牌变 xxyyzz 仍只需保留 1 个原句。
+function wouldBreakCompletePhrase(seat, card, rules = DEFAULT_RULES) {
+  const phraseKeys = getPhraseKeysForKey(card.key, rules);
+  if (phraseKeys.length !== 3) return false;
+  const counts = countByKey(seat.hand || []);
+  const before = Math.min(...phraseKeys.map((key) => counts[key] || 0));
+  if (before === 0) return false;
+  const locked = (seat.history
+    && seat.history.lockedPhraseTriplets
+    && seat.history.lockedPhraseTriplets[card.phraseId]);
+  const floor = Math.min(before, typeof locked === 'number' ? locked : before);
+  const after = Math.min(...phraseKeys.map((key) => (counts[key] || 0) - (key === card.key ? 1 : 0)));
+  return after < floor;
+}
+
 export function isLegalDiscard(seat, card, rules = DEFAULT_RULES) {
   const history = seat.history || { discardPhraseCounts: {} };
   if (history.forcedDiscardCardId && card.id !== history.forcedDiscardCardId) {
     return { legal: false, reason: '特殊搭子凑牌后必须先打出剩余牌' };
   }
-  if (phraseHasExactComplete(seat.hand, card.phraseId, rules)) {
-    return { legal: false, reason: '不能打出原句中的牌' };
-  }
-
-  const phraseCount = getPhraseCardCount(seat.hand, card.phraseId);
-  const discarded = (history.discardPhraseCounts[card.phraseId] || 0) + 1;
-  if (phraseCount >= 5 && discarded > 2) {
-    return { legal: false, reason: '五张同句最多只能打两张' };
-  }
-  if (phraseCount === 4 && discarded > 1) {
-    return { legal: false, reason: '四张同句最多只能打一张' };
+  if (wouldBreakCompletePhrase(seat, card, rules)) {
+    return { legal: false, reason: '不能打出会破坏原句的牌' };
   }
   return { legal: true };
 }

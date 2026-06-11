@@ -48,6 +48,20 @@ export function chooseSelfDrawAction(actions) {
   return chooseResponse(actions);
 }
 
+// 滑庄被接庄后，原庄家选一张「不要的牌」交给接庄者（任意牌，不受出牌规则限制）。
+export function chooseDealerGift(seat, rules = DEFAULT_RULES) {
+  const hand = seat.hand || seat;
+  if (!hand.length) return null;
+  const counts = countByKey(hand);
+  return hand.slice().sort((a, b) => {
+    const aScore = cardKeepScore(a, counts, rules);
+    const bScore = cardKeepScore(b, counts, rules);
+    if (aScore !== bScore) return aScore - bScore;
+    if (a.order !== b.order) return a.order - b.order;
+    return a.copy - b.copy;
+  })[0];
+}
+
 export function chooseAcceptTakeover(seat) {
   const triplets = Object.keys(countByKey(seat.hand)).filter((key) => countByKey(seat.hand)[key] >= 3);
   return triplets.length >= 2;

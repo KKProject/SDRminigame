@@ -349,8 +349,13 @@ databus.setRoundState({
   round: 3,
 });
 engine.acceptTakeover(1);
-if (databus.dealerSeat !== 1 || !databus.seats[1].hand.find((card) => card.id === jiangCard.id)) {
-  throw new Error('takeover should transfer slipped dealer jiang card');
+if (databus.dealerSeat !== 1 || databus.phase !== PHASES.DEALER_GIFT || databus.currentSeat !== 0) {
+  throw new Error('takeover should enter dealer-gift phase for the slipped dealer to choose a card');
+}
+engine.applyDealerGift(0, jiangCard.id);
+if (databus.seats[0].hand.find((card) => card.id === jiangCard.id)
+  || !databus.seats[1].hand.find((card) => card.id === jiangCard.id)) {
+  throw new Error('dealer gift should transfer the chosen card to the taker');
 }
 
 const dealerChiSeats = createSeats(DEFAULT_RULES, 0);

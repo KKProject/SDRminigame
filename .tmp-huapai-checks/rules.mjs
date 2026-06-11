@@ -1,5 +1,6 @@
 export const PHASES = {
   TAKEOVER_CHOICE: 'takeover-choice',
+  DEALER_GIFT: 'dealer-gift',
   HUMAN_DISCARD: 'human-discard',
   HUMAN_RESPONSE: 'human-response',
   AI_THINKING: 'ai-thinking',

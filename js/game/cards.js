@@ -158,6 +158,7 @@ export function createSeatHistory() {
     chiLockSource: null,
     forcedDiscardCardId: null,
     forcedAction: null,
+    lockedPhraseTriplets: {},
     supportPairObligations: [],
     supportPairProofs: [],
     discardPhraseCounts: {},

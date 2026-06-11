@@ -1,7 +1,7 @@
 {
   "name": "game",
   "version": "1.0.0",
-  "description": "服务端权威花牌引擎：匹配、房间、操作裁决与状态同步",
+  "description": "花牌微信云函数。index=路由入口；room=匹配/房间/心跳；core=纯逻辑引擎(rules/cards/evaluator/engine/ai)。权威状态存 rooms 集合，公共视图存 roomStates。",
   "main": "index.js",
   "dependencies": {
     "wx-server-sdk": "~2.6.3"

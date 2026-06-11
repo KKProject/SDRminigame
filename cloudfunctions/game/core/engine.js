@@ -1,4 +1,23 @@
-const { chooseAcceptTakeover, chooseDiscard, chooseResponse } = require('./ai');
+/**
+ * 花牌游戏状态机引擎（engine.js）
+ *
+ * 核心职责：维护完整对局 state，驱动阶段流转，处理真人/AI 操作意图。
+ *
+ * 状态机主流程：
+ *   startRound → [滑庄接庄?] → enterDiscardPhase → discardCard
+ *     → handleResponseWindow → [吃碰招踏胡 | pass | 无人响应]
+ *     → scheduleNextDrawAfterDiscard → beginTurn → [摸牌响应 | 出牌]
+ *     → finishWin / finishCircleLoss / finishDraw / finishDrawRound
+ *
+ * 服务端入口（room.op 调用）：
+ *   submitDiscard / submitResponse / submitTakeover
+ *   均先校验 phase + currentSeat，非法返回 { ok: false, reason }
+ *
+ * 视图构建（下发客户端）：
+ *   buildPublicState  - 脱敏，无手牌明细
+ *   buildPrivateView  - 仅本人手牌 + 当前摸牌
+ */
+const { chooseAcceptTakeover, chooseDealerGift, chooseDiscard, chooseResponse } = require('./ai');
 const {
   createActionHistoryEntry,
   createAppearingCard,
@@ -20,6 +39,7 @@ const {
 const {
   applyMeldCards,
   buildCircleLossResult,
+  computePhraseTripletLocks,
   createChiPenaltyKey,
   dealOpeningHands,
   evaluateWin,
@@ -36,14 +56,18 @@ const {
   validateSupportPairs,
 } = require('./evaluator');
 
+/**
+ * 花牌对局引擎。实例可 load 持久化 state 后继续推进。
+ * music 为客户端音效钩子，云端通常为 null。
+ */
 class HuapaiEngine {
   constructor(rules = DEFAULT_RULES) {
     this.rules = rules;
-    this.music = null;
-    this.state = null;
+    this.music = null;   // 可选音效接口，云函数环境不使用
+    this.state = null;   // 完整对局状态，见 startRound 内字段说明
   }
 
-  // 加载已有权威状态（用于从数据库恢复后继续推进）。
+  /** 从数据库恢复 state，rules 以参数或 state.rules 为准 */
   load(state) {
     this.state = state;
     if (state && state.rules) {
@@ -53,9 +77,15 @@ class HuapaiEngine {
   }
 
   /**
-   * 开局。
-   * options: { seed, dealerSeat, players, round }
-   * players: 长度为座位数的数组，每项 { openid, nickName, avatarUrl, isHuman }。
+   * 开局：洗牌、发牌、初始化 state。
+   *
+   * @param {object} options
+   * @param {number} [options.seed] - 洗牌种子
+   * @param {number} [options.dealerSeat] - 庄家座位，默认继承上局 nextDealerSeat
+   * @param {Array}  [options.players] - 满座玩家信息 { openid, nickName, avatarUrl, isHuman }
+   *
+   * 庄家无刻子 → enterDealerSlip（滑庄）；否则 enterDiscardPhase。
+   * state 关键字段：phase, currentSeat, deck, jiangCard, seats[], round
    */
   startRound(options = {}) {
     const { seed, players = [] } = options;
@@ -73,6 +103,8 @@ class HuapaiEngine {
 
     seats.forEach((seat, seatIndex) => {
       seat.hand = opening.hands[seatIndex];
+      // 锁定「发牌那一刻」各句原句数，作为整局出牌不破坏原句的固定下限。
+      seat.history.lockedPhraseTriplets = computePhraseTripletLocks(seat.hand, this.rules);
       const player = players[seatIndex] || {};
       seat.isHuman = Boolean(player.isHuman);
       seat.openid = player.openid || null;
@@ -119,6 +151,7 @@ class HuapaiEngine {
     this.state.feedback = text;
   }
 
+  /** 庄家起手无刻子：进入滑庄，按座位顺序询问接庄 */
   enterDealerSlip(dealerSeat) {
     const state = this.state;
     const queue = findTakeoverEligibleSeats(state.seats, dealerSeat, this.rules);
@@ -132,6 +165,7 @@ class HuapaiEngine {
     this.processTakeoverQueue();
   }
 
+  /** 处理接庄队列：真人等待 takeover-choice，AI 立即决策 */
   processTakeoverQueue() {
     const state = this.state;
     if (!state.takeoverQueue.length) {
@@ -160,17 +194,14 @@ class HuapaiEngine {
     }, `${seat.name}考虑是否接庄`);
   }
 
+  /**
+   * 接庄：接庄者成为新庄家。
+   * 不再固定转移将牌，改为进入「原庄家选牌」阶段，由原庄家挑一张交给接庄者。
+   * 将牌句（jiangPhraseId，计福用）保持不变。
+   */
   acceptTakeover(seatIndex) {
     const state = this.state;
-    const slipped = state.seats[state.slippedDealer];
     const taker = state.seats[seatIndex];
-    const jiang = state.jiangCard;
-
-    if (jiang) {
-      const removed = removeCardsByIds(slipped.hand, [jiang.id]);
-      slipped.hand = removed.cards;
-      taker.hand = sortCards(taker.hand.concat(removed.removed), this.rules);
-    }
 
     state.seats.forEach((seat) => {
       seat.isDealer = seat.id === seatIndex;
@@ -181,9 +212,54 @@ class HuapaiEngine {
     state.takeoverDealer = seatIndex;
     state.takeoverQueue = [];
     state.playerActions = [];
-    this.enterDiscardPhase(seatIndex, `${taker.name}接庄，先出牌`);
+    this.enterDealerGiftPhase(state.slippedDealer, seatIndex);
   }
 
+  /**
+   * 原庄家选牌阶段：原庄家从手牌选一张交给接庄者（凑足庄家张数）。
+   * 真人 → dealer-gift，等待提交；AI → 立即选保留价值最低的牌交出。
+   */
+  enterDealerGiftPhase(slippedSeat, takerSeat) {
+    const state = this.state;
+    const slipped = state.seats[slippedSeat];
+    state.currentSeat = slippedSeat;
+    state.pendingActions = [];
+    state.playerActions = [];
+    state.appearingCard = null;
+    state.drawnCard = null;
+    state.selectedCardId = null;
+    if (slipped.isHuman) {
+      state.phase = PHASES.DEALER_GIFT;
+      this.setFeedback(`${slipped.nickName}滑庄，请选择一张牌交给接庄的${state.seats[takerSeat].nickName}`);
+      return;
+    }
+    this.scheduleAI(() => {
+      const card = chooseDealerGift(slipped, this.rules);
+      const cardId = card ? card.id : (slipped.hand[0] && slipped.hand[0].id);
+      this.applyDealerGift(slippedSeat, cardId);
+    }, `${slipped.nickName}选择交给接庄者的牌`);
+  }
+
+  /**
+   * 执行原庄家送牌：从原庄家手牌移除指定牌交给接庄者，随后接庄者先出牌。
+   * @returns {{ ok: boolean, reason?: string }}
+   */
+  applyDealerGift(slippedSeat, cardId) {
+    const state = this.state;
+    const slipped = state.seats[slippedSeat];
+    const taker = state.seats[state.takeoverDealer];
+    const card = slipped.hand.find((item) => item.id === cardId);
+    if (!card) {
+      return { ok: false, reason: '没有这张牌' };
+    }
+    const removed = removeCardsByIds(slipped.hand, [card.id]);
+    slipped.hand = removed.cards;
+    taker.hand = sortCards(taker.hand.concat(removed.removed), this.rules);
+    this.enterDiscardPhase(state.takeoverDealer, `${taker.nickName}接庄，先出牌`);
+    return { ok: true };
+  }
+
+  /** 不接庄：从队列移除，继续问下一位 */
   declineTakeover(seatIndex) {
     const state = this.state;
     state.takeoverQueue = state.takeoverQueue.filter((seat) => seat !== seatIndex);
@@ -192,6 +268,7 @@ class HuapaiEngine {
     this.processTakeoverQueue();
   }
 
+  /** 滑庄流局：无人接庄，下局庄家轮转 */
   finishDrawRound(reason) {
     if (this.advanceTimer) clearTimeout(this.advanceTimer);
     const state = this.state;
@@ -208,6 +285,7 @@ class HuapaiEngine {
     };
   }
 
+  /** 牌堆 < lowDeckDrawThreshold 流局，庄家不变 */
   finishLowDeckDrawRound() {
     if (this.advanceTimer) clearTimeout(this.advanceTimer);
     const state = this.state;
@@ -226,6 +304,10 @@ class HuapaiEngine {
     };
   }
 
+  /**
+   * 进入出牌阶段。若无合法出牌 → 进圈。
+   * 真人 → human-discard；AI → 立即 aiDiscard
+   */
   enterDiscardPhase(seatIndex, feedback) {
     const state = this.state;
     const seat = state.seats[seatIndex];
@@ -246,6 +328,11 @@ class HuapaiEngine {
     }
   }
 
+  /**
+   * 打出一张牌（或摸牌后视为打出 drawnCard）。
+   * 校验合法性 → 更新弃牌区 → 开启响应窗口 handleResponseWindow。
+   * 接庄听牌检查在出牌后触发。
+   */
   discardCard(seatIndex, cardId, options = {}) {
     const state = this.state;
     const seat = state.seats[seatIndex];
@@ -308,6 +395,7 @@ class HuapaiEngine {
     this.handleResponseWindow(actions, seatIndex);
   }
 
+  /** 摸牌无人可响应：牌直接进入弃牌区，轮到下家摸牌 */
   discardUnclaimedDraw(seatIndex, card) {
     const state = this.state;
     const seat = state.seats[seatIndex];
@@ -325,6 +413,10 @@ class HuapaiEngine {
     this.scheduleNextDrawAfterDiscard(seatIndex);
   }
 
+  /**
+   * 响应窗口调度：按 actions[0].seat 轮转。
+   * 真人展示 playerActions + pass；AI 自动 chooseResponse 或 pass 到下一家。
+   */
   handleResponseWindow(actions, sourceSeat) {
     const state = this.state;
     state.pendingActions = actions;
@@ -353,6 +445,7 @@ class HuapaiEngine {
     this.handleResponseWindow(actions.filter((action) => action.seat !== responseSeat), sourceSeat);
   }
 
+  /** 无人响应：摸牌走 discardUnclaimedDraw，出牌则进弃牌区并下家摸牌 */
   resolveUnclaimedAppearingCard(sourceSeat) {
     const state = this.state;
     if (state.drawnCard) {
@@ -391,6 +484,10 @@ class HuapaiEngine {
     this.afterGroupingAction(seatIndex, label);
   }
 
+  /**
+   * 玩家选择「过」。
+   * forced 动作不能过 → 进圈；放弃吃会记录惩罚键。
+   */
   passResponse(seatIndex) {
     const state = this.state;
     const forcedAction = state.pendingActions.find((action) => action.seat === seatIndex && action.forced);
@@ -447,6 +544,10 @@ class HuapaiEngine {
     }
   }
 
+  /**
+   * 执行吃/碰/招/胡（非踏）。
+   * 校验吃锁、放弃吃惩罚、招踏对子挂载；成功则 scheduleAfterMeldAnimation。
+   */
   applyAction(action) {
     if (action.type === 'hu') {
       this.finishWin(action.seat, action.card, action.win);
@@ -525,6 +626,7 @@ class HuapaiEngine {
     this.scheduleAfterMeldAnimation(action.seat, action.label);
   }
 
+  /** 踏：在已有招/踏上追加摸到的同 key 牌，需满足对子挂载 */
   applyTa(action) {
     const state = this.state;
     const owner = state.seats[action.ownerSeat];
@@ -562,6 +664,7 @@ class HuapaiEngine {
     this.scheduleAfterMeldAnimation(action.seat, ACTION_LABELS.ta);
   }
 
+  /** 凑牌动画后：庄家无刻子进圈；接庄计数；进入出牌阶段 */
   afterGroupingAction(seatIndex, label) {
     const seat = this.state.seats[seatIndex];
     if (seat.isDealer && !hasKezi(seat.hand, seat.melds)) {
@@ -577,6 +680,10 @@ class HuapaiEngine {
     this.enterDiscardPhase(seatIndex, `${label}后，请出牌`);
   }
 
+  /**
+   * 开始某座位回合。needsDraw=true 时从牌堆摸一张并开响应窗口；
+   * 牌堆过少/空则流局或荒庄。
+   */
   beginTurn(seatIndex, needsDraw) {
     const state = this.state;
     state.currentSeat = seatIndex;
@@ -643,6 +750,7 @@ class HuapaiEngine {
     callback();
   }
 
+  /** 胡牌结算：三家付分，phase → result */
   finishWin(winner, card, win) {
     if (this.aiTimer) {
       clearTimeout(this.aiTimer);
@@ -686,6 +794,7 @@ class HuapaiEngine {
     if (this.music) this.music.playActionVoice('hu');
   }
 
+  /** 进圈：违规者付三家各 circleLossPoint 分 */
   finishCircleLoss(loser, reason) {
     if (this.aiTimer) clearTimeout(this.aiTimer);
     if (this.advanceTimer) clearTimeout(this.advanceTimer);
@@ -710,14 +819,16 @@ class HuapaiEngine {
     this.state.result = { type: RESULT_TYPES.DRAW, reasonCode: DRAW_ROUND_REASONS.EXHAUSTED_DECK, summary: '荒庄' };
   }
 
-  // ===== 服务端意图入口 =====
-  // 所有入口先校验「该座位确实是当前应行动方」，非法返回 { ok:false, reason }，
-  // 合法则推进状态机（同步驱动到下一个真人决策点或结算），返回 { ok:true }。
+  // ===================== 服务端意图入口 =====================
+  // room.op 调用以下方法。校验 phase + currentSeat，非法 { ok:false, reason }。
+  // 合法则同步推进至下一真人决策点或结算，AI 步骤在调用栈内立即完成。
 
+  /** 当前是否轮到该座位行动 */
   isSeatToAct(seatIndex) {
     return this.state && this.state.currentSeat === seatIndex;
   }
 
+  /** 真人出牌意图，phase 须为 human-discard */
   submitDiscard(seatIndex, cardId) {
     const state = this.state;
     if (state.phase !== PHASES.HUMAN_DISCARD || !this.isSeatToAct(seatIndex)) {
@@ -736,7 +847,10 @@ class HuapaiEngine {
     return { ok: true };
   }
 
-  // ref: { index } 优先；否则按 { type, key, meldId } 匹配 playerActions。
+  /**
+   * 从 playerActions 中定位用户选择的动作。
+   * ref: { index } 优先；否则按 { type, key, meldId } 模糊匹配。
+   */
   findPlayerAction(seatIndex, ref = {}) {
     const list = this.state.playerActions || [];
     if (typeof ref.index === 'number' && list[ref.index]) {
@@ -751,6 +865,7 @@ class HuapaiEngine {
     }) || null;
   }
 
+  /** 真人响应意图（胡/吃碰招踏/过），phase 须为 human-response */
   submitResponse(seatIndex, ref = {}) {
     const state = this.state;
     if (state.phase !== PHASES.HUMAN_RESPONSE || !this.isSeatToAct(seatIndex)) {
@@ -776,6 +891,7 @@ class HuapaiEngine {
     return { ok: true };
   }
 
+  /** 滑庄接庄选择，phase 须为 takeover-choice */
   submitTakeover(seatIndex, accept) {
     const state = this.state;
     if (state.phase !== PHASES.TAKEOVER_CHOICE || !this.isSeatToAct(seatIndex)) {
@@ -788,9 +904,25 @@ class HuapaiEngine {
     }
     return { ok: true };
   }
+
+  /** 原庄家选牌交给接庄者，phase 须为 dealer-gift（不受出牌规则限制，任意牌可交） */
+  submitDealerGift(seatIndex, cardId) {
+    const state = this.state;
+    if (state.phase !== PHASES.DEALER_GIFT || !this.isSeatToAct(seatIndex)) {
+      return { ok: false, reason: '现在不能交牌' };
+    }
+    const seat = state.seats[seatIndex];
+    if (!seat.hand.find((item) => item.id === cardId)) {
+      return { ok: false, reason: '没有这张牌' };
+    }
+    return this.applyDealerGift(seatIndex, cardId);
+  }
 }
 
-// 公共状态：可被本局所有玩家读取，不含任何玩家手牌明细。
+/**
+ * 构建公共状态（可 watch、可广播）。
+ * 手牌仅暴露 handCount，melds/discards 完整可见。
+ */
 function buildPublicState(state) {
   if (!state) return null;
   return {
@@ -831,7 +963,7 @@ function buildPublicState(state) {
   };
 }
 
-// 私密视图：仅下发给本人，含自己的手牌。
+/** 构建私密视图：仅 pull 时下发给本人，含完整 hand 与 drawnCard */
 function buildPrivateView(state, seatIndex) {
   if (!state || !state.seats || !state.seats[seatIndex]) return { hand: [] };
   const seat = state.seats[seatIndex];

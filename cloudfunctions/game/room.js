@@ -1,30 +1,64 @@
+/**
+ * 房间与对局编排层（room.js）
+ *
+ * 职责：
+ *   1. 快速匹配队列撮合
+ *   2. 好友房创建/加入/开局
+ *   3. 玩家操作裁决（op）与乐观锁版本校验
+ *   4. 状态持久化（权威 rooms + 公共 roomStates）
+ *   5. 心跳、掉线检测与 AI 托管推进
+ *
+ * 数据模型：
+ *   rooms       权威全量状态（含手牌），仅云函数可读写
+ *   roomStates  脱敏公共状态，客户端可 watch（无手牌明细）
+ *   matchQueue  快速匹配等待队列，以 openid 为文档 ID
+ *
+ * 并发策略：
+ *   - 客户端提交 op 时须携带本地看到的 version
+ *   - version 不一致则拒绝（VERSION_STALE），客户端 pull 后重试
+ *   - 每次合法推进 version + 1，并同步写入两个集合
+ */
 const { HuapaiEngine, buildPublicState, buildPrivateView } = require('./core/engine');
 const { DEFAULT_RULES } = require('./core/rules');
 
+/** 固定 4 人桌，取自规则配置 */
 const SEAT_COUNT = DEFAULT_RULES.seatCount;
-const MIN_HUMANS = 2; // 快速匹配最少真人数，其余座位由 AI 补位
+/** 快速匹配最少真人数；不足 4 人时由 AI 补位 */
+const MIN_HUMANS = 2;
 
-const ROOMS = 'rooms';          // 权威全量状态（含手牌），仅云函数可读写
-const ROOM_STATES = 'roomStates'; // 公共状态，客户端可 watch
+const ROOMS = 'rooms';
+const ROOM_STATES = 'roomStates';
 const QUEUE = 'matchQueue';
+/** 玩家超过此毫秒未心跳则视为掉线 */
 const PLAYER_TIMEOUT_MS = 60000;
 
+/**
+ * 剥离 CloudBase 文档 _id，写入 set 时使用业务 roomId 作为 doc id。
+ */
 function documentData(value) {
   const data = Object.assign({}, value);
   delete data._id;
   return data;
 }
 
+/** 生成 6 位数字房间号 */
 function genRoomCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-// 持久化时剥离庞大的 rules，读取时再挂载，减小文档体积。
+/**
+ * 持久化前剥离 rules 对象（体积大且固定），读取时由 loadEngine 重新挂载 DEFAULT_RULES。
+ */
 function stripState(state) {
   if (!state) return null;
   return Object.assign({}, state, { rules: undefined });
 }
 
+/**
+ * 从持久化 state 恢复引擎实例。
+ * @param {object|null} state - 数据库中的 strip 后状态
+ * @returns {HuapaiEngine}
+ */
 function loadEngine(state) {
   const engine = new HuapaiEngine(DEFAULT_RULES);
   if (state) {
@@ -34,12 +68,16 @@ function loadEngine(state) {
   return engine;
 }
 
+/** 根据 openid 查找座位号，不在房间返回 -1 */
 function seatOfOpenid(room, openid) {
   const player = (room.players || []).find((p) => p.openid === openid);
   return player ? player.seat : -1;
 }
 
-// 把 room.players（真人）补足 AI 到满座，生成开局所需 players 数组。
+/**
+ * 将 room.players（仅真人）映射为满座 players 数组，空座填充 AI。
+ * 供 engine.startRound 使用。
+ */
 function buildSeatPlayers(room) {
   const players = [];
   for (let seat = 0; seat < SEAT_COUNT; seat++) {
@@ -59,10 +97,16 @@ function buildSeatPlayers(room) {
   return players;
 }
 
+/**
+ * 原子写入权威房间 + 公共状态。
+ *
+ * 注意：rooms 使用 set 全量替换而非 update 嵌套合并，
+ * 避免 CloudBase「在 null 元素上创建字段」错误。
+ *
+ * @returns {object} publicState - 脱敏后的公共视图
+ */
 async function writeRoomState(db, roomId, room, engine, version) {
   const publicState = buildPublicState(engine.state);
-  // CloudBase update 会递归合并嵌套对象；当旧值为 null、新值为对象时会报
-  // “Cannot create field ... in element ... null”。权威状态每次都应完整替换。
   await db.collection(ROOMS).doc(roomId).set({
     data: documentData(Object.assign({}, room, {
       status: room.status,
@@ -72,7 +116,6 @@ async function writeRoomState(db, roomId, room, engine, version) {
       updatedAt: Date.now(),
     })),
   });
-  // 公共状态用独立集合，便于客户端 watch，且不含手牌。
   await db.collection(ROOM_STATES).doc(roomId).set({
     data: {
       version,
@@ -83,6 +126,7 @@ async function writeRoomState(db, roomId, room, engine, version) {
   return publicState;
 }
 
+/** 读取房间文档，不存在返回 null */
 async function getRoom(db, roomId) {
   try {
     const snap = await db.collection(ROOMS).doc(roomId).get();
@@ -92,8 +136,14 @@ async function getRoom(db, roomId) {
   }
 }
 
-// ===== 匹配 =====
+// ===================== 快速匹配 =====================
 
+/**
+ * 加入匹配队列；若等待人数 >= MIN_HUMANS 则立即撮合开局。
+ *
+ * @param {object} event.profile - { nickName, avatarUrl }
+ * @returns {{ ok, status: 'waiting'|'matched', roomId?, seat? }}
+ */
 async function quickMatch(event, ctx) {
   const { db, OPENID } = ctx;
   const profile = event.profile || {};
@@ -107,7 +157,7 @@ async function quickMatch(event, ctx) {
     },
   });
 
-  // 尝试撮合：取最早等待的若干人
+  // 按入队时间升序取前 SEAT_COUNT 人尝试撮合
   const waitingSnap = await db.collection(QUEUE)
     .where({ status: 'waiting' })
     .orderBy('createdAt', 'asc')
@@ -144,7 +194,6 @@ async function quickMatch(event, ctx) {
     await db.collection(ROOM_STATES).doc(roomId).set({
       data: { version: 0, public: buildPublicState(engine.state), updatedAt: Date.now() },
     });
-    // 标记这些人已匹配
     for (const p of players) {
       await db.collection(QUEUE).doc(p.openid).update({ data: { status: 'matched', roomId, seat: p.seat } });
     }
@@ -155,6 +204,7 @@ async function quickMatch(event, ctx) {
   return { ok: true, status: 'waiting' };
 }
 
+/** 取消匹配：仅 waiting 状态才从队列移除 */
 async function cancelMatch(event, ctx) {
   const { db, OPENID } = ctx;
   try {
@@ -162,10 +212,14 @@ async function cancelMatch(event, ctx) {
     if (snap.data && snap.data.status === 'waiting') {
       await db.collection(QUEUE).doc(OPENID).remove();
     }
-  } catch (err) { /* 不存在则忽略 */ }
+  } catch (err) { /* 文档不存在则忽略 */ }
   return { ok: true };
 }
 
+/**
+ * 轮询匹配结果。
+ * @returns {{ status: 'matched'|'waiting'|'none', roomId?, seat? }}
+ */
 async function matchStatus(event, ctx) {
   const { db, OPENID } = ctx;
   try {
@@ -180,8 +234,11 @@ async function matchStatus(event, ctx) {
   }
 }
 
-// ===== 好友房间 =====
+// ===================== 好友房间 =====================
 
+/**
+ * 创建等待中的好友房，创建者占 0 号座且为房主。
+ */
 async function createRoom(event, ctx) {
   const { db, OPENID } = ctx;
   const profile = event.profile || {};
@@ -207,6 +264,10 @@ async function createRoom(event, ctx) {
   return { ok: true, roomId, seat: 0 };
 }
 
+/**
+ * 加入好友房：分配最小可用座位号。
+ * 已在房间内则幂等返回原座位。
+ */
 async function joinRoom(event, ctx) {
   const { db, OPENID } = ctx;
   const roomId = event.roomId;
@@ -236,7 +297,10 @@ async function joinRoom(event, ctx) {
   return { ok: true, roomId, seat, players: room.players.concat([player]) };
 }
 
-// 房主开局（空座由 AI 补位）。
+/**
+ * 房主开局：空座由 AI 补位，状态变为 playing。
+ * 仅 hostOpenid 可调用。
+ */
 async function startRound(event, ctx) {
   const { db, OPENID } = ctx;
   const roomId = event.roomId;
@@ -252,8 +316,22 @@ async function startRound(event, ctx) {
   return { ok: true, roomId, version };
 }
 
-// ===== 操作裁决 =====
+// ===================== 操作裁决 =====================
 
+/**
+ * 提交游戏操作，服务端权威校验并推进状态机。
+ *
+ * event 结构：
+ *   roomId   房间号
+ *   version  客户端本地版本（乐观锁）
+ *   kind     'discard' | 'response' | 'takeover'
+ *   cardId   出牌时必填
+ *   ref      响应时：{ index } 或 { type, key, meldId }
+ *   accept   接庄时：boolean
+ *
+ * 错误码：ROOM_NOT_FOUND, ROOM_NOT_PLAYING, VERSION_STALE, NOT_IN_ROOM,
+ *         NOT_YOUR_TURN, NO_STATE, UNKNOWN_OP_KIND, OP_REJECTED
+ */
 async function op(event, ctx) {
   const { db, OPENID } = ctx;
   const roomId = event.roomId;
@@ -261,7 +339,6 @@ async function op(event, ctx) {
   if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
   if (room.status !== 'playing') return { ok: false, error: 'ROOM_NOT_PLAYING', status: room.status };
 
-  // 并发一致性：客户端须带上它看到的 version。
   if (typeof event.version === 'number' && event.version !== room.version) {
     return { ok: false, error: 'VERSION_STALE', version: room.version };
   }
@@ -288,12 +365,13 @@ async function op(event, ctx) {
     result = engine.submitResponse(seat, event.ref || {});
   } else if (event.kind === 'takeover') {
     result = engine.submitTakeover(seat, Boolean(event.accept));
+  } else if (event.kind === 'dealerGift') {
+    result = engine.submitDealerGift(seat, event.cardId);
   } else {
     return { ok: false, error: 'UNKNOWN_OP_KIND' };
   }
 
   if (!result || !result.ok) {
-    // 非法操作：不推进、不增版本，返回拒绝原因。
     return { ok: false, error: 'OP_REJECTED', reason: result && result.reason, version: room.version };
   }
 
@@ -305,7 +383,12 @@ async function op(event, ctx) {
   return { ok: true, version };
 }
 
-// 拉取：公共状态 + 本人私密手牌（断线重连用）。
+/**
+ * 拉取房间状态：公共视图 + 本人私密手牌。
+ * 用于进入房间、断线重连、version 冲突后同步。
+ *
+ * 重连时会将本人标记为 online，若此前被托管则恢复 isHuman 并回写引擎状态。
+ */
 async function pull(event, ctx) {
   const { db, OPENID } = ctx;
   const roomId = event.roomId;
@@ -342,6 +425,15 @@ async function pull(event, ctx) {
   };
 }
 
+/**
+ * 对超时掉线座位执行托管推进（由 heartbeat 调用）。
+ *
+ * 各 phase 处理策略：
+ *   human-discard    → AI 代出牌
+ *   human-response   → 自动 pass（可能触发进圈）
+ *   takeover-choice  → 自动不接庄
+ *   dealer-gift      → AI 自动选一张牌交给接庄者
+ */
 function advanceTimedOutSeat(engine, seat) {
   const state = engine.state;
   if (!state || state.currentSeat !== seat || state.phase === 'result') return false;
@@ -362,9 +454,18 @@ function advanceTimedOutSeat(engine, seat) {
     engine.submitTakeover(seat, false);
     return true;
   }
+  if (state.phase === 'dealer-gift') {
+    // 座位已标记为非真人，重新进入选牌阶段即走 AI 自动选牌分支
+    engine.enterDealerGiftPhase(seat, state.takeoverDealer);
+    return true;
+  }
   return false;
 }
 
+/**
+ * 心跳：刷新本人 lastSeenAt；检测他人超时并触发托管。
+ * @returns {{ ok, version, advanced }} advanced 表示是否因掉线推进了游戏
+ */
 async function heartbeat(event, ctx) {
   const { db, OPENID } = ctx;
   const room = await getRoom(db, event.roomId);
