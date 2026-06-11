@@ -4,11 +4,20 @@
 TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose after archive.
 ## Requirements
 ### Requirement: AI Turn Execution
-The system SHALL allow each AI opponent to choose whether to accept eligible dealer takeover, draw, evaluate legal wins and appearing-card grouping actions, obey required chi/peng/zhao/ta operations, choose a legal discard, and end its turn without human input. AI SHALL never add a drawn appearing card to hand unless a legal action claims it.
+The system SHALL allow each AI opponent to choose whether to accept eligible dealer takeover, draw, evaluate legal wins and appearing-card grouping actions, obey required chi/peng/zhao/ta operations, choose a legal discard, and end its turn without human input. In online battles, AI seats SHALL be hosted by the server-side authoritative engine and used to fill empty seats, to take over disconnected or timed-out human seats, and to back the offline single-player practice mode. AI SHALL never add a drawn appearing card to hand unless a legal action claims it. AI decisions MUST be applied as authoritative state changes by the server, not by any client.
 
 #### Scenario: AI active turn
 - **WHEN** an AI seat becomes the active player and no pending response blocks play
 - **THEN** the AI MUST draw if required, evaluate legal hu and self-draw appearing-card actions, discard the drawn card if no legal action is possible, and otherwise advance the round through a legal action
+
+#### Scenario: AI runs on the server
+- **WHEN** an online battle requires an AI seat to act
+- **THEN** the server-side engine MUST compute the AI decision and apply it to the authoritative state
+- **AND** clients MUST only render the resulting state changes
+
+#### Scenario: AI takes over disconnected seat
+- **WHEN** a human player disconnects or times out beyond the configured threshold during an online battle
+- **THEN** the server MUST let AI take over that seat to keep the round progressing
 
 #### Scenario: AI can accept takeover
 - **WHEN** dealer slip reaches an AI seat that has at least one kezi base
@@ -53,7 +62,7 @@ The system SHALL choose AI discards with a deterministic heuristic that preserve
 - **THEN** the round MUST resolve as circle-loss for that AI seat
 
 ### Requirement: AI Timing
-The system SHALL delay visible AI decisions briefly enough for the player to perceive turn progression while keeping the round responsive.
+The system SHALL pace visible AI decisions briefly enough for the player to perceive turn progression while keeping the round responsive. In online battles, the server SHALL control AI decision pacing and clients SHALL render the resulting AI turn or thinking state from the authoritative state updates.
 
 #### Scenario: AI discards
 - **WHEN** an AI chooses a discard or action
@@ -62,4 +71,9 @@ The system SHALL delay visible AI decisions briefly enough for the player to per
 #### Scenario: AI forced action still shows progression
 - **WHEN** an AI performs a mandatory chi, peng, zhao, ta, or circle-loss resolution
 - **THEN** the system MUST still show a brief visible progression state before applying the result
+
+#### Scenario: Server paces online AI
+- **WHEN** an AI seat acts in an online battle
+- **THEN** the server MUST pace the decision and publish the AI turn or thinking state
+- **AND** clients MUST render that progression from the authoritative state updates
 

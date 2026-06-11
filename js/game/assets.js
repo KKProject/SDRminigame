@@ -285,6 +285,7 @@ export default class AssetLoader {
     this.atlases = {};
     this.cardAtlasFrames = {};
     this.atlasOriginalIndexes = {};
+    this.remoteImages = {};
     this.status = {};
   }
 
@@ -332,6 +333,19 @@ export default class AssetLoader {
 
   getImage(name) {
     return this.status[name] === 'ready' ? this.images[name] : null;
+  }
+
+  getRemoteImage(src) {
+    if (!src || typeof wx === 'undefined' || !wx.createImage) return null;
+    const cached = this.remoteImages[src];
+    if (cached) return cached.ready ? cached.image : null;
+    const image = wx.createImage();
+    const entry = { image, ready: false, failed: false };
+    this.remoteImages[src] = entry;
+    image.onload = () => { entry.ready = true; };
+    image.onerror = () => { entry.failed = true; };
+    image.src = src;
+    return null;
   }
 
   getAtlasFrame(name, frameName) {

@@ -30,6 +30,7 @@
   "libVersion": "latest",
   "appid": "wx487628e952ff200d",
   "projectname": "quickstart",
+  "cloudfunctionRoot": "cloudfunctions/",
   "condition": {
     "search": {
       "current": -1,
@@ -50,9 +51,59 @@
   },
   "simulatorPluginLibVersion": {},
   "packOptions": {
-    "ignore": [],
+    "ignore": [
+      {
+        "type": "folder",
+        "value": ".git"
+      },
+      {
+        "type": "folder",
+        "value": ".cursor"
+      },
+      {
+        "type": "folder",
+        "value": ".codex"
+      },
+      {
+        "type": "folder",
+        "value": ".tmp-debug-layout"
+      },
+      {
+        "type": "folder",
+        "value": ".tmp-huapai-checks"
+      },
+      {
+        "type": "folder",
+        "value": ".tmp-online-checks"
+      },
+      {
+        "type": "folder",
+        "value": "openspec"
+      },
+      {
+        "type": "folder",
+        "value": "scripts"
+      },
+      {
+        "type": "folder",
+        "value": "cloudfunctions"
+      },
+      {
+        "type": "file",
+        "value": ".DS_Store"
+      },
+      {
+        "type": "file",
+        "value": "README.md"
+      },
+      {
+        "type": "file",
+        "value": ".eslintrc.js"
+      }
+    ],
     "include": []
   },
   "isGameTourist": false,
-  "editorSetting": {}
+  "editorSetting": {},
+  "cloudfunctionTemplateRoot": "cloudfunctionTemplate/"
 }

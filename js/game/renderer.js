@@ -148,17 +148,24 @@ export default class TableRenderer {
       const seat = state.seats[area.seat];
       if (!seat) return;
       const avatar = area.avatar;
-      ctx.fillStyle = colors[area.seat % colors.length];
-      roundRect(ctx, avatar.x, avatar.y, avatar.width, avatar.height, 3);
-      ctx.fill();
+      const avatarImage = seat.avatarUrl && this.assets.getRemoteImage
+        ? this.assets.getRemoteImage(seat.avatarUrl)
+        : null;
+      if (avatarImage) {
+        ctx.drawImage(avatarImage, avatar.x, avatar.y, avatar.width, avatar.height);
+      } else {
+        roundRect(ctx, avatar.x, avatar.y, avatar.width, avatar.height, 3);
+        ctx.fillStyle = colors[area.seat % colors.length];
+        ctx.fill();
+        ctx.fillStyle = '#fff7dc';
+        ctx.font = `${Math.max(13, Math.floor(avatar.height * 0.34))}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.fillText((seat.name || '?').slice(0, 1), avatar.x + avatar.width / 2, avatar.y + avatar.height / 2 + 5);
+      }
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.70)';
       ctx.lineWidth = 1;
+      roundRect(ctx, avatar.x, avatar.y, avatar.width, avatar.height, 3);
       ctx.stroke();
-
-      ctx.fillStyle = '#fff7dc';
-      ctx.font = `${Math.max(13, Math.floor(avatar.height * 0.34))}px Arial`;
-      ctx.textAlign = 'center';
-      ctx.fillText((seat.name || '?').slice(0, 1), avatar.x + avatar.width / 2, avatar.y + avatar.height / 2 + 5);
 
       const totalScore = typeof seat.score === 'number' ? seat.score : 0;
       const operationFu = calculateOperationFu(seat.melds || [], state.rules, {
