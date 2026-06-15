@@ -1,4 +1,6 @@
 export const MAX_RENDER_PIXEL_RATIO = 2;
+export const MIN_LANDSCAPE_WIDTH = 480;
+export const MIN_LANDSCAPE_HEIGHT = 240;
 
 function fallbackNumber(value, fallback) {
   return typeof value === 'number' && isFinite(value) && value > 0 ? value : fallback;
@@ -68,6 +70,37 @@ export function createRenderMetrics(windowInfo = {}, maxPixelRatio = MAX_RENDER_
   };
 }
 
+export function renderMetricsSignature(metrics) {
+  if (!metrics) return '';
+  const insets = metrics.safeAreaInsets || {};
+  return [
+    metrics.width,
+    metrics.height,
+    metrics.devicePixelRatio,
+    metrics.renderPixelRatio,
+    insets.left || 0,
+    insets.top || 0,
+    insets.right || 0,
+    insets.bottom || 0,
+  ].join(':');
+}
+
+export function isValidLandscapeMetrics(metrics) {
+  if (!metrics) return false;
+  const values = [
+    metrics.width,
+    metrics.height,
+    metrics.devicePixelRatio,
+    metrics.renderPixelRatio,
+    metrics.safeAreaBounds && metrics.safeAreaBounds.width,
+    metrics.safeAreaBounds && metrics.safeAreaBounds.height,
+  ];
+  return values.every((value) => typeof value === 'number' && isFinite(value) && value > 0)
+    && metrics.width > metrics.height
+    && metrics.width >= MIN_LANDSCAPE_WIDTH
+    && metrics.height >= MIN_LANDSCAPE_HEIGHT;
+}
+
 export function applyCanvasMetrics(targetCanvas, metrics) {
   if (!targetCanvas || !metrics) return;
   targetCanvas.width = metrics.backingStoreWidth;
@@ -85,27 +118,153 @@ export function applyContextScale(targetContext, renderPixelRatio) {
   }
 }
 
-function readWindowInfo(runtime) {
-  if (runtime && runtime.getWindowInfo) return runtime.getWindowInfo();
-  if (runtime && runtime.getSystemInfoSync) return runtime.getSystemInfoSync();
-  return {};
+export function readWindowInfo(runtime) {
+  try {
+    if (runtime && runtime.getWindowInfo) {
+      const info = runtime.getWindowInfo() || {};
+      if (
+        fallbackNumber(info.windowWidth, fallbackNumber(info.screenWidth, 0))
+        && fallbackNumber(info.windowHeight, fallbackNumber(info.screenHeight, 0))
+      ) return info;
+    }
+  } catch (err) {
+    console.warn('[render] getWindowInfo failed', err);
+  }
+  try {
+    if (runtime && runtime.getSystemInfoSync) return runtime.getSystemInfoSync() || {};
+  } catch (err) {
+    console.warn('[render] getSystemInfoSync failed', err);
+  }
+  return { windowWidth: 667, windowHeight: 375, pixelRatio: 1 };
+}
+
+export let RENDER_METRICS = null;
+export let SCREEN_WIDTH = 667;
+export let SCREEN_HEIGHT = 375;
+export let DEVICE_PIXEL_RATIO = 1;
+export let RENDER_PIXEL_RATIO = 1;
+export let BACKING_STORE_WIDTH = 667;
+export let BACKING_STORE_HEIGHT = 375;
+export let SAFE_AREA_INSETS = { left: 0, top: 0, right: 0, bottom: 0 };
+export let SAFE_AREA_BOUNDS = { x: 0, y: 0, width: 667, height: 375 };
+
+function syncLegacyExports(metrics) {
+  RENDER_METRICS = metrics;
+  SCREEN_WIDTH = metrics.width;
+  SCREEN_HEIGHT = metrics.height;
+  DEVICE_PIXEL_RATIO = metrics.devicePixelRatio;
+  RENDER_PIXEL_RATIO = metrics.renderPixelRatio;
+  BACKING_STORE_WIDTH = metrics.backingStoreWidth;
+  BACKING_STORE_HEIGHT = metrics.backingStoreHeight;
+  SAFE_AREA_INSETS = metrics.safeAreaInsets;
+  SAFE_AREA_BOUNDS = metrics.safeAreaBounds;
+}
+
+export class RenderMetricsManager {
+  constructor(options = {}) {
+    this.runtime = options.runtime || null;
+    this.canvas = options.canvas || null;
+    this.context = options.context || null;
+    this.confirmations = Math.max(1, options.confirmations || 2);
+    this.stableMetrics = null;
+    this.stableSignature = '';
+    this.candidateSignature = '';
+    this.candidateCount = 0;
+    this.listeners = new Set();
+    this.appliedSignature = options.appliedSignature || '';
+  }
+
+  get() {
+    return this.stableMetrics;
+  }
+
+  subscribe(listener) {
+    if (typeof listener !== 'function') return () => {};
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  refresh() {
+    return this.consider(readWindowInfo(this.runtime));
+  }
+
+  consider(windowInfo) {
+    const metrics = createRenderMetrics(windowInfo);
+    if (!isValidLandscapeMetrics(metrics)) {
+      this.candidateSignature = '';
+      this.candidateCount = 0;
+      return { status: 'invalid', metrics };
+    }
+
+    const signature = renderMetricsSignature(metrics);
+    if (signature === this.stableSignature) {
+      this.candidateSignature = '';
+      this.candidateCount = 0;
+      return { status: 'duplicate', metrics: this.stableMetrics };
+    }
+
+    if (signature === this.candidateSignature) {
+      this.candidateCount += 1;
+    } else {
+      this.candidateSignature = signature;
+      this.candidateCount = 1;
+    }
+
+    if (this.candidateCount < this.confirmations) {
+      return { status: 'candidate', metrics, confirmations: this.candidateCount };
+    }
+    return { status: 'committed', metrics: this.commit(metrics, signature) };
+  }
+
+  commit(metrics, signature = renderMetricsSignature(metrics)) {
+    if (signature === this.stableSignature) return this.stableMetrics;
+
+    if (signature !== this.appliedSignature) {
+      applyCanvasMetrics(this.canvas, metrics);
+      applyContextScale(this.context, metrics.renderPixelRatio);
+      this.appliedSignature = signature;
+    }
+
+    this.stableMetrics = metrics;
+    this.stableSignature = signature;
+    this.candidateSignature = '';
+    this.candidateCount = 0;
+    syncLegacyExports(metrics);
+    this.listeners.forEach((listener) => listener(metrics));
+    return metrics;
+  }
 }
 
 GameGlobal.canvas = wx.createCanvas();
 
 export const canvas = GameGlobal.canvas;
-export const RENDER_METRICS = createRenderMetrics(readWindowInfo(wx));
-
-applyCanvasMetrics(canvas, RENDER_METRICS);
-
 export const ctx = canvas.getContext('2d');
-applyContextScale(ctx, RENDER_METRICS.renderPixelRatio);
 
-export const SCREEN_WIDTH = RENDER_METRICS.width;
-export const SCREEN_HEIGHT = RENDER_METRICS.height;
-export const DEVICE_PIXEL_RATIO = RENDER_METRICS.devicePixelRatio;
-export const RENDER_PIXEL_RATIO = RENDER_METRICS.renderPixelRatio;
-export const BACKING_STORE_WIDTH = RENDER_METRICS.backingStoreWidth;
-export const BACKING_STORE_HEIGHT = RENDER_METRICS.backingStoreHeight;
-export const SAFE_AREA_INSETS = RENDER_METRICS.safeAreaInsets;
-export const SAFE_AREA_BOUNDS = RENDER_METRICS.safeAreaBounds;
+const initialWindowInfo = readWindowInfo(wx);
+const initialMetrics = createRenderMetrics(initialWindowInfo);
+applyCanvasMetrics(canvas, initialMetrics);
+applyContextScale(ctx, initialMetrics.renderPixelRatio);
+syncLegacyExports(initialMetrics);
+
+export const renderMetricsManager = new RenderMetricsManager({
+  runtime: wx,
+  canvas,
+  context: ctx,
+  appliedSignature: renderMetricsSignature(initialMetrics),
+});
+
+// 连续读取两次；有效横屏通常在模块加载时即可稳定，过渡尺寸则不会进入正式布局。
+renderMetricsManager.consider(initialWindowInfo);
+renderMetricsManager.refresh();
+
+export function getRenderMetrics() {
+  return renderMetricsManager.get();
+}
+
+export function subscribeRenderMetrics(listener) {
+  return renderMetricsManager.subscribe(listener);
+}
+
+export function refreshRenderMetrics() {
+  return renderMetricsManager.refresh();
+}

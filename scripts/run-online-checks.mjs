@@ -37,6 +37,26 @@ const cloud = await import(pathToFileURL(join(tempDir, 'cloud.mjs')));
 const online = await import(pathToFileURL(join(tempDir, 'online.mjs')));
 const profile = await import(pathToFileURL(join(tempDir, 'profile.mjs')));
 
+const localIdentity = online.localActionIdentity({ type: 'chi', seat: 0, card: { id: 'incoming-chi', key: 'zi' } });
+if (
+  !online.localActionMatchesEvent({ identity: localIdentity }, {
+    eventSeq: 1,
+    type: 'chi',
+    seat: 0,
+    actingSeat: 0,
+    meld: { cards: [{ id: 'incoming-chi', key: 'zi' }] },
+  })
+  || online.localActionMatchesEvent({ identity: localIdentity }, {
+    eventSeq: 2,
+    type: 'chi',
+    seat: 1,
+    actingSeat: 1,
+    meld: { cards: [{ id: 'incoming-chi', key: 'zi' }] },
+  })
+) {
+  throw new Error('local action identity should match only the authoritative event owned by the same actor');
+}
+
 await cloud.login({ nickName: '测试玩家' });
 if (
   !callData
@@ -164,6 +184,10 @@ let completeAnimation = null;
 let localPreviewCount = 0;
 let localPreviewConfirmCount = 0;
 let localPreviewCancelCount = 0;
+let completeLocalPreview = null;
+let localPreviewFinished = false;
+let localPreviewAuthority = null;
+let localPreviewAuthorityEvent = null;
 const cardSoundEvents = [];
 const actionSoundEvents = [];
 globalThis.wx.cloud.callFunction = (options) => {
@@ -176,13 +200,23 @@ const onlineRenderer = {
     completeAnimation = onComplete;
     return true;
   },
-  playLocalActionPreview() {
+  playLocalActionPreview(action, onLocalComplete) {
     localPreviewCount += 1;
+    localPreviewFinished = false;
+    localPreviewAuthority = null;
+    localPreviewAuthorityEvent = null;
+    completeLocalPreview = () => {
+      localPreviewFinished = true;
+      if (typeof onLocalComplete === 'function') onLocalComplete(action);
+      if (localPreviewAuthority) localPreviewAuthority(localPreviewAuthorityEvent);
+    };
     return true;
   },
   confirmLocalActionPreview(event, onComplete) {
     localPreviewConfirmCount += 1;
-    completeAnimation = onComplete;
+    localPreviewAuthority = onComplete;
+    localPreviewAuthorityEvent = event;
+    if (localPreviewFinished) onComplete(event);
     return true;
   },
   cancelLocalActionPreview() {
@@ -288,6 +322,10 @@ onlineController.startLocalActionPreview({ type: 'chi', seat: 0, card: { id: 'ch
 if (localPreviewCount !== 1 || actionSoundEvents.join(',') !== 'peng,chi') {
   throw new Error('local response preview should start its animation and action voice immediately');
 }
+onlineController.startLocalActionPreview({ type: 'chi', seat: 0, card: { id: 'chi-card' } });
+if (localPreviewCount !== 1 || actionSoundEvents.join(',') !== 'peng,chi') {
+  throw new Error('duplicate local action taps must not restart their animation or voice');
+}
 onlineController.consumeAnimationState({
   waiting: true,
   selfAcked: false,
@@ -296,7 +334,11 @@ onlineController.consumeAnimationState({
 if (localPreviewConfirmCount !== 1 || actionSoundEvents.join(',') !== 'peng,chi') {
   throw new Error('matching authoritative action should reuse the local preview without replaying its voice');
 }
-completeAnimation({ eventSeq: 7, type: 'chi', seat: 0 });
+if (animationAckCount !== 2) {
+  throw new Error('authoritative confirmation must wait for the local action animation before acknowledging');
+}
+completeLocalPreview();
+await new Promise((resolve) => setTimeout(resolve, 0));
 if (localPreviewCancelCount !== 1) {
   throw new Error('confirmed local action preview should be released when its animation completes');
 }
@@ -306,6 +348,7 @@ onlineController.startLocalActionPreview({ type: 'discard', seat: 0, card: { id:
 if (localPreviewCount !== 2 || cardSoundEvents.join(',') !== 'discarded-card,card-5,local-discard') {
   throw new Error('local discard preview should begin with its card voice before the network response arrives');
 }
+completeLocalPreview();
 onlineController.consumeAnimationState({
   waiting: true,
   selfAcked: false,
@@ -313,6 +356,20 @@ onlineController.consumeAnimationState({
 });
 if (localPreviewConfirmCount !== 2 || cardSoundEvents.join(',') !== 'discarded-card,card-5,local-discard') {
   throw new Error('matching authoritative discard should reuse the local preview without replaying its card voice');
+}
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (localPreviewCancelCount !== 2) {
+  throw new Error('an already completed local animation should acknowledge immediately after authoritative confirmation');
+}
+globalThis.wx.cloud.callFunction = (options) => {
+  options.success({ result: { ok: false, error: 'ACTION_REJECTED', reason: '动作已失效' } });
+};
+onlineController.animationWaiting = false;
+onlineController.isAnimating = false;
+onlineController.startLocalActionPreview({ type: 'peng', seat: 0, card: { id: 'rejected-peng' } });
+await onlineController.sendOp({ kind: 'response', ref: { index: 0, type: 'peng' } });
+if (onlineController.pendingLocalAction || onlineController.localActionPreviewType || localPreviewCancelCount !== 3) {
+  throw new Error('rejected local actions should cancel their optimistic animation and pending ownership');
 }
 globalThis.wx.cloud.callFunction = (options) => {
   options.fail({ errMsg: 'temporary network failure' });

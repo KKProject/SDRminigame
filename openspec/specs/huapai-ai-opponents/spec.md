@@ -4,7 +4,7 @@
 TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose after archive.
 ## Requirements
 ### Requirement: AI Turn Execution
-The system SHALL allow each AI opponent to choose whether to accept eligible dealer takeover, draw, evaluate legal wins and appearing-card grouping actions, obey required chi/peng/zhao/ta operations, choose a legal discard, and end its turn without human input. In online battles, AI seats SHALL be hosted by the server-side authoritative engine and used to fill empty seats, to take over disconnected or timed-out human seats, and to back the offline single-player practice mode. AI SHALL never add a drawn appearing card to hand unless a legal action claims it. AI decisions MUST be applied as authoritative state changes by the server, not by any client.
+The system SHALL allow each AI opponent to choose whether to accept eligible dealer takeover, draw, evaluate legal wins and appearing-card grouping actions, obey required chi/peng/zhao/ta operations, choose a legal discard, and end its turn without human input. In online battles, AI seats SHALL be hosted by the server-side authoritative engine and used to fill empty seats and to take over disconnected or timed-out human seats. The client MUST NOT host an AI opponent for an offline single-player practice mode. AI SHALL never add a drawn appearing card to hand unless a legal action claims it. AI decisions MUST be applied as authoritative state changes by the server, not by any client.
 
 #### Scenario: AI active turn
 - **WHEN** an AI seat becomes the active player and no pending response blocks play

@@ -518,6 +518,33 @@ export default class TableLayout {
     this.handColumnState = null;
   }
 
+  setViewport(width, height, options = {}) {
+    const nextWidth = Math.max(1, Number(width) || this.width);
+    const nextHeight = Math.max(1, Number(height) || this.height);
+    const nextInsets = normalizeInsets(options.safeAreaInsets || this.safeAreaInsets);
+    const signature = [
+      nextWidth,
+      nextHeight,
+      nextInsets.left,
+      nextInsets.top,
+      nextInsets.right,
+      nextInsets.bottom,
+    ].join(':');
+    const currentSignature = [
+      this.width,
+      this.height,
+      this.safeAreaInsets.left,
+      this.safeAreaInsets.top,
+      this.safeAreaInsets.right,
+      this.safeAreaInsets.bottom,
+    ].join(':');
+    if (signature === currentSignature) return false;
+    this.width = nextWidth;
+    this.height = nextHeight;
+    this.safeAreaInsets = nextInsets;
+    return true;
+  }
+
   resetHandColumns() {
     this.handColumnState = null;
   }

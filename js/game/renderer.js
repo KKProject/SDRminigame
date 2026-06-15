@@ -68,6 +68,7 @@ export default class TableRenderer {
     this.assets = assetLoader;
     this.layout = new TableLayout();
     this.lastLayout = null;
+    this.lastState = null;
     this.lastDiscardEvent = null;
     this.lastMeldSignatures = null;
     this.lastResultEffectSignature = '';
@@ -83,11 +84,44 @@ export default class TableRenderer {
       this.lastDiscardEvent = null;
     });
     this.animationController = new TableAnimationController(this, this.animationManager);
+    this.viewportSignature = '';
+    this.restoreAnimationsAfterLayout = false;
+  }
+
+  setViewport(metrics) {
+    if (!metrics) return false;
+    const insets = metrics.safeAreaInsets || {};
+    const signature = [
+      metrics.width,
+      metrics.height,
+      insets.left || 0,
+      insets.top || 0,
+      insets.right || 0,
+      insets.bottom || 0,
+    ].join(':');
+    if (signature === this.viewportSignature) return false;
+
+    this.animationController.prepareForLayoutChange();
+    this.stateAnimationController.handleLayoutChange();
+    this.layout.setViewport(metrics.width, metrics.height, { safeAreaInsets: insets });
+    this.viewportSignature = signature;
+    this.lastLayout = null;
+    this.lastDiscardEvent = null;
+    this.previousHandCards = [];
+    this.buttonPanelSignature = '';
+    this.buttonPress = null;
+    this.restoreAnimationsAfterLayout = true;
+    return true;
   }
 
   render(ctx, state) {
     const layout = this.layout.build(state);
     this.lastLayout = layout;
+    this.lastState = state;
+    if (this.restoreAnimationsAfterLayout) {
+      this.restoreAnimationsAfterLayout = false;
+      this.animationController.restoreAfterLayoutChange();
+    }
 
     ctx.clearRect(0, 0, layout.width, layout.height);
     this.stateAnimationController.observe(state, layout, this.animationController.isBlockingStateAnimation());
@@ -282,7 +316,7 @@ export default class TableRenderer {
 
   updateMeldEffects(state, layout, now) {
     const current = {};
-    const suppress = this.suppressNextMeldEffect;
+    const suppress = this.suppressNextMeldEffect || Boolean(state.animationWaiting);
     (state.seats || []).forEach((seat, seatIndex) => {
       (seat.melds || []).forEach((meld) => {
         const signature = this.meldSignature(seatIndex, meld);
@@ -504,8 +538,23 @@ export default class TableRenderer {
 
   resolvingClaimedMiniIds(state, seat) {
     const ids = [];
-    const movingId = this.resolvingClaimedMiniId(state, seat);
-    if (movingId) ids.push(movingId);
+    const previewMeld = this.animationController.localActionPreview
+      && this.animationController.localActionPreview.meld;
+    if (previewMeld) {
+      const claimed = this.findClaimedCard(state, previewMeld.cards[0] && previewMeld.cards[0].id);
+      if (claimed && claimed.seat === seat) {
+        (previewMeld.cards || []).forEach((card) => ids.push(card.id));
+      }
+    }
+    this.animationManager.getVisualState()
+      .filter((visual) => (
+        visual.kind === 'card'
+        && ['chi', 'peng', 'zhao', 'ta'].indexOf(visual.stage) >= 0
+      ))
+      .forEach((visual) => {
+        const claimed = this.findClaimedCard(state, visual.card.id);
+        if (claimed && claimed.seat === seat && ids.indexOf(visual.card.id) < 0) ids.push(visual.card.id);
+      });
     this.animationManager.getVisualState()
       .filter((visual) => visual.kind === 'card' && visual.stage === 'chi-combo')
       .forEach((visual) => {
@@ -636,11 +685,20 @@ export default class TableRenderer {
   }
 
   drawPlayerHand(ctx, state, layout) {
+    const previewMeldIds = new Set(
+      this.animationController.localActionPreview
+      && this.animationController.localActionPreview.meld
+        ? this.animationController.localActionPreview.meld.cards.map((card) => card.id)
+        : []
+    );
     layout.handCards.forEach((region) => {
       if (
-        this.animationController.localActionPreview
-        && this.animationController.localActionPreview.type === 'discard'
-        && this.animationController.localActionPreview.cardId === region.card.id
+        previewMeldIds.has(region.card.id)
+        || (
+          this.animationController.localActionPreview
+          && this.animationController.localActionPreview.type === 'discard'
+          && this.animationController.localActionPreview.cardId === region.card.id
+        )
       ) return;
       const selected = state.selectedCardId === region.card.id;
       this.drawCard(ctx, region.card, region.x, region.y, region.width, region.height, true, selected, 'small');

@@ -22,6 +22,7 @@ const localRules = await import(pathToFileURL(join(tempDir, 'rules.mjs')));
 const serverCards = require(join(root, 'cloudfunctions/game/core/cards.js'));
 const serverEvaluator = require(join(root, 'cloudfunctions/game/core/evaluator.js'));
 const serverRules = require(join(root, 'cloudfunctions/game/core/rules.js'));
+const serverAi = require(join(root, 'cloudfunctions/game/core/ai.js'));
 const serverEngine = require(join(root, 'cloudfunctions/game/core/engine.js'));
 const room = require(join(root, 'cloudfunctions/game/room.js'));
 
@@ -50,6 +51,17 @@ const localActions = localEvaluator.findAppearingCardActions(localState, 0, inco
 const serverActions = serverEvaluator.findAppearingCardActions(serverState, 0, incomingServer, 'draw', serverRules.DEFAULT_RULES);
 if (JSON.stringify(localActions) !== JSON.stringify(serverActions)) throw new Error('server actions must match local actions');
 
+const safeResponse = serverAi.chooseResponse([
+  { type: 'zhao', seat: 1, priority: serverRules.ACTION_PRIORITY.zhao, circleLossRisk: true },
+  { type: 'peng', seat: 1, priority: serverRules.ACTION_PRIORITY.peng },
+]);
+if (!safeResponse || safeResponse.type !== 'peng') {
+  throw new Error('server AI should choose safe peng instead of optional zhao that immediately circle-losses');
+}
+if (!serverAi.chooseDiscard({ hand: serverDeck.filter((card) => ['shang', 'kong'].includes(card.key)).slice(0, 3) }, serverRules.DEFAULT_RULES)) {
+  throw new Error('server AI should choose a discard');
+}
+
 const publicState = serverEngine.buildPublicState({
   seats: serverSeats,
   deck: serverDeck.slice(30),
@@ -62,10 +74,19 @@ const sanitizedEvent = serverEngine.serializePublicEvent({
   type: 'discard',
   seat: 0,
   card: serverDeck[0],
+  appearanceResolution: 'await-response',
+  discardIndex: 3,
   privateHand: serverDeck.slice(1, 4),
+  responseActions: [{ type: 'peng', seat: 1 }],
   pendingContinuation: { type: 'secret' },
 });
-if ('privateHand' in sanitizedEvent || 'pendingContinuation' in sanitizedEvent) {
+if (
+  sanitizedEvent.appearanceResolution !== 'await-response'
+  || sanitizedEvent.discardIndex !== 3
+  || 'privateHand' in sanitizedEvent
+  || 'responseActions' in sanitizedEvent
+  || 'pendingContinuation' in sanitizedEvent
+) {
   throw new Error('public animation events must not expose private hands or continuation tokens');
 }
 
@@ -91,11 +112,70 @@ if (pausedEngine.state.phase === 'human-discard') {
   if (!pausedEngine.state.publicEvent || pausedEngine.state.publicEvent.type !== 'discard' || !pausedEngine.state.pendingContinuation) {
     throw new Error('a public discard should pause the engine with a serializable continuation token');
   }
+  if (!['await-response', 'auto-discard'].includes(pausedEngine.state.publicEvent.appearanceResolution)) {
+    throw new Error('a public discard should declare its authoritative appearance resolution');
+  }
   const pausedSeq = pausedEngine.state.eventSeq;
   pausedEngine.resumePublicEvent();
   if (pausedEngine.state.eventSeq < pausedSeq) {
     throw new Error('resuming a public event must preserve monotonic event sequence numbers');
   }
+}
+
+const autoDiscardEngine = new serverEngine.HuapaiEngine(serverRules.DEFAULT_RULES);
+autoDiscardEngine.startRound({
+  seed: 1,
+  players: serverSeats.map((seat, index) => ({ nickName: seat.name, isHuman: index === 0 })),
+});
+autoDiscardEngine.state.seats.slice(1).forEach((seat) => { seat.hand = []; });
+autoDiscardEngine.state.phase = 'human-discard';
+autoDiscardEngine.state.currentSeat = 0;
+const autoDiscardCard = serverEvaluator.getLegalDiscards(autoDiscardEngine.state.seats[0], serverRules.DEFAULT_RULES)[0];
+autoDiscardEngine.submitDiscard(0, autoDiscardCard.id);
+if (
+  autoDiscardEngine.state.publicEvent.appearanceResolution !== 'auto-discard'
+  || autoDiscardEngine.state.pendingContinuation.type !== 'next-draw'
+  || !autoDiscardEngine.state.recentDiscard.resolved
+) {
+  throw new Error('an initially unresponsive discard should be committed and emitted as one auto-discard event');
+}
+const autoDiscardSeq = autoDiscardEngine.state.eventSeq;
+autoDiscardEngine.resumePublicEvent();
+if (autoDiscardEngine.state.eventSeq !== autoDiscardSeq + 1 || autoDiscardEngine.state.publicEvent.type === 'unclaimed') {
+  throw new Error('an initially unresponsive discard should continue directly without an extra unclaimed event');
+}
+
+const autoDrawEngine = new serverEngine.HuapaiEngine(serverRules.DEFAULT_RULES);
+const emptySeats = serverCards.createSeats(serverRules.DEFAULT_RULES);
+emptySeats.forEach((seat) => {
+  seat.hand = [];
+  seat.isHuman = true;
+});
+autoDrawEngine.load({
+  rules: serverRules.DEFAULT_RULES,
+  seats: emptySeats,
+  deck: serverDeck.slice(0, 20),
+  phase: 'ai-thinking',
+  currentSeat: 0,
+  dealerSeat: 0,
+  nextDealerSeat: 0,
+  appearingCard: null,
+  drawnCard: null,
+  recentDiscard: null,
+  pendingActions: [],
+  playerActions: [],
+  eventSeq: 0,
+  publicEvent: null,
+  pendingContinuation: null,
+});
+autoDrawEngine.beginTurn(0, true);
+if (
+  autoDrawEngine.state.publicEvent.type !== 'draw'
+  || autoDrawEngine.state.publicEvent.appearanceResolution !== 'auto-discard'
+  || autoDrawEngine.state.seats[0].discards.length !== 1
+  || autoDrawEngine.state.pendingContinuation.type !== 'next-draw'
+) {
+  throw new Error('an initially unresponsive draw should include its final discard state in one draw event');
 }
 
 const timeoutEngine = new serverEngine.HuapaiEngine(serverRules.DEFAULT_RULES);

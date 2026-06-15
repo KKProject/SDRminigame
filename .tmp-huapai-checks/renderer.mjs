@@ -1,11 +1,20 @@
 import TableLayout, { CARD_ASPECT_RATIO } from './layout.mjs';
 import { calculateOperationFu } from './evaluator.mjs';
+import AnimationManager from './animation/manager.mjs';
+import TableAnimationController from './animation/controller.mjs';
+import { cardFlightPlan, textEffectPlan, visualCardSize } from './animation/presets.mjs';
+import StateAnimationController from './animation/state-controller.mjs';
+import {
+  cardSize as managedCardSize,
+  clampPosition as managedClampPosition,
+  claimedTarget as managedClaimedTarget,
+  discardTarget as managedDiscardTarget,
+  effectTarget as managedEffectTarget,
+  seatFront as managedSeatFront,
+  seatStart as managedSeatStart,
+} from './animation/targets.mjs';
 
 const BIG_CARD_ASPECT_RATIO = 88 / 307;
-const CARD_FLIGHT_SCALE_PEAK = 1.12;
-const DISCARD_FRONT_DURATION_MS = 520;
-const DISCARD_RESOLVE_DURATION_MS = 500;
-const DRAW_FRONT_DURATION_MS = 500;
 const CHI_COMBO_DURATION_MS = 900;
 const CHI_COMBO_FALLBACK_DURATION_MS = 650;
 const GLOW_STROKE = '#2ee8ff';
@@ -39,14 +48,6 @@ function easeOutBack(progress) {
   return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
 }
 
-function flightScale(progress) {
-  const p = clamp01(progress);
-  if (p <= 0.55) {
-    return lerp(1, CARD_FLIGHT_SCALE_PEAK, easeOutCubic(p / 0.55));
-  }
-  return lerp(CARD_FLIGHT_SCALE_PEAK, 1, easeOutCubic((p - 0.55) / 0.45));
-}
-
 function roundRect(ctx, x, y, width, height, radius) {
   const r = Math.min(radius, width / 2, height / 2);
   ctx.beginPath();
@@ -67,31 +68,70 @@ export default class TableRenderer {
     this.assets = assetLoader;
     this.layout = new TableLayout();
     this.lastLayout = null;
-    this.animation = null;
-    this.lastEventSignature = '';
+    this.lastState = null;
     this.lastDiscardEvent = null;
-    this.effects = [];
-    this.comboAnimations = [];
     this.lastMeldSignatures = null;
     this.lastResultEffectSignature = '';
     this.buttonPanelSignature = '';
     this.buttonPanelStartedAt = 0;
     this.buttonPress = null;
     this.previousHandCards = [];
-    this.onlinePlayback = null;
-    this.localActionPreview = null;
     this.suppressNextMeldEffect = false;
     this.suppressNextResultEffect = false;
+    this.effectSequence = 0;
+    this.animationManager = new AnimationManager();
+    this.stateAnimationController = new StateAnimationController(this.animationManager, () => {
+      this.lastDiscardEvent = null;
+    });
+    this.animationController = new TableAnimationController(this, this.animationManager);
+    this.viewportSignature = '';
+    this.restoreAnimationsAfterLayout = false;
+  }
+
+  setViewport(metrics) {
+    if (!metrics) return false;
+    const insets = metrics.safeAreaInsets || {};
+    const signature = [
+      metrics.width,
+      metrics.height,
+      insets.left || 0,
+      insets.top || 0,
+      insets.right || 0,
+      insets.bottom || 0,
+    ].join(':');
+    if (signature === this.viewportSignature) return false;
+
+    this.animationController.prepareForLayoutChange();
+    this.stateAnimationController.handleLayoutChange();
+    this.layout.setViewport(metrics.width, metrics.height, { safeAreaInsets: insets });
+    this.viewportSignature = signature;
+    this.lastLayout = null;
+    this.lastDiscardEvent = null;
+    this.previousHandCards = [];
+    this.buttonPanelSignature = '';
+    this.buttonPress = null;
+    this.restoreAnimationsAfterLayout = true;
+    return true;
   }
 
   render(ctx, state) {
     const layout = this.layout.build(state);
     this.lastLayout = layout;
+    this.lastState = state;
+    if (this.restoreAnimationsAfterLayout) {
+      this.restoreAnimationsAfterLayout = false;
+      this.animationController.restoreAfterLayoutChange();
+    }
 
     ctx.clearRect(0, 0, layout.width, layout.height);
-    this.updateLocalActionPreview();
-    this.updateOnlinePlayback();
-    this.updateAnimation(state, layout);
+    this.stateAnimationController.observe(state, layout, this.animationController.isBlockingStateAnimation());
+    if (this.stateAnimationController.active && this.stateAnimationController.active.event.card) {
+      this.lastDiscardEvent = {
+        seat: this.stateAnimationController.active.event.seat,
+        card: this.stateAnimationController.active.event.card,
+        holdPosition: this.stateAnimationController.active.position,
+      };
+    }
     this.updateEffects(state, layout);
     this.drawBackground(ctx, layout);
     this.drawHeader(ctx, state, layout);
@@ -103,8 +143,7 @@ export default class TableRenderer {
     this.drawPrompt(ctx, state, layout);
     this.drawHeldDiscardFallback(ctx, state, layout);
     this.drawHeldDrawFallback(ctx, state, layout);
-    this.drawCardAnimation(ctx, layout);
-    this.drawEffects(ctx, layout);
+    this.drawManagedAnimations(ctx, layout);
     if (state.phase === 'result') this.drawResult(ctx, state, layout);
     this.drawButtons(ctx, state, layout);
     this.previousHandCards = layout.handCards.map((item) => ({ ...item }));
@@ -256,319 +295,8 @@ export default class TableRenderer {
     this.fillClampedText(ctx, text, area.x + 12, area.y + 24, area.width - 24);
   }
 
-  updateAnimation(state, layout) {
-    if (this.onlinePlayback || this.localActionPreview) return;
-    if (this.isWinResult(state)) {
-      this.clearMotionAnimations();
-      return;
-    }
-    const event = this.getAnimationEvent(state);
-    const signature = event ? `${event.type}:${event.seat}:${event.card.id}` : '';
-    if (this.animation && this.animation.stage === 'hold-discard') {
-      this.updateHeldDiscardAnimation(state, layout);
-    }
-    if (
-      signature
-      && signature !== this.lastEventSignature
-      && this.animation
-      && this.animation.stage !== 'hold-discard'
-    ) {
-      if (this.shouldPrioritizeResponseCard(state, event)) {
-        this.animation = null;
-        this.lastDiscardEvent = null;
-      } else {
-        return;
-      }
-    }
-    if (this.isDiscardResolutionActive()) return;
-    if (!this.animation && this.lastDiscardEvent && !state.recentDiscard) {
-      const claim = this.findClaimedCard(state, this.lastDiscardEvent.card.id);
-      if (claim) {
-        this.animation = this.createCardAnimation(
-          `claim:${claim.seat}:${this.lastDiscardEvent.card.id}:${claim.meld.id}`,
-          this.lastDiscardEvent.card,
-          this.lastDiscardEvent.holdPosition || this.animationEndForSeat(this.lastDiscardEvent.seat, layout),
-          this.claimedAnimationEnd(claim.seat, layout),
-          'to-claimed',
-          DISCARD_RESOLVE_DURATION_MS
-        );
-      }
-      this.lastDiscardEvent = null;
-    }
-
-    if (signature && signature !== this.lastEventSignature) {
-      const start = this.animationStartForSeat(event.seat, layout);
-      const end = this.animationEndForSeat(event.seat, layout);
-      const isDiscard = event.type === 'discard';
-      this.animation = this.createCardAnimation(
-        signature,
-        event.card,
-        start,
-        end,
-        isDiscard ? 'to-front' : 'to-front',
-        isDiscard ? DISCARD_FRONT_DURATION_MS : DRAW_FRONT_DURATION_MS
-      );
-      if (isDiscard) {
-        this.lastDiscardEvent = {
-          seat: event.seat,
-          card: event.card,
-          holdPosition: end,
-        };
-      }
-      this.lastEventSignature = signature;
-    } else if (!signature) {
-      this.lastEventSignature = '';
-    }
-  }
-
-  /**
-   * 在线模式显式播放一个服务端公开事件。完成回调只触发一次，由控制器据此发送动画回执。
-   */
-  playOnlineEvent(event, onComplete) {
-    if (!event || typeof event.eventSeq !== 'number') return false;
-    if (this.onlinePlayback && this.onlinePlayback.eventSeq === event.eventSeq) return true;
-    const layout = this.lastLayout;
-    const durationByType = {
-      draw: DRAW_FRONT_DURATION_MS,
-      discard: DISCARD_FRONT_DURATION_MS,
-      unclaimed: DISCARD_RESOLVE_DURATION_MS,
-      chi: CHI_COMBO_DURATION_MS,
-      peng: 760,
-      zhao: 820,
-      ta: 820,
-      pass: 560,
-      'accept-takeover': 700,
-      'decline-takeover': 700,
-      hu: 1050,
-      'circle-loss': 1050,
-      'draw-round': 900,
-      settlement: 900,
-    };
-    const duration = durationByType[event.type] || 700;
-    this.onlinePlayback = {
-      eventSeq: event.eventSeq,
-      event,
-      onComplete,
-      endsAt: Date.now() + duration,
-      completed: false,
-    };
-    if (MELD_EVENT_TYPES.indexOf(event.type) >= 0) this.suppressNextMeldEffect = true;
-    if (['hu', 'circle-loss', 'draw-round', 'settlement'].indexOf(event.type) >= 0) this.suppressNextResultEffect = true;
-
-    const heldCard = layout && event.meld && this.animation && this.animation.card
-      && (event.meld.cards || []).some((card) => card.id === this.animation.card.id)
-      ? this.animation.card
-      : null;
-    if (layout && heldCard && typeof event.seat === 'number') {
-      const start = this.animation.end || this.animationEndForSeat(event.seat, layout);
-      this.animation = this.createCardAnimation(
-        `${event.type}:${event.seat}:${heldCard.id}:online:${event.eventSeq}`,
-        heldCard,
-        start,
-        this.claimedAnimationEnd(event.seat, layout),
-        'to-claimed',
-        duration
-      );
-      const point = this.effectPointForSeat(event.seat, layout);
-      this.addTextEffect(ACTION_EFFECT_LABELS[event.type] || '成', point.x, point.y, {
-        tone: event.type,
-        duration,
-      });
-    } else if (layout && event.card && typeof event.seat === 'number') {
-      const priorHold = this.lastDiscardEvent
-        && this.lastDiscardEvent.card
-        && this.lastDiscardEvent.card.id === event.card.id
-        && this.lastDiscardEvent.holdPosition;
-      const start = event.type === 'unclaimed'
-        ? (priorHold || this.animationEndForSeat(event.seat, layout))
-        : this.animationStartForSeat(event.seat, layout);
-      let end = this.animationEndForSeat(event.seat, layout);
-      let stage = 'to-front';
-      let signature = `${event.type}:${event.seat}:${event.card.id}:online:${event.eventSeq}`;
-      if (event.type === 'unclaimed') {
-        end = this.discardAnimationEnd(event.seat, layout);
-        stage = 'to-discard';
-      }
-      this.animation = this.createCardAnimation(signature, event.card, start, end, stage, duration);
-      this.lastEventSignature = `${event.type === 'draw' ? 'draw' : 'discard'}:${event.seat}:${event.card.id}`;
-      if (event.type === 'discard' || event.type === 'unclaimed') {
-        this.lastDiscardEvent = { seat: event.seat, card: event.card, holdPosition: end };
-      }
-    } else if (layout) {
-      const point = this.effectPointForSeat(typeof event.seat === 'number' ? event.seat : 0, layout);
-      const label = ACTION_EFFECT_LABELS[event.actionType]
-        || ACTION_EFFECT_LABELS[event.type]
-        || ({
-          'accept-takeover': '接庄',
-          'decline-takeover': '不接',
-          'circle-loss': '进圈',
-          'draw-round': '流局',
-        })[event.type];
-      if (label) {
-        this.addTextEffect(label, point.x, point.y, { tone: event.actionType || event.type, duration });
-      }
-    }
-    return true;
-  }
-
-  /**
-   * 本人点击响应动作后立即预演，用动作动画遮盖网络等待；不修改权威牌局状态。
-   */
-  playLocalActionPreview(action) {
-    if (!action || !action.type || !this.lastLayout) return false;
-    const durationByType = {
-      chi: CHI_COMBO_DURATION_MS,
-      peng: 760,
-      zhao: 820,
-      ta: 820,
-      hu: 1050,
-      pass: 560,
-      acceptTakeover: 700,
-      declineTakeover: 700,
-      discard: DISCARD_FRONT_DURATION_MS,
-    };
-    const duration = durationByType[action.type] || 700;
-    const point = this.effectPointForSeat(0, this.lastLayout);
-    const label = ACTION_EFFECT_LABELS[action.type]
-      || ({ acceptTakeover: '接庄', declineTakeover: '不接' })[action.type];
-    if (label) this.addTextEffect(label, point.x, point.y, {
-      tone: action.type,
-      duration,
-    });
-
-    if (action.type === 'discard' && action.card) {
-      const handCard = this.previousHandCards.find((region) => region.card && region.card.id === action.card.id);
-      const start = handCard
-        ? { x: handCard.x, y: handCard.y }
-        : this.animationStartForSeat(0, this.lastLayout);
-      this.animation = this.createCardAnimation(
-        `local-preview:discard:${action.card.id}`,
-        action.card,
-        start,
-        this.animationEndForSeat(0, this.lastLayout),
-        'local-preview',
-        duration
-      );
-    } else if (MELD_EVENT_TYPES.indexOf(action.type) >= 0 && action.card) {
-      const start = this.animation && this.animation.card && this.animation.card.id === action.card.id
-        ? (this.animation.end || this.animationEndForSeat(0, this.lastLayout))
-        : this.animationEndForSeat(typeof action.sourceSeat === 'number' ? action.sourceSeat : 0, this.lastLayout);
-      this.animation = this.createCardAnimation(
-        `local-preview:${action.type}:${action.card.id}`,
-        action.card,
-        start,
-        this.claimedAnimationEnd(0, this.lastLayout),
-        'local-preview',
-        duration
-      );
-    }
-    this.localActionPreview = {
-      type: action.type,
-      cardId: action.card ? action.card.id : null,
-      startedAt: Date.now(),
-      endsAt: Date.now() + duration,
-      confirmedEvent: null,
-      onComplete: null,
-      completed: false,
-    };
-    return true;
-  }
-
-  /** 服务端确认与本地预演为同一动作时，沿用当前动画并在完成后通知控制器。 */
-  confirmLocalActionPreview(event, onComplete) {
-    const preview = this.localActionPreview;
-    if (!preview || !event || preview.type !== event.type || event.seat !== 0) return false;
-    if (MELD_EVENT_TYPES.indexOf(event.type) >= 0) this.suppressNextMeldEffect = true;
-    if (event.type === 'hu') this.suppressNextResultEffect = true;
-    if (event.type === 'discard' && event.card) {
-      this.lastEventSignature = `discard:${event.seat}:${event.card.id}`;
-      this.lastDiscardEvent = {
-        seat: event.seat,
-        card: event.card,
-        holdPosition: this.animation
-          ? this.animation.end
-          : this.animationEndForSeat(event.seat, this.lastLayout),
-      };
-    }
-    preview.confirmedEvent = event;
-    preview.onComplete = onComplete;
-    if (preview.completed && typeof onComplete === 'function') onComplete(event);
-    return true;
-  }
-
-  cancelLocalActionPreview() {
-    this.localActionPreview = null;
-    if (this.animation && this.animation.stage === 'local-preview') this.animation = null;
-  }
-
-  updateLocalActionPreview() {
-    const preview = this.localActionPreview;
-    if (!preview || preview.completed || Date.now() < preview.endsAt) return;
-    preview.completed = true;
-    if (this.animation && this.animation.stage === 'local-preview') this.animation = null;
-    if (preview.confirmedEvent && typeof preview.onComplete === 'function') {
-      preview.onComplete(preview.confirmedEvent);
-    }
-  }
-
-  updateOnlinePlayback() {
-    const playback = this.onlinePlayback;
-    if (!playback || playback.completed || Date.now() < playback.endsAt) return;
-    playback.completed = true;
-    const callback = playback.onComplete;
-    if (typeof callback === 'function') callback(playback.event);
-  }
-
-  isOnlineEventPlaying() {
-    return Boolean(this.onlinePlayback && !this.onlinePlayback.completed);
-  }
-
-  releaseOnlineEvent(eventSeq) {
-    if (!this.onlinePlayback) return;
-    if (typeof eventSeq === 'number' && this.onlinePlayback.eventSeq !== eventSeq) return;
-    this.onlinePlayback = null;
-    if (this.animation && this.animation.stage === 'hold-online') this.animation = null;
-  }
-
-  isWinResult(state) {
-    return state.phase === 'result' && state.result && state.result.type === 'win';
-  }
-
-  clearMotionAnimations() {
-    this.animation = null;
-    this.lastDiscardEvent = null;
-    this.lastEventSignature = '';
-    this.comboAnimations = [];
-  }
-
-  createCardAnimation(signature, card, start, end, stage, duration) {
-    return {
-      signature,
-      card,
-      start,
-      end,
-      stage,
-      startedAt: Date.now(),
-      duration,
-    };
-  }
-
-  shouldPrioritizeResponseCard(state, event) {
-    if (!event || !this.animation || !this.animation.card) return false;
-    if (event.type === 'draw') {
-      if (!state.drawnCard || state.drawnCard.id !== event.card.id) return false;
-      if (this.animation.card.id === event.card.id) return false;
-      return this.shouldHoldDrawnCard(state);
-    }
-    if (!state.recentDiscard || state.recentDiscard.card.id !== event.card.id) return false;
-    if (this.animation.card.id === event.card.id) return false;
-    return this.shouldHoldRecentDiscard(state, event.seat);
-  }
-
   updateEffects(state, layout) {
     const now = Date.now();
-    this.effects = this.effects.filter((effect) => now - effect.startedAt < effect.duration);
-    this.comboAnimations = this.comboAnimations.filter((effect) => now - effect.startedAt < effect.duration);
     this.updateButtonPanelState(layout, now);
     this.updateMeldEffects(state, layout, now);
     this.updateResultEffects(state, layout, now);
@@ -588,7 +316,7 @@ export default class TableRenderer {
 
   updateMeldEffects(state, layout, now) {
     const current = {};
-    const suppress = this.suppressNextMeldEffect;
+    const suppress = this.suppressNextMeldEffect || Boolean(state.animationWaiting);
     (state.seats || []).forEach((seat, seatIndex) => {
       (seat.melds || []).forEach((meld) => {
         const signature = this.meldSignature(seatIndex, meld);
@@ -632,26 +360,18 @@ export default class TableRenderer {
   }
 
   effectPointForSeat(seat, layout) {
-    const side = seat === 0 ? 'bottom' : (seat === 1 ? 'right' : (seat === 2 ? 'top' : 'left'));
-    const front = layout.playerFronts && layout.playerFronts[side];
-    if (front) {
-      return { x: front.x + front.width / 2, y: front.y + front.height / 2 };
-    }
-    const bounds = layout.contentBounds || { x: 0, y: 0, width: layout.width, height: layout.height };
-    return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+    return managedEffectTarget(seat, layout);
   }
 
   addTextEffect(label, x, y, options = {}) {
-    this.effects.push({
-      kind: 'text',
+    this.effectSequence += 1;
+    const plan = textEffectPlan(
+      `effect:${this.effectSequence}:${label}`,
       label,
-      x,
-      y,
-      tone: options.tone || 'action',
-      fontSize: options.fontSize || 58,
-      startedAt: options.startedAt || Date.now(),
-      duration: options.duration || 760,
-    });
+      { x, y },
+      options
+    );
+    this.animationManager.play(plan, null, { replay: true });
   }
 
   createChiComboAnimation(seat, meld, layout, now) {
@@ -672,22 +392,13 @@ export default class TableRenderer {
         ? cards.find((card) => card.id === this.lastDiscardEvent.card.id)
         : cards.find((card) => !handRegions[card.id]);
       if (!incoming || !this.lastDiscardEvent || !this.lastDiscardEvent.holdPosition) return;
-      this.comboAnimations.push({
-        kind: 'combo',
-        seat,
-        cards: [incoming],
-        origins: {
-          [incoming.id]: {
-            ...this.lastDiscardEvent.holdPosition,
-            targetX: target.x,
-            targetY: target.y,
-          },
+      this.playChiCombo([incoming], {
+        [incoming.id]: {
+          ...this.lastDiscardEvent.holdPosition,
+          targetX: target.x,
+          targetY: target.y,
         },
-        cardWidth,
-        cardHeight,
-        startedAt: now,
-        duration: CHI_COMBO_FALLBACK_DURATION_MS,
-      });
+      }, CHI_COMBO_FALLBACK_DURATION_MS);
       return;
     }
     const origins = {};
@@ -706,16 +417,27 @@ export default class TableRenderer {
       origins[card.id].targetX = target.x + index * Math.round(cardWidth * 0.78);
       origins[card.id].targetY = target.y;
     });
-    this.comboAnimations.push({
-      kind: 'combo',
-      seat,
-      cards,
-      origins,
-      cardWidth,
-      cardHeight,
-      startedAt: now,
-      duration: CHI_COMBO_DURATION_MS,
+    this.playChiCombo(cards, origins, CHI_COMBO_DURATION_MS);
+  }
+
+  playChiCombo(cards, origins, duration) {
+    this.effectSequence += 1;
+    const plans = cards.map((card) => {
+      const origin = origins[card.id];
+      return cardFlightPlan({
+        id: `chi-combo:${this.effectSequence}:${card.id}`,
+        card,
+        start: { x: origin.x, y: origin.y },
+        end: { x: origin.targetX, y: origin.targetY },
+        duration,
+        stage: 'chi-combo',
+      });
     });
+    this.animationManager.play({
+      id: `chi-combo:${this.effectSequence}`,
+      visuals: plans.reduce((all, plan) => all.concat(plan.visuals), []),
+      steps: [{ type: 'parallel', steps: plans.map((plan) => ({ type: 'sequence', steps: plan.steps })) }],
+    }, null, { replay: true });
   }
 
   markButtonPressed(region) {
@@ -738,128 +460,28 @@ export default class TableRenderer {
     }
   }
 
-  updateHeldDiscardAnimation(state, layout) {
-    const event = this.lastDiscardEvent;
-    if (!event) {
-      this.animation = null;
-      return;
-    }
-
-    if (state.recentDiscard && state.recentDiscard.card.id === event.card.id) {
-      if (this.shouldHoldRecentDiscard(state, event.seat)) return;
-      this.animation = this.createCardAnimation(
-        `discard-zone:${event.seat}:${event.card.id}`,
-        event.card,
-        event.holdPosition || this.animationEndForSeat(event.seat, layout),
-        this.discardAnimationEnd(event.seat, layout),
-        'to-discard',
-        DISCARD_RESOLVE_DURATION_MS
-      );
-      const point = event.holdPosition || this.animationEndForSeat(event.seat, layout);
-      this.addTextEffect('过', point.x, point.y, {
-        tone: 'pass',
-        fontSize: 42,
-        duration: 520,
-      });
-      return;
-    }
-
-    const claim = this.findClaimedCard(state, event.card.id);
-    if (claim) {
-      this.animation = this.createCardAnimation(
-        `claim:${claim.seat}:${event.card.id}:${claim.meld.id}`,
-        event.card,
-        event.holdPosition || this.animationEndForSeat(event.seat, layout),
-        this.claimedAnimationEnd(claim.seat, layout),
-        'to-claimed',
-        DISCARD_RESOLVE_DURATION_MS
-      );
-      this.lastDiscardEvent = null;
-      return;
-    }
-
-    this.animation = null;
-    this.lastDiscardEvent = null;
-  }
-
-  isDiscardResolutionActive() {
-    if (!this.animation) return false;
-    if (this.animation.stage === 'hold-discard') return false;
-    return ['to-front', 'to-discard', 'to-claimed'].indexOf(this.animation.stage) >= 0
-      && (
-        this.animation.signature.startsWith('discard:')
-        || this.animation.signature.startsWith('discard-zone:')
-        || this.animation.signature.startsWith('claim:')
-      );
-  }
-
-  getAnimationEvent(state) {
-    if (state.drawnCard && typeof state.currentSeat === 'number') {
-      return { type: 'draw', seat: state.currentSeat, card: state.drawnCard };
-    }
-    if (state.recentDiscard) {
-      return { type: 'discard', seat: state.recentDiscard.seat, card: state.recentDiscard.card };
-    }
-    return null;
-  }
-
   animationStartForSeat(seat, layout) {
-    const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
-    const bounds = layout.contentBounds || { x: 0, y: 0, width: layout.width, height: layout.height };
-    if (seat === 0) return this.clampAnimationPosition({ x: bounds.x + bounds.width / 2 - cardWidth / 2, y: bounds.y + bounds.height - cardHeight - 8 }, layout);
-    if (seat === 1) return this.clampAnimationPosition({ x: bounds.x + bounds.width - cardWidth - 8, y: bounds.y + bounds.height / 2 - cardHeight / 2 }, layout);
-    if (seat === 2) return this.clampAnimationPosition({ x: bounds.x + bounds.width / 2 - cardWidth / 2, y: bounds.y + 8 }, layout);
-    return this.clampAnimationPosition({ x: bounds.x + 8, y: bounds.y + bounds.height / 2 - cardHeight / 2 }, layout);
+    return managedSeatStart(seat, layout);
   }
 
   animationEndForSeat(seat, layout) {
-    const side = seat === 0 ? 'bottom' : (seat === 1 ? 'right' : (seat === 2 ? 'top' : 'left'));
-    const front = layout.playerFronts && layout.playerFronts[side];
-    const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
-    if (!front) return this.animationStartForSeat(seat, layout);
-    return this.clampAnimationPosition({
-      x: front.x + front.width / 2 - cardWidth / 2,
-      y: front.y + front.height / 2 - cardHeight / 2,
-    }, layout);
+    return managedSeatFront(seat, layout);
   }
 
   animationCardSize(layout) {
-    const width = Math.max(34, Math.min(54, Math.floor(layout.height * 0.13), Math.floor(layout.cardWidth * 1.12)));
-    return {
-      width,
-      height: Math.round(width / BIG_CARD_ASPECT_RATIO),
-    };
+    return managedCardSize(layout);
   }
 
   discardAnimationEnd(seat, layout) {
-    const side = seat === 0 ? 'bottom' : (seat === 1 ? 'right' : (seat === 2 ? 'top' : 'left'));
-    const area = layout.unclaimedZones && layout.unclaimedZones[side];
-    const { width, height } = this.animationCardSize(layout);
-    if (!area) return this.animationEndForSeat(seat, layout);
-    return this.clampAnimationPosition({
-      x: area.direction === 'rtl' ? area.x + area.width - width : area.x,
-      y: area.y + area.height / 2 - height / 2,
-    }, layout);
+    return managedDiscardTarget(seat, layout);
   }
 
   claimedAnimationEnd(seat, layout) {
-    const side = seat === 0 ? 'bottom' : (seat === 1 ? 'right' : (seat === 2 ? 'top' : 'left'));
-    const area = layout.claimedZones && layout.claimedZones[side];
-    const { width, height } = this.animationCardSize(layout);
-    if (!area) return this.animationEndForSeat(seat, layout);
-    return this.clampAnimationPosition({
-      x: area.direction === 'rtl' ? area.x + area.width - width : area.x,
-      y: area.y,
-    }, layout);
+    return managedClaimedTarget(seat, layout);
   }
 
   clampAnimationPosition(point, layout) {
-    const bounds = layout.contentBounds || { x: 0, y: 0, width: layout.width, height: layout.height };
-    const { width, height } = this.animationCardSize(layout);
-    return {
-      x: Math.max(bounds.x, Math.min(point.x, bounds.x + bounds.width - width)),
-      y: Math.max(bounds.y, Math.min(point.y, bounds.y + bounds.height - height)),
-    };
+    return managedClampPosition(point, layout);
   }
 
   shouldHoldRecentDiscard(state, sourceSeat) {
@@ -888,45 +510,56 @@ export default class TableRenderer {
 
   shouldHideDiscardMini(state, sourceSeat) {
     return this.shouldHoldRecentDiscard(state, sourceSeat)
-      || (
-        this.animation
-        && this.animation.stage === 'to-discard'
-        && this.lastDiscardEvent
-        && this.lastDiscardEvent.seat === sourceSeat
-        && state.recentDiscard
-        && state.recentDiscard.card.id === this.animation.card.id
+      || Boolean(
+        state.recentDiscard
+        && this.managedCardVisual(state.recentDiscard.card.id)
       );
   }
 
   resolvingDiscardMiniId(sourceSeat) {
-    if (
-      this.animation
-      && this.animation.stage === 'to-discard'
-      && this.lastDiscardEvent
-      && this.lastDiscardEvent.seat === sourceSeat
-    ) {
-      return this.animation.card.id;
-    }
+    const managed = this.animationManager.getVisualState().find((visual) => (
+      visual.kind === 'card'
+      && (visual.stage === 'discard' || visual.stage === 'unclaimed')
+    ));
+    if (managed) return managed.card.id;
     return null;
   }
 
   resolvingClaimedMiniId(state, seat) {
-    if (!this.animation || this.animation.stage !== 'to-claimed') return null;
-    const claim = this.findClaimedCard(state, this.animation.card.id);
-    if (!claim || claim.seat !== seat) return null;
-    return this.animation.card.id;
+    const managed = this.animationManager.getVisualState().find((visual) => (
+      visual.kind === 'card'
+      && ['chi', 'peng', 'zhao', 'ta'].indexOf(visual.stage) >= 0
+      && this.findClaimedCard(state, visual.card.id)
+      && this.findClaimedCard(state, visual.card.id).seat === seat
+    ));
+    if (managed) return managed.card.id;
+    return null;
   }
 
   resolvingClaimedMiniIds(state, seat) {
     const ids = [];
-    const movingId = this.resolvingClaimedMiniId(state, seat);
-    if (movingId) ids.push(movingId);
-    this.comboAnimations.forEach((effect) => {
-      if (effect.seat !== seat) return;
-      effect.cards.forEach((card) => {
-        if (ids.indexOf(card.id) < 0) ids.push(card.id);
+    const previewMeld = this.animationController.localActionPreview
+      && this.animationController.localActionPreview.meld;
+    if (previewMeld) {
+      const claimed = this.findClaimedCard(state, previewMeld.cards[0] && previewMeld.cards[0].id);
+      if (claimed && claimed.seat === seat) {
+        (previewMeld.cards || []).forEach((card) => ids.push(card.id));
+      }
+    }
+    this.animationManager.getVisualState()
+      .filter((visual) => (
+        visual.kind === 'card'
+        && ['chi', 'peng', 'zhao', 'ta'].indexOf(visual.stage) >= 0
+      ))
+      .forEach((visual) => {
+        const claimed = this.findClaimedCard(state, visual.card.id);
+        if (claimed && claimed.seat === seat && ids.indexOf(visual.card.id) < 0) ids.push(visual.card.id);
       });
-    });
+    this.animationManager.getVisualState()
+      .filter((visual) => visual.kind === 'card' && visual.stage === 'chi-combo')
+      .forEach((visual) => {
+        if (ids.indexOf(visual.card.id) < 0) ids.push(visual.card.id);
+      });
     return ids;
   }
 
@@ -941,7 +574,7 @@ export default class TableRenderer {
 
   drawHeldDiscardFallback(ctx, state, layout) {
     if (!state.recentDiscard || !this.shouldHoldRecentDiscard(state, state.recentDiscard.seat)) return;
-    if (this.animation && this.animation.card && this.animation.card.id === state.recentDiscard.card.id) return;
+    if (this.managedCardVisual(state.recentDiscard.card.id)) return;
     const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
     const position = this.animationEndForSeat(state.recentDiscard.seat, layout);
     this.drawCard(ctx, state.recentDiscard.card, position.x, position.y, cardWidth, cardHeight, true, false, 'big', {
@@ -952,7 +585,7 @@ export default class TableRenderer {
 
   drawHeldDrawFallback(ctx, state, layout) {
     if (!this.shouldHoldDrawnCard(state)) return;
-    if (this.animation && this.animation.card && this.animation.card.id === state.drawnCard.id) return;
+    if (this.managedCardVisual(state.drawnCard.id)) return;
     const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
     const position = this.animationEndForSeat(state.currentSeat, layout);
     this.drawCard(ctx, state.drawnCard, position.x, position.y, cardWidth, cardHeight, true, false, 'big', {
@@ -961,105 +594,45 @@ export default class TableRenderer {
     });
   }
 
-  drawCardAnimation(ctx, layout) {
-    if (!this.animation) return;
-    const elapsed = Date.now() - this.animation.startedAt;
-    const progress = clamp01(elapsed / this.animation.duration);
-    const eased = easeOutCubic(progress);
-    const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
-    const scale = flightScale(progress);
-    const drawWidth = cardWidth * scale;
-    const drawHeight = cardHeight * scale;
-    const x = lerp(this.animation.start.x, this.animation.end.x, eased) - (drawWidth - cardWidth) / 2;
-    const y = lerp(this.animation.start.y, this.animation.end.y, eased) - (drawHeight - cardHeight) / 2;
-    this.drawCard(ctx, this.animation.card, x, y, drawWidth, drawHeight, true, false, 'big', {
-      glow: true,
-      shadow: true,
-      alpha: 1,
-    });
-    if (progress < 1) return;
-
-    if (this.animation.stage === 'to-front' && this.animation.signature.startsWith('discard:')) {
-      this.animation.stage = 'hold-discard';
-      this.animation.start = this.animation.end;
-      this.animation.startedAt = Date.now();
-      if (this.lastDiscardEvent) this.lastDiscardEvent.holdPosition = this.animation.end;
-      return;
-    }
-    if (
-      this.animation.stage === 'to-front'
-      && this.onlinePlayback
-      && this.onlinePlayback.event
-      && this.onlinePlayback.event.card
-      && this.onlinePlayback.event.card.id === this.animation.card.id
-    ) {
-      this.animation.stage = 'hold-online';
-      this.animation.start = this.animation.end;
-      return;
-    }
-    if (this.animation.stage === 'hold-online') return;
-
-    if (['to-discard', 'to-claimed'].indexOf(this.animation.stage) >= 0) {
-      this.lastDiscardEvent = null;
-    }
-    this.animation = null;
+  managedCardVisual(cardId) {
+    return this.animationManager.getVisualState().find((visual) => (
+      visual.kind === 'card' && visual.card && visual.card.id === cardId
+    )) || null;
   }
 
-  drawEffects(ctx, layout) {
-    this.drawComboAnimations(ctx, layout);
-    this.drawTextEffects(ctx);
-  }
-
-  drawComboAnimations(ctx) {
-    const now = Date.now();
-    this.comboAnimations.forEach((effect) => {
-      const progress = clamp01((now - effect.startedAt) / effect.duration);
-      const travel = clamp01(progress / 0.68);
-      const eased = easeOutCubic(travel);
-      const alpha = progress > 0.82 ? 1 - clamp01((progress - 0.82) / 0.18) : 1;
-      effect.cards.forEach((card) => {
-        const origin = effect.origins[card.id];
-        const x = lerp(origin.x, origin.targetX, eased);
-        const y = lerp(origin.y, origin.targetY, eased);
-        const settleScale = progress < 0.68 ? flightScale(travel) : lerp(1.04, 1, easeOutCubic((progress - 0.68) / 0.32));
-        const width = effect.cardWidth * settleScale;
-        const height = effect.cardHeight * settleScale;
-        this.drawCard(ctx, card, x - (width - effect.cardWidth) / 2, y - (height - effect.cardHeight) / 2, width, height, true, false, 'big', {
-          glow: true,
-          shadow: true,
-          alpha,
-        });
-      });
-    });
-  }
-
-  drawTextEffects(ctx) {
-    const now = Date.now();
-    this.effects.forEach((effect) => {
-      if (effect.kind !== 'text') return;
-      const progress = clamp01((now - effect.startedAt) / effect.duration);
-      const alpha = progress < 0.72 ? 1 : 1 - clamp01((progress - 0.72) / 0.28);
-      let scale = 1;
-      if (progress < 0.22) {
-        scale = easeOutBack(progress / 0.22);
-      } else if (progress < 0.36) {
-        scale = lerp(1.08, 0.96, easeOutCubic((progress - 0.22) / 0.14));
-      } else if (progress < 0.48) {
-        scale = lerp(0.96, 1, easeOutCubic((progress - 0.36) / 0.12));
+  drawManagedAnimations(ctx, layout) {
+    this.animationManager.getVisualState().forEach((visual) => {
+      if (visual.kind === 'card' && visual.card) {
+        const size = visualCardSize(layout, visual);
+        const base = this.animationCardSize(layout);
+        this.drawCard(
+          ctx,
+          visual.card,
+          visual.x - (size.width - base.width) / 2,
+          visual.y - (size.height - base.height) / 2,
+          size.width,
+          size.height,
+          true,
+          false,
+          'big',
+          { glow: true, shadow: true, alpha: visual.alpha }
+        );
+        return;
       }
-      const isHu = effect.tone === 'hu';
+      if (visual.kind !== 'text') return;
+      const isHu = visual.tone === 'hu';
       ctx.save();
-      ctx.globalAlpha = alpha;
-      ctx.translate(effect.x, effect.y);
-      ctx.scale(scale, scale);
+      ctx.globalAlpha = typeof visual.alpha === 'number' ? visual.alpha : 1;
+      ctx.translate(visual.x, visual.y);
+      ctx.scale(visual.scale || 1, visual.scale || 1);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.font = `bold ${effect.fontSize}px serif`;
+      ctx.font = `bold ${visual.fontSize}px serif`;
       ctx.lineWidth = isHu ? 7 : 5;
       ctx.strokeStyle = isHu ? 'rgba(120, 20, 12, 0.78)' : 'rgba(7, 42, 53, 0.76)';
-      if (ctx.strokeText) ctx.strokeText(effect.label, 0, 0);
-      ctx.fillStyle = isHu ? '#ff3b30' : (effect.tone === 'pass' ? '#ffffff' : '#ffd666');
-      ctx.fillText(effect.label, 0, 0);
+      if (ctx.strokeText) ctx.strokeText(visual.label, 0, 0);
+      ctx.fillStyle = isHu ? '#ff3b30' : (visual.tone === 'pass' ? '#ffffff' : '#ffd666');
+      ctx.fillText(visual.label, 0, 0);
       ctx.restore();
     });
   }
@@ -1112,11 +685,20 @@ export default class TableRenderer {
   }
 
   drawPlayerHand(ctx, state, layout) {
+    const previewMeldIds = new Set(
+      this.animationController.localActionPreview
+      && this.animationController.localActionPreview.meld
+        ? this.animationController.localActionPreview.meld.cards.map((card) => card.id)
+        : []
+    );
     layout.handCards.forEach((region) => {
       if (
-        this.localActionPreview
-        && this.localActionPreview.type === 'discard'
-        && this.localActionPreview.cardId === region.card.id
+        previewMeldIds.has(region.card.id)
+        || (
+          this.animationController.localActionPreview
+          && this.animationController.localActionPreview.type === 'discard'
+          && this.animationController.localActionPreview.cardId === region.card.id
+        )
       ) return;
       const selected = state.selectedCardId === region.card.id;
       this.drawCard(ctx, region.card, region.x, region.y, region.width, region.height, true, selected, 'small');

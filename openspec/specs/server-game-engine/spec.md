@@ -52,18 +52,28 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **AND** 服务端 MUST 提示客户端以最新状态重试
 
 ### Requirement: 服务端公开操作事件
-服务端权威牌局状态机 SHALL 为每一次对牌桌玩家可见的状态推进生成公开操作事件。每个事件 MUST 包含房间内单调递增的事件序号、事件类型、对应状态版本、行动席位和完成该动画所需的公开信息；事件 MUST NOT 包含任何尚未公开的其他玩家手牌信息。
+服务端权威牌局状态机 SHALL 为每一次对牌桌玩家可见的状态推进生成公开操作事件。每个事件 MUST 包含房间内单调递增的事件序号、事件类型、对应状态版本、行动席位和完成该动画所需的公开信息；事件 MUST NOT 包含任何尚未公开的其他玩家手牌信息。抓牌和出牌事件 MUST 包含公开的 `appearanceResolution` 动画分支；凑牌事件 MUST 包含稳定的 meld id 和最终公开牌组。
 
-#### Scenario: 连续动作生成连续事件
-- **WHEN** 一次服务端操作连续推进摸牌、出牌、无人响应和下一玩家摸牌
-- **THEN** 服务端 MUST 在每个公开步骤生成独立事件后暂停推进
-- **AND** 每个事件的序号 MUST 严格递增且不得重复
-- **AND** 服务端 MUST 在当前事件动画完成回执满足后才生成下一个事件
+#### Scenario: 初始无人响应合并为复合事件
+- **WHEN** 服务端在生成抓牌或出牌事件时已经确定无人可以响应该牌
+- **THEN** 服务端 MUST 将该牌最终进入弃牌区的状态提交到权威快照
+- **AND** 服务端 MUST 生成 `appearanceResolution` 为 `auto-discard` 的单个抓牌或出牌事件
+- **AND** 服务端 MUST NOT 为同一次初始无人响应额外生成独立 `unclaimed` 动画事件
+
+#### Scenario: 有响应机会的出现牌事件
+- **WHEN** 服务端在生成抓牌或出牌事件时确定至少存在一个可响应操作
+- **THEN** 服务端 MUST 生成 `appearanceResolution` 为 `await-response` 的抓牌或出牌事件
+- **AND** 事件 MUST NOT 公开可响应玩家、动作类型或其他私密规则计算结果
+
+#### Scenario: 所有响应玩家后来选择过
+- **WHEN** 出现牌事件最初存在响应机会但所有响应玩家后来均选择“过”
+- **THEN** 服务端 MUST 生成将当前保留出现牌归入弃牌区的最终归位事件
+- **AND** 服务端 MUST 在最终归位事件动画完成后才继续下一次牌局推进
 
 #### Scenario: 凑牌生成公开事件
 - **WHEN** 玩家通过吃、碰、招或踏完成一手公开凑牌
-- **THEN** 服务端 MUST 生成包含动作类型、行动席位、来源席位和最终公开牌组的事件
-- **AND** 事件 MUST 足以让客户端把响应牌移动到对应玩家凑牌区
+- **THEN** 服务端 MUST 生成包含动作类型、行动席位、来源席位、稳定 meld id 和最终公开牌组的事件
+- **AND** 事件 MUST 足以让客户端构建完整牌组并移动到对应玩家凑牌区
 
 #### Scenario: 结果生成公开事件
 - **WHEN** 牌局发生胡牌、进圈、流局或结算
@@ -76,7 +86,7 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **AND** 客户端 MUST 仅能从事件读取已公开的牌面与动作信息
 
 ### Requirement: 服务端动画推进屏障
-服务端权威牌局状态机 SHALL 在每个公开操作事件发布后进入动画等待状态。动画等待状态期间服务端 MUST 暂停后续自动推进和新的牌局操作；只有当前事件要求的在线客户端全部完成动画回执，或未回执客户端达到超时并按掉线托管处理后，服务端才可以继续下一个动作。
+服务端权威牌局状态机 SHALL 在每个公开操作事件发布后进入动画等待状态。动画等待状态期间服务端 MUST 暂停后续自动推进和新的牌局操作；只有当前事件要求的在线客户端全部完成动画回执，或未回执客户端达到超时并按掉线托管处理后，服务端才可以继续下一个动作。对于 `await-response` 出现牌事件，入场动画完成并保留等待牌即视为当前事件动画完成；对于 `auto-discard` 出现牌事件，必须在牌移动到弃牌区并完成静态交接后才视为动画完成。
 
 #### Scenario: 所有在线客户端回执后继续
 - **WHEN** 当前公开事件要求回执的所有在线客户端均提交了对应 `eventSeq` 的动画完成回执
@@ -88,10 +98,15 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **THEN** 服务端 MUST 拒绝新的出牌、响应、接庄或其他推进牌局的操作
 - **AND** 权威牌局状态 MUST NOT 跳过当前动画节点
 
-#### Scenario: 出牌动画完成后开放响应
-- **WHEN** 玩家打出一张可能被吃、碰、招、踏或胡的牌
-- **THEN** 服务端 MUST 先发布出牌事件并等待客户端完成出牌动画
-- **AND** 服务端 MUST 在出牌动画屏障解除后才开放对应响应操作
+#### Scenario: 等待响应出现牌完成后开放响应
+- **WHEN** `appearanceResolution` 为 `await-response` 的出现牌事件已在所有必需客户端完成入场动画并保留等待牌
+- **THEN** 服务端 MUST 解除当前出现牌事件的动画屏障
+- **AND** 服务端 MUST 开放对应响应操作
+
+#### Scenario: 自动归位完成后继续牌局
+- **WHEN** `appearanceResolution` 为 `auto-discard` 的出现牌事件已在所有必需客户端完成归位和静态 mini 牌交接
+- **THEN** 服务端 MUST 解除当前出现牌事件的动画屏障
+- **AND** 服务端 MUST 继续下一玩家摸牌或其他后续推进
 
 #### Scenario: 响应动画完成后继续牌局
 - **WHEN** 玩家完成吃、碰、招、踏、胡或过响应

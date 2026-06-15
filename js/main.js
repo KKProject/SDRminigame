@@ -1,7 +1,10 @@
-import { ctx } from './render';
+import {
+  ctx,
+  getRenderMetrics,
+  refreshRenderMetrics,
+  subscribeRenderMetrics,
+} from './render';
 import AssetLoader from './game/assets';
-import HuapaiEngine from './game/engine';
-import TableInput from './game/input';
 import TableRenderer from './game/renderer';
 import DataBus from './databus';
 import Music from './runtime/music';
@@ -15,8 +18,6 @@ export default class Main {
   aniId = 0;
   assets = new AssetLoader();
   renderer = new TableRenderer(this.assets);
-  engine = new HuapaiEngine(GameGlobal.databus, GameGlobal.musicManager);
-  input = null;
   online = null;
   mode = null;
   menu = null;
@@ -24,26 +25,35 @@ export default class Main {
   constructor() {
     this.assets.loadImages();
     this.menu = new StartMenu(this.handleModeSelect.bind(this));
-    this.menu.show();
+    this.metricsRetryRemaining = 120;
+    this.boundMetricsChange = this.handleMetricsChange.bind(this);
+    this.unsubscribeMetrics = subscribeRenderMetrics(this.boundMetricsChange);
+    this.boundWindowResize = this.handleWindowResize.bind(this);
+    if (wx.onWindowResize) wx.onWindowResize(this.boundWindowResize);
+    if (wx.onShow) wx.onShow(this.boundWindowResize);
+    const metrics = getRenderMetrics();
+    if (metrics) this.handleMetricsChange(metrics);
     cancelAnimationFrame(this.aniId);
     this.aniId = requestAnimationFrame(this.loop.bind(this));
   }
 
+  handleWindowResize() {
+    this.metricsRetryRemaining = 30;
+    refreshRenderMetrics();
+  }
+
+  handleMetricsChange(metrics) {
+    if (!metrics) return;
+    this.metricsRetryRemaining = 0;
+    this.renderer.setViewport(metrics);
+    this.menu.handleMetricsChange();
+    if (!this.mode && !this.menu.active) this.menu.show();
+  }
+
   handleModeSelect(mode, profile = {}) {
-    if (mode === 'single') {
-      this.menu.hide();
-      this.startSinglePlayer();
-      return;
-    }
     if (mode === 'online') {
       this.startOnline(profile);
     }
-  }
-
-  startSinglePlayer() {
-    this.mode = 'single';
-    this.input = new TableInput(this.engine, this.renderer, GameGlobal.musicManager);
-    this.engine.startRound();
   }
 
   startOnline(profile = {}) {
@@ -70,7 +80,8 @@ export default class Main {
   }
 
   render() {
-    if ((this.mode === 'single' || this.mode === 'online') && this.hasRenderableState()) {
+    if (!getRenderMetrics()) return;
+    if (this.mode === 'online' && this.hasRenderableState()) {
       this.renderer.render(ctx, GameGlobal.databus);
     }
     if (this.menu) {
@@ -79,6 +90,10 @@ export default class Main {
   }
 
   loop(time) {
+    if (this.metricsRetryRemaining > 0) {
+      this.metricsRetryRemaining -= 1;
+      refreshRenderMetrics();
+    }
     this.renderer.animationController.update(time);
     this.render();
     this.aniId = requestAnimationFrame(this.loop.bind(this));

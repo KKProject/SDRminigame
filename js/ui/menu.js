@@ -1,13 +1,12 @@
-import { SCREEN_WIDTH, SCREEN_HEIGHT, SAFE_AREA_BOUNDS } from '../render';
+import { getRenderMetrics } from '../render';
 import {
   createUserProfileButton,
   getAuthorizedProfile,
   profileWithFallback,
 } from '../net/profile';
-import { ONLINE_BATTLE_ENABLED } from '../config';
 
 /**
- * 启动主菜单覆盖层：选择「在线对战」或「单机练习」。
+ * 启动主菜单覆盖层：进入在线对战。
  * 自管触摸事件，选择后通过回调通知，并停止接收触摸。
  */
 export default class StartMenu {
@@ -45,6 +44,11 @@ export default class StartMenu {
     if (this.busy) this.destroyProfileButton();
   }
 
+  handleMetricsChange() {
+    this.buttons = [];
+    this.destroyProfileButton();
+  }
+
   handleTouch(event) {
     if (!this.active || this.busy) return;
     const touch = event.touches && event.touches[0];
@@ -56,11 +60,7 @@ export default class StartMenu {
       && touch.clientY <= btn.y + btn.h
     ));
     if (hit && typeof this.onSelect === 'function') {
-      if (hit.mode === 'online') {
-        this.handleOnlineTouch();
-        return;
-      }
-      this.onSelect(hit.mode, null);
+      this.handleOnlineTouch();
     }
   }
 
@@ -106,7 +106,7 @@ export default class StartMenu {
 
   syncProfileButton() {
     const online = this.buttons.find((button) => button.mode === 'online');
-    if (!ONLINE_BATTLE_ENABLED || !this.active || this.busy || !online) {
+    if (!this.active || this.busy || !online) {
       this.destroyProfileButton();
       return;
     }
@@ -122,13 +122,19 @@ export default class StartMenu {
 
   render(ctx) {
     if (!this.active) return;
-    const bounds = SAFE_AREA_BOUNDS || { x: 0, y: 0, width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
+    const metrics = getRenderMetrics();
+    if (!metrics) {
+      this.buttons = [];
+      this.destroyProfileButton();
+      return;
+    }
+    const bounds = metrics.safeAreaBounds || { x: 0, y: 0, width: metrics.width, height: metrics.height };
     const centerX = bounds.x + bounds.width / 2;
     const centerY = bounds.y + bounds.height / 2;
 
     ctx.save();
     ctx.fillStyle = 'rgba(13, 18, 28, 0.82)';
-    ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+    ctx.fillRect(0, 0, metrics.width, metrics.height);
 
     ctx.fillStyle = '#f7f3e8';
     ctx.font = 'bold 40px sans-serif';
@@ -138,17 +144,11 @@ export default class StartMenu {
 
     const btnW = Math.min(320, bounds.width * 0.6);
     const btnH = 64;
-    const gap = 24;
-    const defs = ONLINE_BATTLE_ENABLED
-      ? [
-        { mode: 'online', label: '在线对战', fill: '#d92d20' },
-        { mode: 'single', label: '单机练习', fill: '#1d2939' },
-      ]
-      : [{ mode: 'single', label: '单机练习', fill: '#1d2939' }];
+    const defs = [{ mode: 'online', label: '在线对战', fill: '#d92d20' }];
 
     this.buttons = defs.map((def, index) => {
       const x = centerX - btnW / 2;
-      const y = centerY - 20 + index * (btnH + gap);
+      const y = centerY - 20 + index * btnH;
       ctx.fillStyle = def.fill;
       this.roundRect(ctx, x, y, btnW, btnH, 14);
       ctx.fill();

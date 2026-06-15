@@ -76,12 +76,22 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **AND** 服务端 MUST 在重连后允许其继续参与，或在超时后按托管规则处理
 
 ### Requirement: 动画完成回执同步
-系统 SHALL 提供按 OPENID 鉴权且幂等的动画完成回执操作。客户端 MUST 在动画管理器完成当前权威公开事件的全部必需阶段后提交对应 `eventSeq`；本地预演完成、动画开始或中间停留阶段 MUST NOT 被视为权威动画完成。服务端 MUST 同步当前必需回执名单、已回执名单和回执截止时间。
+系统 SHALL 提供按 OPENID 鉴权且幂等的动画完成回执操作。客户端 MUST 在动画管理器完成当前权威公开事件规定的全部必需阶段后提交对应 `eventSeq`；本地预演完成、动画开始或尚未完成的移动阶段 MUST NOT 被视为权威动画完成。服务端 MUST 同步当前必需回执名单、已回执名单和回执截止时间。`await-response` 出现牌事件在入场动画完成且等待牌已保留时即可回执；`auto-discard` 出现牌事件必须在归位和静态 mini 牌交接完成后回执；完整凑牌事件必须在牌组到达凑牌区并完成静态交接后回执。
 
-#### Scenario: 客户端动画完成回执
-- **WHEN** 动画管理器完成当前权威公开事件的全部必需动画阶段
+#### Scenario: 等待响应出现牌回执
+- **WHEN** 客户端完成 `await-response` 出现牌的入场动画并将其转为保留等待牌
 - **THEN** 客户端 MUST 提交包含当前 `eventSeq` 的动画完成回执
-- **AND** 服务端 MUST 记录该客户端已完成当前动画
+- **AND** 保留等待牌继续显示 MUST NOT 阻止该回执
+
+#### Scenario: 自动归位出现牌回执
+- **WHEN** 客户端完成 `auto-discard` 出现牌的入场、缩小移动和静态 mini 牌交接
+- **THEN** 客户端 MUST 提交包含当前 `eventSeq` 的动画完成回执
+- **AND** 客户端 MUST NOT 在归位完成前提交该回执
+
+#### Scenario: 完整凑牌动画回执
+- **WHEN** 完整凑牌牌组已到达目标凑牌区并完成静态牌组交接
+- **THEN** 客户端 MUST 提交包含当前 `eventSeq` 的动画完成回执
+- **AND** 客户端 MUST NOT 在中央展示或飞入阶段提交该回执
 
 #### Scenario: 本地预演确认后回执
 - **WHEN** 当前权威事件确认了正在播放或已经播放部分阶段的本地预演
@@ -102,4 +112,48 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **WHEN** 当前动画因权威事件不匹配、状态恢复或场景退出被取消
 - **THEN** 客户端 MUST NOT 因该动画的旧完成回调提交回执
 - **AND** 客户端 MUST 依据最新权威事件决定是否播放并回执
+
+### Requirement: 出现牌动画分支同步
+系统 SHALL 通过权威公开事件同步出现牌动画分支，并 MUST 保证客户端使用与权威快照一致的最终弃牌和凑牌目标完成视觉交接。
+
+#### Scenario: 同步等待响应分支
+- **WHEN** 服务端发布 `appearanceResolution` 为 `await-response` 的出现牌事件
+- **THEN** 所有客户端 MUST 播放相同的出现牌入场动画并保留等待牌
+- **AND** 客户端 MUST NOT 根据本地规则改为自动归位分支
+
+#### Scenario: 同步自动归位分支
+- **WHEN** 服务端发布 `appearanceResolution` 为 `auto-discard` 的出现牌事件
+- **THEN** 所有客户端 MUST 使用权威快照中的最终弃牌槽位播放自动归位
+- **AND** 所有客户端 MUST 在动画完成前隐藏对应静态 mini 弃牌
+
+### Requirement: 发起者与旁观者差异化动画同步
+实时同步系统 SHALL 区分动作发起者和其他玩家对同一权威事件的动画处理方式。动作发起者 MUST 使用已经启动的本地动画完成当前事件；其他玩家 MUST 使用服务端权威事件播放完整动画。
+
+#### Scenario: 发起者本地动画先于服务端确认完成
+- **WHEN** 动作发起者的本地动画已经完成但服务端尚未确认动作
+- **THEN** 客户端 MUST 保留本地动画完成状态并等待权威确认
+- **AND** 客户端 MUST NOT 提前回执未确认的权威事件
+
+#### Scenario: 服务端确认先于发起者本地动画完成
+- **WHEN** 服务端确认动作时发起者的本地动画仍在播放
+- **THEN** 客户端 MUST 将权威事件绑定到当前本地动画
+- **AND** 客户端 MUST 在本地动画完成后提交一次对应事件回执
+
+#### Scenario: 旁观者播放权威动作
+- **WHEN** 其他玩家客户端收到权威动作事件
+- **THEN** 客户端 MUST 播放一次完整权威动画并在完成后回执
+- **AND** 发起者是否已播放本地动画 MUST NOT 跳过旁观者动画
+
+### Requirement: 动作确认与动画完成双条件回执
+动作发起者客户端 SHALL 仅在服务端权威确认和本地动画完成两个条件均满足后提交动画完成回执。每个客户端对同一 `eventSeq` MUST 最多提交一次有效完成回执。
+
+#### Scenario: 双条件满足后回执
+- **WHEN** 动作发起者已经收到匹配权威事件且对应本地动画已经完成
+- **THEN** 客户端 MUST 提交一次当前 `eventSeq` 的动画完成回执
+- **AND** 服务端确认事件 MUST NOT 在发起者客户端触发第二次动画
+
+#### Scenario: 重复快照和回执重试
+- **WHEN** 客户端重复收到同一权威事件或需要重试动画完成回执
+- **THEN** 客户端 MUST 保持该动作已播放状态
+- **AND** 客户端 MUST NOT 重播动画、重复音效或生成额外完成通知
 

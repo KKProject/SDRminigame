@@ -120,11 +120,7 @@ class HuapaiEngine {
         this.afterGroupingAction(continuation.seatIndex, continuation.label);
         break;
       case 'draw-response-window':
-        if ((continuation.actions || []).length) {
-          this.handleResponseWindow(continuation.actions, continuation.sourceSeat);
-        } else {
-          this.discardUnclaimedDraw(continuation.sourceSeat, continuation.card);
-        }
+        this.handleResponseWindow(continuation.actions || [], continuation.sourceSeat);
         break;
       case 'process-takeover-queue':
         this.processTakeoverQueue();
@@ -469,19 +465,35 @@ class HuapaiEngine {
     if (this.music) this.music.playCardVoice(card);
 
     const actions = filterHighestPriority(findResponseActions(state, seatIndex, card, this.rules));
+    const appearanceResolution = actions.length ? 'await-response' : 'auto-discard';
+    if (!actions.length) {
+      state.appearingCard = null;
+      state.recentDiscard.unclaimed = true;
+      state.recentDiscard.resolved = true;
+      state.pendingActions = [];
+      state.playerActions = [];
+      this.setFeedback(`${seat.name}打出的牌无人响应，进入弃牌区`);
+    }
     this.emitPublicEvent('discard', {
       seat: seatIndex,
       card,
       source,
-    }, {
-      type: 'handle-response-window',
-      actions,
-      sourceSeat: seatIndex,
-    });
+      appearanceResolution,
+      discardIndex: seat.discards.length - 1,
+    }, actions.length
+      ? {
+        type: 'handle-response-window',
+        actions,
+        sourceSeat: seatIndex,
+      }
+      : {
+        type: 'next-draw',
+        sourceSeat: seatIndex,
+      });
   }
 
-  /** 摸牌无人可响应：牌直接进入弃牌区，轮到下家摸牌 */
-  discardUnclaimedDraw(seatIndex, card) {
+  /** 摸牌无人可响应：提交最终弃牌状态，由当前 draw 复合事件负责归位动画。 */
+  settleUnclaimedDraw(seatIndex, card) {
     const state = this.state;
     const seat = state.seats[seatIndex];
     seat.discards.push(card);
@@ -495,10 +507,17 @@ class HuapaiEngine {
     state.appearingCard = null;
     state.recentDiscard = { seat: seatIndex, card, source: APPEARING_CARD_SOURCES.DRAW, unclaimed: true };
     this.setFeedback(`${seat.name}摸牌无人可用，${card.text}进入弃牌区`);
+    return seat.discards.length - 1;
+  }
+
+  /** 兼容最初存在响应机会、但所有玩家后来都过的摸牌最终归位事件。 */
+  discardUnclaimedDraw(seatIndex, card) {
+    const discardIndex = this.settleUnclaimedDraw(seatIndex, card);
     this.emitPublicEvent('unclaimed', {
       seat: seatIndex,
       card,
       source: APPEARING_CARD_SOURCES.DRAW,
+      discardIndex,
     }, {
       type: 'next-draw',
       sourceSeat: seatIndex,
@@ -560,6 +579,7 @@ class HuapaiEngine {
       seat: sourceSeat,
       card: state.recentDiscard ? state.recentDiscard.card : null,
       source: APPEARING_CARD_SOURCES.DISCARD,
+      discardIndex: state.seats[sourceSeat].discards.length - 1,
     }, {
       type: 'next-draw',
       sourceSeat,
@@ -577,7 +597,7 @@ class HuapaiEngine {
     this.beginTurn(next, true);
   }
 
-  scheduleAfterMeldAnimation(seatIndex, label) {
+  scheduleAfterMeldAnimation(seatIndex, label, animatedMeld = null) {
     const state = this.state;
     state.currentSeat = seatIndex;
     state.pendingActions = [];
@@ -585,11 +605,19 @@ class HuapaiEngine {
     state.phase = PHASES.AI_THINKING;
     this.setFeedback(`${state.seats[seatIndex].nickName}${label}，等待动作完成`);
     const melds = state.seats[seatIndex].melds || [];
-    const meld = melds[melds.length - 1] || null;
+    const meld = animatedMeld || melds[melds.length - 1] || null;
+    const meldOwnerSeat = meld
+      ? state.seats.findIndex((seat) => (seat.melds || []).some((item) => item.id === meld.id))
+      : seatIndex;
     this.emitPublicEvent(meld ? meld.type : 'meld', {
-      seat: seatIndex,
+      seat: meldOwnerSeat >= 0 ? meldOwnerSeat : seatIndex,
+      actingSeat: seatIndex,
       actionType: meld ? meld.type : label,
       meld,
+      meldIndex: meldOwnerSeat >= 0
+        ? state.seats[meldOwnerSeat].melds.findIndex((item) => item.id === meld.id)
+        : -1,
+      meldCount: meldOwnerSeat >= 0 ? state.seats[meldOwnerSeat].melds.length : 0,
     }, {
       type: 'after-grouping',
       seatIndex,
@@ -740,7 +768,7 @@ class HuapaiEngine {
     state.playerActions = [];
     state.currentSeat = action.seat;
     if (this.music) this.music.playActionVoice(action.type);
-    this.scheduleAfterMeldAnimation(action.seat, action.label);
+    this.scheduleAfterMeldAnimation(action.seat, action.label, meld);
   }
 
   /** 踏：在已有招/踏上追加摸到的同 key 牌，需满足对子挂载 */
@@ -778,7 +806,7 @@ class HuapaiEngine {
     state.pendingActions = [];
     state.playerActions = [];
     if (this.music) this.music.playActionVoice('ta');
-    this.scheduleAfterMeldAnimation(action.seat, ACTION_LABELS.ta);
+    this.scheduleAfterMeldAnimation(action.seat, ACTION_LABELS.ta, meld);
   }
 
   /** 凑牌动画后：庄家无刻子进圈；接庄计数；进入出牌阶段 */
@@ -834,16 +862,25 @@ class HuapaiEngine {
     state.drawnCard = drawnCard;
     if (this.music) this.music.playCardVoice(drawnCard);
     const actions = filterHighestPriority(findAppearingCardActions(state, seatIndex, drawnCard, APPEARING_CARD_SOURCES.DRAW, this.rules));
+    const appearanceResolution = actions.length ? 'await-response' : 'auto-discard';
+    const discardIndex = actions.length ? undefined : this.settleUnclaimedDraw(seatIndex, drawnCard);
     this.emitPublicEvent('draw', {
       seat: seatIndex,
       card: drawnCard,
       source: APPEARING_CARD_SOURCES.DRAW,
-    }, {
-      type: 'draw-response-window',
-      actions,
-      sourceSeat: seatIndex,
-      card: drawnCard,
-    });
+      appearanceResolution,
+      discardIndex,
+    }, actions.length
+      ? {
+        type: 'draw-response-window',
+        actions,
+        sourceSeat: seatIndex,
+        card: drawnCard,
+      }
+      : {
+        type: 'next-draw',
+        sourceSeat: seatIndex,
+      });
   }
 
   aiDiscard(seatIndex) {
@@ -1105,7 +1142,19 @@ function serializePublicEvent(event) {
     type: event.type,
     createdAt: event.createdAt,
   };
-  ['seat', 'source', 'actionType', 'card', 'meld', 'result'].forEach((key) => {
+  [
+    'seat',
+    'actingSeat',
+    'source',
+    'actionType',
+    'appearanceResolution',
+    'discardIndex',
+    'meldIndex',
+    'meldCount',
+    'card',
+    'meld',
+    'result',
+  ].forEach((key) => {
     if (event[key] !== undefined) output[key] = event[key];
   });
   return output;

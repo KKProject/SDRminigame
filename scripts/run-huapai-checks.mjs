@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const sourceDir = join(root, 'js/game');
 const tempDir = join(root, '.tmp-huapai-checks');
-const files = ['rules', 'cards', 'evaluator', 'ai', 'engine', 'layout', 'assets', 'renderer', 'self-check'];
+const files = ['rules', 'cards', 'evaluator', 'layout', 'assets', 'renderer', 'self-check'];
 
 function rewriteImports(source) {
   return source
@@ -42,7 +42,6 @@ await writeFile(join(tempDir, 'render-stub.mjs'), [
 ].join(' '));
 
 const { runSelfChecks } = await import(pathToFileURL(join(tempDir, 'self-check.mjs')));
-const { default: HuapaiEngine } = await import(pathToFileURL(join(tempDir, 'engine.mjs')));
 const {
   default: TableLayout,
   CARD_ASPECT_RATIO,
@@ -113,6 +112,51 @@ if (
 }
 if (renderCase.calls.setTransform.length !== 1 || renderCase.calls.setTransform[0].join(',') !== '1,0,0,1,0,0') {
   throw new Error('DPR 1 render setup should apply one identity transform');
+}
+if (renderCase.module.getRenderMetrics() !== null) {
+  throw new Error('portrait startup metrics must not create a stable interactive layout');
+}
+let metricsNotificationCount = 0;
+renderCase.module.subscribeRenderMetrics(() => { metricsNotificationCount += 1; });
+const recoveredLandscape = {
+  windowWidth: 844,
+  windowHeight: 390,
+  pixelRatio: 3,
+  safeArea: { left: 47, top: 0, right: 844, bottom: 369 },
+};
+if (renderCase.module.renderMetricsManager.consider(recoveredLandscape).status !== 'candidate') {
+  throw new Error('first valid landscape read should remain a candidate');
+}
+if (renderCase.module.renderMetricsManager.consider(recoveredLandscape).status !== 'committed') {
+  throw new Error('matching second landscape read should commit stable metrics');
+}
+if (
+  renderCase.module.getRenderMetrics().width !== 844
+  || renderCase.canvas.width !== 1688
+  || metricsNotificationCount !== 1
+) {
+  throw new Error('stable landscape recovery should atomically update canvas and notify consumers');
+}
+const recoveredTransformCount = renderCase.calls.setTransform.length;
+renderCase.module.renderMetricsManager.consider(recoveredLandscape);
+if (renderCase.calls.setTransform.length !== recoveredTransformCount || metricsNotificationCount !== 1) {
+  throw new Error('duplicate stable metrics should not reset canvas or notify consumers');
+}
+renderCase.module.renderMetricsManager.consider({ windowWidth: 390, windowHeight: 844, pixelRatio: 3 });
+if (renderCase.module.getRenderMetrics().width !== 844 || renderCase.calls.setTransform.length !== recoveredTransformCount) {
+  throw new Error('invalid transitional metrics must not replace the last stable landscape metrics');
+}
+const safeAreaUpdate = {
+  ...recoveredLandscape,
+  safeArea: { left: 59, top: 0, right: 844, bottom: 369 },
+};
+renderCase.module.renderMetricsManager.consider(safeAreaUpdate);
+renderCase.module.renderMetricsManager.consider(safeAreaUpdate);
+if (
+  renderCase.module.getRenderMetrics().safeAreaInsets.left !== 59
+  || metricsNotificationCount !== 2
+) {
+  throw new Error('confirmed safe-area changes should produce one new stable metrics notification');
 }
 
 renderCase = await loadRenderRuntime({ windowWidth: 375, windowHeight: 667, pixelRatio: 2 });
@@ -185,278 +229,6 @@ if (
   || renderCase.calls.scale.length !== 1
 ) {
   throw new Error('render setup should fall back safely when pixel ratio or setTransform are unavailable');
-}
-
-const databus = {
-  muted: false,
-  round: 0,
-  setRoundState(state) {
-    Object.assign(this, state);
-  },
-};
-const engine = new HuapaiEngine(databus, { playCue() {}, playCardVoice() {}, playActionVoice() {}, setMuted() {} }, DEFAULT_RULES);
-engine.startRound(1001);
-if (engine.aiTimer) clearTimeout(engine.aiTimer);
-
-if (databus.seats.length !== DEFAULT_RULES.seatCount) {
-  throw new Error('round did not create all seats');
-}
-
-if (databus.seats[databus.dealerSeat].hand.length !== DEFAULT_RULES.dealerHandSize) {
-  throw new Error('dealer opening hand size mismatch');
-}
-if (
-  DEFAULT_RULES.aiDelayMs < 850
-  || DEFAULT_RULES.unclaimedDiscardSettleMs < 1200
-  || DEFAULT_RULES.meldActionSettleMs < 1200
-) {
-  throw new Error('default animation settle timings should leave enough room for visible card transitions');
-}
-if (!databus.seats.every((seat) => seat.id === databus.dealerSeat || seat.hand.length === DEFAULT_RULES.idleHandSize)) {
-  throw new Error('idle opening hand size mismatch');
-}
-if (!databus.jiangCard || !databus.jiangPhraseId) {
-  throw new Error('round did not mark jiang card');
-}
-if (![PHASES.HUMAN_DISCARD, PHASES.TAKEOVER_CHOICE, PHASES.AI_THINKING, PHASES.RESULT].includes(databus.phase)) {
-  throw new Error('round started in invalid phase');
-}
-
-engine.finishDraw();
-if (databus.result.type !== 'draw') {
-  throw new Error('draw result was not created');
-}
-
-engine.handleResponseWindow([
-  { type: 'peng', seat: 1, responseIndex: 0, priority: 3, label: '碰' },
-  { type: 'peng', seat: 0, responseIndex: 1, priority: 3, label: '碰' },
-], 3);
-if (databus.phase !== PHASES.AI_THINKING || databus.playerActions.length) {
-  throw new Error('AI response ownership should not prompt the human player');
-}
-if (engine.aiTimer) clearTimeout(engine.aiTimer);
-
-const transitionRules = { ...DEFAULT_RULES, unclaimedDiscardSettleMs: 5, aiDelayMs: 1000 };
-engine.rules = transitionRules;
-const transitionSeats = createSeats(transitionRules, 0);
-const transitionDeck = createDeck(transitionRules);
-const unclaimedCard = transitionDeck.shift();
-transitionSeats[1].discards.push(unclaimedCard);
-databus.setRoundState({
-  rules: transitionRules,
-  seats: transitionSeats,
-  deck: transitionDeck,
-  phase: PHASES.AI_THINKING,
-  currentSeat: 1,
-  humanSeat: 0,
-  dealerSeat: 0,
-  nextDealerSeat: 0,
-  slippedDealer: null,
-  takeoverDealer: null,
-  takeoverQueue: [],
-  jiangCard: null,
-  jiangPhraseId: null,
-  appearingCard: { card: unclaimedCard, source: 'discard', sourceSeat: 1 },
-  drawnCard: null,
-  selectedCardId: null,
-  recentDiscard: { seat: 1, card: unclaimedCard },
-  pendingActions: [],
-  playerActions: [],
-  feedback: '',
-  result: null,
-  muted: false,
-  round: 2,
-});
-const deckBeforeUnclaimedAdvance = databus.deck.length;
-engine.resolveUnclaimedAppearingCard(1);
-if (
-  databus.deck.length !== deckBeforeUnclaimedAdvance
-  || !databus.recentDiscard.unclaimed
-  || databus.currentSeat !== 1
-) {
-  throw new Error('unclaimed card should enter discard area before next player draws');
-}
-await new Promise((resolve) => setTimeout(resolve, transitionRules.unclaimedDiscardSettleMs + 10));
-if (databus.deck.length >= deckBeforeUnclaimedAdvance) {
-  throw new Error('next player should draw only after unclaimed discard settles');
-}
-if (engine.aiTimer) clearTimeout(engine.aiTimer);
-if (engine.advanceTimer) clearTimeout(engine.advanceTimer);
-engine.rules = DEFAULT_RULES;
-
-const fastMeldRules = { ...DEFAULT_RULES, meldActionSettleMs: 5 };
-engine.rules = fastMeldRules;
-const responseSeats = createSeats(fastMeldRules, 1);
-const responseDeck = createDeck(fastMeldRules);
-responseSeats[0].hand = ['da', 'ren'].map((key) => responseDeck.splice(responseDeck.findIndex((card) => card.key === key), 1)[0]);
-responseSeats[3].hand = [responseDeck.splice(responseDeck.findIndex((card) => card.key === 'shang'), 1)[0]];
-databus.setRoundState({
-  rules: fastMeldRules,
-  seats: responseSeats,
-  deck: responseDeck,
-  phase: PHASES.AI_THINKING,
-  currentSeat: 3,
-  humanSeat: 0,
-  dealerSeat: 1,
-  nextDealerSeat: 1,
-  slippedDealer: null,
-  takeoverDealer: null,
-  takeoverQueue: [],
-  jiangCard: null,
-  jiangPhraseId: null,
-  drawnCard: null,
-  selectedCardId: null,
-  recentDiscard: null,
-  pendingActions: [],
-  playerActions: [],
-  feedback: '',
-  result: null,
-  muted: false,
-  round: 2,
-});
-engine.discardCard(3, responseSeats[3].hand[0].id);
-if (databus.phase !== PHASES.HUMAN_RESPONSE || !databus.playerActions.find((action) => action.type === 'chi')) {
-  throw new Error('human response prompt was not created');
-}
-engine.handlePlayerAction(databus.playerActions.find((action) => action.type === 'chi'));
-if (databus.phase !== PHASES.AI_THINKING || !databus.seats[0].melds.length) {
-  throw new Error('human meld should wait for its animation before discard phase');
-}
-await new Promise((resolve) => setTimeout(resolve, fastMeldRules.meldActionSettleMs + 10));
-if (databus.phase !== PHASES.HUMAN_DISCARD || !databus.seats[0].melds.length) {
-  throw new Error('human meld action did not resolve');
-}
-engine.rules = DEFAULT_RULES;
-
-const takeoverSeats = createSeats(DEFAULT_RULES, 0);
-const takeoverDeck = createDeck(DEFAULT_RULES);
-const jiangCard = takeoverDeck.splice(takeoverDeck.findIndex((card) => card.key === 'shang'), 1)[0];
-takeoverSeats[0].hand = [jiangCard];
-takeoverSeats[1].hand = ['da', 'da', 'da'].map((key) => takeoverDeck.splice(takeoverDeck.findIndex((card) => card.key === key), 1)[0]);
-databus.setRoundState({
-  rules: DEFAULT_RULES,
-  seats: takeoverSeats,
-  deck: takeoverDeck,
-  phase: PHASES.TAKEOVER_CHOICE,
-  currentSeat: 1,
-  humanSeat: 0,
-  dealerSeat: 0,
-  nextDealerSeat: 0,
-  slippedDealer: 0,
-  takeoverDealer: null,
-  takeoverQueue: [1],
-  jiangCard,
-  jiangPhraseId: jiangCard.phraseId,
-  drawnCard: null,
-  selectedCardId: null,
-  recentDiscard: null,
-  pendingActions: [],
-  playerActions: [],
-  feedback: '',
-  result: null,
-  muted: false,
-  round: 3,
-});
-engine.acceptTakeover(1);
-if (databus.dealerSeat !== 1 || databus.phase !== PHASES.DEALER_GIFT || databus.currentSeat !== 0) {
-  throw new Error('takeover should enter dealer-gift phase for the slipped dealer to choose a card');
-}
-engine.applyDealerGift(0, jiangCard.id);
-if (databus.seats[0].hand.find((card) => card.id === jiangCard.id)
-  || !databus.seats[1].hand.find((card) => card.id === jiangCard.id)) {
-  throw new Error('dealer gift should transfer the chosen card to the taker');
-}
-
-const dealerChiSeats = createSeats(DEFAULT_RULES, 0);
-const dealerChiDeck = createDeck(DEFAULT_RULES);
-dealerChiSeats[0].hand = ['shang', 'shang', 'da', 'ren'].map((key) => dealerChiDeck.splice(dealerChiDeck.findIndex((card) => card.key === key), 1)[0]);
-dealerChiSeats[3].hand = [dealerChiDeck.splice(dealerChiDeck.findIndex((card) => card.key === 'shang'), 1)[0]];
-databus.setRoundState({
-  rules: DEFAULT_RULES,
-  seats: dealerChiSeats,
-  deck: dealerChiDeck,
-  phase: PHASES.AI_THINKING,
-  currentSeat: 3,
-  humanSeat: 0,
-  dealerSeat: 0,
-  nextDealerSeat: 0,
-  slippedDealer: null,
-  takeoverDealer: null,
-  takeoverQueue: [],
-  jiangCard: null,
-  jiangPhraseId: null,
-  drawnCard: null,
-  selectedCardId: null,
-  recentDiscard: null,
-  pendingActions: [],
-  playerActions: [],
-  feedback: '',
-  result: null,
-  muted: false,
-  round: 4,
-});
-engine.discardCard(3, dealerChiSeats[3].hand[0].id);
-const dealerChi = databus.playerActions.find((action) => action.type === 'chi');
-engine.rules = fastMeldRules;
-engine.handlePlayerAction(dealerChi);
-await new Promise((resolve) => setTimeout(resolve, fastMeldRules.meldActionSettleMs + 10));
-if (databus.result.type !== 'circle-loss' || databus.result.loser !== 0) {
-  throw new Error('dealer chi that removes last kezi should circle-loss');
-}
-engine.rules = DEFAULT_RULES;
-
-const beginTurnClearSeats = createSeats(DEFAULT_RULES);
-const beginTurnClearDeck = createDeck(DEFAULT_RULES);
-const staleRecentDiscard = beginTurnClearDeck.shift();
-databus.setRoundState({
-  ...databus,
-  rules: DEFAULT_RULES,
-  seats: beginTurnClearSeats,
-  deck: beginTurnClearDeck,
-  phase: PHASES.AI_THINKING,
-  currentSeat: 1,
-  humanSeat: 0,
-  dealerSeat: 0,
-  nextDealerSeat: 0,
-  slippedDealer: null,
-  takeoverDealer: null,
-  takeoverQueue: [],
-  jiangCard: null,
-  jiangPhraseId: null,
-  drawnCard: null,
-  selectedCardId: null,
-  recentDiscard: { seat: 3, card: staleRecentDiscard, resolved: true },
-  pendingActions: [],
-  playerActions: [],
-  feedback: '',
-  result: null,
-  muted: false,
-  round: 5,
-});
-engine.beginTurn(1, true);
-if (databus.recentDiscard && databus.recentDiscard.card.id === staleRecentDiscard.id) {
-  throw new Error('new drawn turn should clear stale recent discard state');
-}
-if (engine.aiTimer) clearTimeout(engine.aiTimer);
-if (engine.advanceTimer) clearTimeout(engine.advanceTimer);
-
-databus.recentDiscard = { seat: 1, card: databus.seats[0].hand[0] };
-engine.aiTimer = setTimeout(() => {}, 1000);
-engine.advanceTimer = setTimeout(() => {}, 1000);
-engine.finishWin(0, databus.seats[0].hand[0], { summary: 'scripted win', score: 1, pattern: 'scripted', doors: [] });
-if (databus.result.type !== 'win' || databus.result.settlement.payments.length !== 3) {
-  throw new Error('win result was not created');
-}
-if (databus.recentDiscard || engine.aiTimer || engine.advanceTimer || databus.pendingActions.length || databus.playerActions.length) {
-  throw new Error('win result should stop all pending turn state and timers');
-}
-engine.finishCircleLoss(0, 'scripted circle-loss');
-if (databus.result.type !== 'circle-loss' || databus.result.winners.length !== 3 || databus.result.settlement.payments.length !== 3) {
-  throw new Error('circle-loss result was not created');
-}
-engine.finishDrawRound('scripted draw-round');
-if (databus.result.type !== 'draw-round') {
-  throw new Error('draw-round result was not created');
 }
 
 if (ASSET_MANIFEST.images.table !== 'images/background.jpg') {
@@ -601,11 +373,19 @@ if (missingActionLoader.getActionSprite('chi') !== null) {
 const layoutSeats = createSeats(DEFAULT_RULES);
 layoutSeats[0].hand = createDeck(DEFAULT_RULES).slice(0, DEFAULT_RULES.dealerHandSize);
 const layoutState = {
-  ...databus,
+  rules: DEFAULT_RULES,
   seats: layoutSeats,
+  deck: [],
   humanSeat: 0,
   currentSeat: 0,
   dealerSeat: 0,
+  jiangCard: null,
+  jiangPhraseId: null,
+  appearingCard: null,
+  drawnCard: null,
+  recentDiscard: null,
+  selectedCardId: null,
+  pendingActions: [],
   phase: PHASES.HUMAN_DISCARD,
   playerActions: [
     { type: 'chi', label: '吃' },
@@ -1295,6 +1075,31 @@ for (let time = 0; time <= 1200; time += 50) effectRenderer.animationManager.upd
 if (effectRenderer.animationManager.getVisualState().some((visual) => visual.kind === 'text')) {
   throw new Error('expired text effects should be cleaned up');
 }
+const onlineMeldEffectRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+const onlineMeldBaseState = {
+  ...layoutState,
+  animationWaiting: true,
+  seats: createSeats(DEFAULT_RULES),
+};
+onlineMeldEffectRenderer.updateMeldEffects(onlineMeldBaseState, discardResolutionLayout, 0);
+const onlineMeldState = {
+  ...onlineMeldBaseState,
+  seats: createSeats(DEFAULT_RULES),
+};
+onlineMeldState.seats[0].melds = [{
+  id: 'online-owned-chi',
+  type: 'chi',
+  label: '吃',
+  cards: renderDeck.slice(0, 3),
+}];
+onlineMeldEffectRenderer.updateMeldEffects(onlineMeldState, discardResolutionLayout, 100);
+if (onlineMeldEffectRenderer.animationManager.getVisualState().length) {
+  throw new Error('online-owned meld events must not trigger renderer difference animations');
+}
 
 const resultEffectRenderer = new TableRenderer({
   getImage() { return null; },
@@ -1492,6 +1297,58 @@ const inferredDiscardVisual = renderer.animationManager.getVisualState().find((v
 if (!inferredDiscardVisual || inferredDiscardVisual.card.id !== renderDeck[24].id) {
   throw new Error('renderer should create a big-card animation for recent discard');
 }
+const handColumnOrderBeforeResize = renderer.lastLayout.handColumns
+  .map((column) => column.cards.map((card) => card.id).join(','))
+  .join('|');
+if (!renderer.setViewport({
+  width: 844,
+  height: 390,
+  safeAreaInsets: { left: 47, top: 0, right: 0, bottom: 21 },
+})) {
+  throw new Error('renderer should accept a changed stable viewport');
+}
+const resizedCtx = createFakeRenderContext();
+renderer.render(resizedCtx, {
+  ...layoutState,
+  seats: renderSeats,
+  deck: renderDeck.slice(42),
+  recentDiscard: { seat: 1, card: renderDeck[24] },
+  jiangCard: renderDeck[0],
+  jiangPhraseId: renderDeck[0].phraseId,
+  feedback: '尺寸更新检查',
+});
+const handColumnOrderAfterResize = renderer.lastLayout.handColumns
+  .map((column) => column.cards.map((card) => card.id).join(','))
+  .join('|');
+const resizedBackground = resizedCtx.calls.find((call) => call[0] === 'drawImage' && call[1][0] && call[1][0].id === 'table-image');
+const resizedHandCard = renderer.lastLayout.handCards[0];
+const resizedHandHit = renderer.layout.hit(
+  renderer.lastLayout,
+  resizedHandCard.x + resizedHandCard.width / 2,
+  resizedHandCard.y + resizedHandCard.height / 2
+);
+if (
+  handColumnOrderAfterResize !== handColumnOrderBeforeResize
+  || !resizedBackground
+  || resizedBackground[1][3] !== 844
+  || resizedBackground[1][4] !== 390
+  || !resizedHandHit
+  || resizedHandHit.type !== 'hand-card'
+) {
+  throw new Error('viewport changes should preserve hand columns while rebuilding background and hit regions');
+}
+renderer.animationManager.play({
+  id: 'duplicate-viewport-animation',
+  visuals: [],
+  steps: [{ type: 'wait', duration: 1000 }],
+});
+if (renderer.setViewport({
+  width: 844,
+  height: 390,
+  safeAreaInsets: { left: 47, top: 0, right: 0, bottom: 21 },
+}) || !renderer.animationManager.isPlaying('duplicate-viewport-animation')) {
+  throw new Error('duplicate viewport notifications must not cancel current animations');
+}
 
 const onlineRenderer = new TableRenderer({
   getImage() { return null; },
@@ -1499,6 +1356,105 @@ const onlineRenderer = new TableRenderer({
   getCardBackSprite() { return null; },
 });
 onlineRenderer.lastLayout = renderer.lastLayout;
+const fullPreviewRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+fullPreviewRenderer.lastLayout = renderer.lastLayout;
+const localChiCards = [
+  { id: 'local-chi-x', key: 'x', phraseId: 'preview' },
+  { id: 'local-chi-y', key: 'y', phraseId: 'preview' },
+  { id: 'local-chi-z', key: 'z', phraseId: 'preview' },
+];
+fullPreviewRenderer.lastState = {
+  seats: [{ hand: localChiCards.slice(0, 2), melds: [] }],
+};
+let fullLocalPreviewComplete = 0;
+if (!fullPreviewRenderer.animationController.playLocalActionPreview({
+  type: 'chi',
+  seat: 0,
+  sourceSeat: 3,
+  card: localChiCards[2],
+  keys: ['x', 'y'],
+  label: '吃',
+}, () => { fullLocalPreviewComplete += 1; })) {
+  throw new Error('local chi action should begin a complete optimistic meld animation');
+}
+if (
+  fullPreviewRenderer.animationManager.getVisualState().filter((visual) => visual.kind === 'card' && visual.stage === 'chi').length !== 3
+  || fullPreviewRenderer.animationManager.active.size !== 1
+) {
+  throw new Error('local chi preview should animate the complete meld exactly once');
+}
+let fullLocalAuthorityComplete = 0;
+if (!fullPreviewRenderer.animationController.confirmLocalActionPreview({
+  eventSeq: 10,
+  type: 'chi',
+  seat: 0,
+  actingSeat: 0,
+  meld: { id: 'confirmed-local-chi', type: 'chi', cards: localChiCards },
+}, () => { fullLocalAuthorityComplete += 1; })) {
+  throw new Error('matching authoritative chi should reconcile with the local complete meld preview');
+}
+if (
+  fullPreviewRenderer.animationManager.active.size !== 1
+  || fullPreviewRenderer.animationManager.isPlaying('online:10')
+) {
+  throw new Error('authoritative chi confirmation must not create a second full meld animation for its actor');
+}
+for (let time = 0; time <= 2000; time += 50) fullPreviewRenderer.animationManager.update(time);
+if (fullLocalPreviewComplete !== 1 || fullLocalAuthorityComplete !== 1) {
+  throw new Error('reconciled local chi animation should complete locally and authoritatively exactly once');
+}
+[
+  { type: 'peng', handCount: 2, keys: ['same', 'same'], expected: 3 },
+  { type: 'zhao', handCount: 3, keys: ['same', 'same', 'same'], expected: 4 },
+  { type: 'ta', handCount: 0, keys: [], expected: 5 },
+].forEach((testCase) => {
+  const previewRenderer = new TableRenderer({
+    getImage() { return null; },
+    getCardSprite() { return null; },
+    getCardBackSprite() { return null; },
+  });
+  previewRenderer.lastLayout = renderer.lastLayout;
+  const hand = Array.from({ length: testCase.handCount }).map((_, index) => ({
+    id: `${testCase.type}-hand-${index}`,
+    key: 'same',
+    phraseId: 'preview',
+  }));
+  const existingTaMeld = {
+    id: 'existing-ta-meld',
+    type: 'zhao',
+    key: 'same',
+    cards: Array.from({ length: 4 }).map((_, index) => ({
+      id: `ta-existing-${index}`,
+      key: 'same',
+      phraseId: 'preview',
+    })),
+  };
+  previewRenderer.lastState = {
+    seats: [{
+      hand,
+      melds: testCase.type === 'ta' ? [existingTaMeld] : [],
+    }],
+  };
+  previewRenderer.animationController.playLocalActionPreview({
+    type: testCase.type,
+    seat: 0,
+    ownerSeat: 0,
+    meldId: testCase.type === 'ta' ? existingTaMeld.id : undefined,
+    card: { id: `${testCase.type}-incoming`, key: 'same', phraseId: 'preview' },
+    keys: testCase.keys,
+    label: testCase.type,
+  });
+  if (
+    previewRenderer.animationManager.getVisualState()
+      .filter((visual) => visual.kind === 'card' && visual.stage === testCase.type).length !== testCase.expected
+  ) {
+    throw new Error(`local ${testCase.type} preview should animate its complete final meld exactly once`);
+  }
+});
 const onlineIncoming = renderDeck[25];
 onlineRenderer.lastDiscardEvent = {
   seat: 3,
@@ -1580,6 +1536,8 @@ onlineRenderer.animationController.confirmLocalActionPreview({
   type: 'discard',
   seat: 0,
   card: onlineIncoming,
+  appearanceResolution: 'auto-discard',
+  discardIndex: 0,
 }, () => {});
 for (let time = 4000; time <= 6000; time += 50) onlineRenderer.animationManager.update(time);
 onlineRenderer.animationController.cancelLocalActionPreview();

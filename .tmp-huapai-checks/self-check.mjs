@@ -1,4 +1,3 @@
-import { chooseDiscard, chooseResponse } from './ai.mjs';
 import AssetLoader, {
   ASSET_MANIFEST,
   buildCardAtlasFrameMap,
@@ -257,7 +256,6 @@ export function runSelfChecks() {
   pengState.seats[2].hand = cardsFor(['shang']);
   actions = findResponseActions(pengState, 2, pengState.seats[2].hand[0], DEFAULT_RULES);
   assert(actions.find((action) => action.type === 'peng'), 'peng should be available');
-  assert(chooseResponse(actions).priority >= ACTION_PRIORITY.peng, 'AI should choose a priority response');
   assert(actions.every((action) => typeof action.responseIndex === 'number'), 'response actions should carry response order index');
 
   const chiPengState = makeState();
@@ -290,10 +288,6 @@ export function runSelfChecks() {
   const unsafeZhaoActions = findSelfDrawActions(unsafeZhaoState, 0, unsafeZhaoCard, DEFAULT_RULES);
   assert(unsafeZhaoActions.find((action) => action.type === 'zhao').circleLossRisk, 'zhao without support pair should be marked as circle-loss risk');
   assert(!filterHighestPriority(unsafeZhaoActions).find((action) => action.type === 'zhao'), 'unsafe optional zhao should not block a safer lower-priority action');
-  assert(chooseResponse([
-    { type: 'zhao', seat: 1, priority: ACTION_PRIORITY.zhao, circleLossRisk: true },
-    { type: 'peng', seat: 1, priority: ACTION_PRIORITY.peng },
-  ]).type === 'peng', 'AI should choose safe peng instead of optional zhao that immediately circle-losses');
   assert(validateSupportPairs(zhaoHand, zhaoHand.slice(0, 3).concat([zhaoCard]), DEFAULT_RULES).valid, '4-card zhao should be supported by one pair');
   assert(!validateSupportPairs(cardsFor(['da', 'da', 'da', 'da']), cardsFor(['shang', 'shang', 'shang', 'shang', 'shang']), DEFAULT_RULES).valid, '5-card zhao needs two distinct pair sources');
   assert(!validateSupportPairs(cardsFor(['da', 'da', 'da', 'da']), cardsFor(['shang', 'shang', 'shang', 'shang', 'shang', 'shang']), DEFAULT_RULES).valid, '6-card ta needs three valid pair sources');
@@ -358,7 +352,6 @@ export function runSelfChecks() {
   assert(getLegalDiscards(discardSeat, DEFAULT_RULES).length === 1, 'only non-protected phrase cards should remain legal discard candidates');
   assert(buildCircleLossResult(0, createSeats(DEFAULT_RULES), '测试进圈').type === 'circle-loss', 'circle-loss result should be created');
   assert(buildCircleLossResult(0, createSeats(DEFAULT_RULES), '测试进圈').settlement.payments.length === 3, 'circle-loss should pay three players');
-  assert(chooseDiscard({ hand: cardsFor(['shang', 'shang', 'kong']) }, DEFAULT_RULES), 'AI should choose discard');
   assert(typeof isListening(cardsFor(['shang', 'shang']), [], DEFAULT_RULES) === 'boolean', 'listening evaluator should return boolean');
   assert(hasKezi(cardsFor(['shang', 'shang', 'shang']), []), 'three same cards should count as kezi');
   assert(!hasKezi(cardsFor(['shang', 'da', 'ren']), []), 'plain phrase should not count as kezi');

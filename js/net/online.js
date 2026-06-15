@@ -12,6 +12,29 @@ function animationActionType(type) {
   return type;
 }
 
+export function localActionIdentity(action = {}) {
+  const type = animationActionType(action.type);
+  const cardId = action.card && action.card.id ? action.card.id : (action.cardId || '');
+  return {
+    type,
+    actingSeat: typeof action.actingSeat === 'number' ? action.actingSeat : (typeof action.seat === 'number' ? action.seat : 0),
+    cardId,
+    key: action.card && action.card.key ? action.card.key : '',
+  };
+}
+
+export function localActionMatchesEvent(pending, event) {
+  if (!pending || !event) return false;
+  const identity = pending.identity || pending;
+  const eventType = animationActionType(event.type);
+  const actingSeat = typeof event.actingSeat === 'number' ? event.actingSeat : event.seat;
+  if (identity.type !== eventType || actingSeat !== identity.actingSeat) return false;
+  if (!identity.cardId) return true;
+  if (event.card && event.card.id === identity.cardId) return true;
+  if (event.meld) return (event.meld.cards || []).some((card) => card.id === identity.cardId);
+  return !event.card;
+}
+
 function readRoomSession() {
   try {
     return wx.getStorageSync ? (wx.getStorageSync(ROOM_SESSION_KEY) || null) : null;
@@ -99,6 +122,7 @@ function rotatePublicEvent(event, mySeat) {
   if (!event) return null;
   const mapped = Object.assign({}, event);
   if (typeof event.seat === 'number') mapped.seat = rotateSeat(event.seat, mySeat);
+  if (typeof event.actingSeat === 'number') mapped.actingSeat = rotateSeat(event.actingSeat, mySeat);
   if (event.result) mapped.result = rotateResult(event.result, mySeat);
   return mapped;
 }
@@ -203,6 +227,7 @@ export default class OnlineController {
     this.ackRetryTimer = null;
     this.ackingEventSeq = 0;
     this.localActionPreviewType = null;
+    this.pendingLocalAction = null;
   }
 
   setStatus(text) {
@@ -210,7 +235,7 @@ export default class OnlineController {
   }
 
   /**
-   * 单机即可验证的在线流程：登录 → 创建房间 → 开局（空座 AI）→ 订阅。
+   * 单人即可验证的在线流程：登录 → 创建房间 → 开局（空座 AI）→ 订阅。
    */
   async startSoloOnline(profile = {}) {
     if (this.starting) throw new Error('ONLINE_STARTING');
@@ -338,6 +363,7 @@ export default class OnlineController {
       this.lastAckedEventSeq = Math.max(this.lastAckedEventSeq, event.eventSeq);
       this.lastPlayedEventSeq = Math.max(this.lastPlayedEventSeq, event.eventSeq);
       this.isAnimating = false;
+      if (this.animator.restoreHeldAppearance) this.animator.restoreHeldAppearance(event);
       return;
     }
     if (event.eventSeq <= this.lastPlayedEventSeq || this.isAnimating) {
@@ -356,10 +382,15 @@ export default class OnlineController {
     }
     this.lastPlayedEventSeq = event.eventSeq;
     this.isAnimating = true;
-    const usesLocalPreview = this.localActionPreviewType === event.type
-      && event.seat === 0
+    const usesLocalPreview = localActionMatchesEvent(this.pendingLocalAction, event)
       && this.animator.confirmLocalActionPreview
-      && this.animator.confirmLocalActionPreview(event, () => this.finishAnimation(event.eventSeq));
+      && this.animator.confirmLocalActionPreview(event, () => this.markLocalAnimationComplete());
+    if (usesLocalPreview) {
+      this.pendingLocalAction.authoritativeEventConfirmed = true;
+      this.pendingLocalAction.eventSeq = event.eventSeq;
+      this.pendingLocalAction.event = event;
+      this.tryFinishLocalAction();
+    }
     if (!usesLocalPreview) {
       this.cancelLocalActionPreview();
       this.playEventSound(event);
@@ -391,18 +422,56 @@ export default class OnlineController {
 
   startLocalActionPreview(action) {
     if (!action || !action.type) return;
+    const identity = localActionIdentity(action);
+    if (
+      this.pendingLocalAction
+      && this.pendingLocalAction.identity.type === identity.type
+      && this.pendingLocalAction.identity.cardId === identity.cardId
+    ) return;
     this.localActionPreviewType = animationActionType(action.type);
+    this.pendingLocalAction = {
+      identity,
+      localAnimationCompleted: false,
+      authoritativeEventConfirmed: false,
+      eventSeq: null,
+      event: null,
+      finishing: false,
+    };
     if (this.music && action.type === 'discard' && action.card) {
       this.music.playCardVoice(action.card);
     } else if (this.music && ['chi', 'peng', 'zhao', 'ta', 'hu'].indexOf(action.type) >= 0) {
       this.music.playActionVoice(action.type);
     }
-    if (this.animator.playLocalActionPreview) this.animator.playLocalActionPreview(action);
+    const started = this.animator.playLocalActionPreview
+      ? this.animator.playLocalActionPreview(action, () => this.markLocalAnimationComplete())
+      : false;
+    if (!started) this.markLocalAnimationComplete();
+  }
+
+  markLocalAnimationComplete() {
+    if (!this.pendingLocalAction) return;
+    this.pendingLocalAction.localAnimationCompleted = true;
+    this.tryFinishLocalAction();
+  }
+
+  tryFinishLocalAction() {
+    const pending = this.pendingLocalAction;
+    if (
+      !pending
+      || pending.finishing
+      || !pending.localAnimationCompleted
+      || !pending.authoritativeEventConfirmed
+      || typeof pending.eventSeq !== 'number'
+    ) return false;
+    pending.finishing = true;
+    this.finishAnimation(pending.eventSeq);
+    return true;
   }
 
   cancelLocalActionPreview() {
-    if (!this.localActionPreviewType) return;
+    if (!this.localActionPreviewType && !this.pendingLocalAction) return;
     this.localActionPreviewType = null;
+    this.pendingLocalAction = null;
     if (this.animator.cancelLocalActionPreview) this.animator.cancelLocalActionPreview();
   }
 
