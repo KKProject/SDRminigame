@@ -1652,4 +1652,111 @@ if (
   throw new Error('card animation should have distinct movement endpoints');
 }
 
+const onlineRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+onlineRenderer.lastLayout = renderer.lastLayout;
+const onlineIncoming = renderDeck[25];
+onlineRenderer.animation = onlineRenderer.createCardAnimation(
+  'held-online-card',
+  onlineIncoming,
+  { x: 100, y: 100 },
+  { x: 180, y: 120 },
+  'hold-online',
+  1
+);
+let onlineCompletionCount = 0;
+const onlineMeldEvent = {
+  eventSeq: 11,
+  type: 'peng',
+  seat: 1,
+  meld: { id: 'online-peng', type: 'peng', cards: [onlineIncoming] },
+};
+if (!onlineRenderer.playOnlineEvent(onlineMeldEvent, () => { onlineCompletionCount += 1; })) {
+  throw new Error('renderer should accept explicit online events');
+}
+if (!onlineRenderer.animation || onlineRenderer.animation.stage !== 'to-claimed') {
+  throw new Error('online chi/peng/zhao/ta events should move the held response card to the claimed area');
+}
+onlineRenderer.playOnlineEvent(onlineMeldEvent, () => { onlineCompletionCount += 100; });
+onlineRenderer.onlinePlayback.endsAt = 0;
+onlineRenderer.updateOnlinePlayback();
+onlineRenderer.updateOnlinePlayback();
+if (onlineCompletionCount !== 1) {
+  throw new Error('an online event completion callback should run exactly once');
+}
+onlineRenderer.releaseOnlineEvent(11);
+if (onlineRenderer.onlinePlayback) {
+  throw new Error('renderer should release a completed online event before the next event');
+}
+let localPreviewCompleted = 0;
+onlineRenderer.playLocalActionPreview({
+  type: 'peng',
+  seat: 0,
+  sourceSeat: 1,
+  card: onlineIncoming,
+});
+if (!onlineRenderer.localActionPreview || !onlineRenderer.animation || onlineRenderer.animation.stage !== 'local-preview') {
+  throw new Error('local action preview should begin immediately before the network response arrives');
+}
+if (!onlineRenderer.confirmLocalActionPreview({ eventSeq: 12, type: 'peng', seat: 0 }, () => {
+  localPreviewCompleted += 1;
+})) {
+  throw new Error('matching authoritative action should attach to the active local preview');
+}
+onlineRenderer.localActionPreview.endsAt = 0;
+onlineRenderer.updateLocalActionPreview();
+onlineRenderer.updateLocalActionPreview();
+if (localPreviewCompleted !== 1) {
+  throw new Error('confirmed local action preview should complete exactly once');
+}
+onlineRenderer.cancelLocalActionPreview();
+if (onlineRenderer.localActionPreview) {
+  throw new Error('local action preview should be cancellable after rejection or completion');
+}
+onlineRenderer.previousHandCards = [{
+  card: onlineIncoming,
+  x: 120,
+  y: 220,
+  width: 36,
+  height: 110,
+}];
+onlineRenderer.playLocalActionPreview({ type: 'discard', seat: 0, card: onlineIncoming });
+if (
+  !onlineRenderer.localActionPreview
+  || onlineRenderer.localActionPreview.cardId !== onlineIncoming.id
+  || !onlineRenderer.animation
+  || onlineRenderer.animation.stage !== 'local-preview'
+) {
+  throw new Error('local discard preview should immediately fly the selected hand card toward the table');
+}
+const localDiscardAnimation = onlineRenderer.animation;
+onlineRenderer.updateAnimation({
+  phase: 'ai-thinking',
+  drawnCard: null,
+  recentDiscard: { seat: 0, card: onlineIncoming },
+}, onlineRenderer.lastLayout);
+if (onlineRenderer.animation !== localDiscardAnimation) {
+  throw new Error('authoritative discard snapshot must not start a second animation over an active local preview');
+}
+onlineRenderer.confirmLocalActionPreview({
+  eventSeq: 13,
+  type: 'discard',
+  seat: 0,
+  card: onlineIncoming,
+}, () => {});
+onlineRenderer.localActionPreview.endsAt = 0;
+onlineRenderer.updateLocalActionPreview();
+onlineRenderer.cancelLocalActionPreview();
+onlineRenderer.updateAnimation({
+  phase: 'ai-thinking',
+  drawnCard: null,
+  recentDiscard: { seat: 0, card: onlineIncoming },
+}, onlineRenderer.lastLayout);
+if (onlineRenderer.animation) {
+  throw new Error('confirmed local discard preview must suppress inferred replay after it completes');
+}
+
 console.log('huapai checks passed');

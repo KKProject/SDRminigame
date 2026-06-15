@@ -18,7 +18,12 @@
  *   - version 不一致则拒绝（VERSION_STALE），客户端 pull 后重试
  *   - 每次合法推进 version + 1，并同步写入两个集合
  */
-const { HuapaiEngine, buildPublicState, buildPrivateView } = require('./core/engine');
+const {
+  HuapaiEngine,
+  buildPublicState,
+  buildPrivateView,
+  serializePublicEvent,
+} = require('./core/engine');
 const { DEFAULT_RULES } = require('./core/rules');
 
 /** 固定 4 人桌，取自规则配置 */
@@ -31,6 +36,8 @@ const ROOM_STATES = 'roomStates';
 const QUEUE = 'matchQueue';
 /** 玩家超过此毫秒未心跳则视为掉线 */
 const PLAYER_TIMEOUT_MS = 60000;
+/** 单个公开动作等待客户端动画回执的最长时间 */
+const ANIMATION_ACK_TIMEOUT_MS = 12000;
 
 /**
  * 剥离 CloudBase 文档 _id，写入 set 时使用业务 roomId 作为 doc id。
@@ -97,6 +104,89 @@ function buildSeatPlayers(room) {
   return players;
 }
 
+function requiredAnimationOpenids(room) {
+  return (room.players || [])
+    .filter((player) => player.online !== false)
+    .map((player) => player.openid)
+    .filter(Boolean);
+}
+
+function animationMetrics(room) {
+  if (!room.animationMetrics) {
+    room.animationMetrics = {
+      eventCount: 0,
+      ackCallCount: 0,
+      timeoutCount: 0,
+      stateWriteCount: 0,
+      lastAckDurationMs: 0,
+      maxAckDurationMs: 0,
+    };
+  }
+  return room.animationMetrics;
+}
+
+/** 根据引擎当前公开事件建立或延续动画屏障，兼容旧房间无此字段的状态。 */
+function syncAnimationBarrier(room, engine, now = Date.now()) {
+  const event = engine.state && engine.state.publicEvent;
+  if (!event) {
+    room.animationBarrier = null;
+    return null;
+  }
+  const current = room.animationBarrier;
+  if (current && current.eventSeq === event.eventSeq) {
+    const online = new Set(requiredAnimationOpenids(room));
+    current.requiredOpenids = (current.requiredOpenids || []).filter((openid) => online.has(openid));
+    current.ackedOpenids = (current.ackedOpenids || []).filter((openid) => current.requiredOpenids.indexOf(openid) >= 0);
+    return current;
+  }
+  room.animationBarrier = {
+    eventSeq: event.eventSeq,
+    requiredOpenids: requiredAnimationOpenids(room),
+    ackedOpenids: [],
+    createdAt: now,
+    deadlineAt: now + ANIMATION_ACK_TIMEOUT_MS,
+  };
+  animationMetrics(room).eventCount += 1;
+  return room.animationBarrier;
+}
+
+function barrierComplete(barrier) {
+  if (!barrier) return true;
+  const acked = new Set(barrier.ackedOpenids || []);
+  return (barrier.requiredOpenids || []).every((openid) => acked.has(openid));
+}
+
+/**
+ * 没有在线真人需要观看时自动越过屏障；有真人时停在当前公开动作等待回执。
+ */
+function advanceUnobservedEvents(room, engine) {
+  let guard = 0;
+  let barrier = syncAnimationBarrier(room, engine);
+  while (barrier && barrierComplete(barrier) && guard < 64) {
+    engine.resumePublicEvent();
+    barrier = syncAnimationBarrier(room, engine);
+    guard += 1;
+  }
+  return barrier;
+}
+
+function animationState(room, engine, openid = null) {
+  const barrier = syncAnimationBarrier(room, engine);
+  const seatByOpenid = {};
+  (room.players || []).forEach((player) => {
+    seatByOpenid[player.openid] = player.seat;
+  });
+  return {
+    currentEvent: engine.state ? serializePublicEvent(engine.state.publicEvent) : null,
+    latestEventSeq: engine.state && typeof engine.state.eventSeq === 'number' ? engine.state.eventSeq : 0,
+    requiredSeats: barrier ? (barrier.requiredOpenids || []).map((id) => seatByOpenid[id]).filter((seat) => typeof seat === 'number') : [],
+    ackedSeats: barrier ? (barrier.ackedOpenids || []).map((id) => seatByOpenid[id]).filter((seat) => typeof seat === 'number') : [],
+    deadlineAt: barrier ? barrier.deadlineAt : null,
+    selfAcked: Boolean(openid && barrier && (barrier.ackedOpenids || []).indexOf(openid) >= 0),
+    waiting: Boolean(barrier),
+  };
+}
+
 /**
  * 原子写入权威房间 + 公共状态。
  *
@@ -106,7 +196,10 @@ function buildSeatPlayers(room) {
  * @returns {object} publicState - 脱敏后的公共视图
  */
 async function writeRoomState(db, roomId, room, engine, version) {
+  advanceUnobservedEvents(room, engine);
+  animationMetrics(room).stateWriteCount += 1;
   const publicState = buildPublicState(engine.state);
+  const animation = animationState(room, engine);
   await db.collection(ROOMS).doc(roomId).set({
     data: documentData(Object.assign({}, room, {
       status: room.status,
@@ -120,6 +213,7 @@ async function writeRoomState(db, roomId, room, engine, version) {
     data: {
       version,
       public: publicState,
+      animation,
       updatedAt: Date.now(),
     },
   });
@@ -188,12 +282,7 @@ async function quickMatch(event, ctx) {
     };
     const engine = loadEngine(null);
     engine.startRound({ players: buildSeatPlayers(room) });
-    await db.collection(ROOMS).doc(roomId).set({
-      data: documentData(Object.assign({}, room, { state: stripState(engine.state) })),
-    });
-    await db.collection(ROOM_STATES).doc(roomId).set({
-      data: { version: 0, public: buildPublicState(engine.state), updatedAt: Date.now() },
-    });
+    await writeRoomState(db, roomId, room, engine, 0);
     for (const p of players) {
       await db.collection(QUEUE).doc(p.openid).update({ data: { status: 'matched', roomId, seat: p.seat } });
     }
@@ -348,6 +437,14 @@ async function op(event, ctx) {
 
   const engine = loadEngine(room.state || null);
   if (!engine.state) return { ok: false, error: 'NO_STATE' };
+  if (syncAnimationBarrier(room, engine)) {
+    return {
+      ok: false,
+      error: 'ANIMATION_PENDING',
+      version: room.version,
+      eventSeq: room.animationBarrier.eventSeq,
+    };
+  }
   if (engine.state.currentSeat !== seat) {
     return {
       ok: false,
@@ -379,8 +476,17 @@ async function op(event, ctx) {
     room.status = 'finished';
   }
   const version = (room.version || 0) + 1;
-  await writeRoomState(db, roomId, room, engine, version);
-  return { ok: true, version };
+  const publicState = await writeRoomState(db, roomId, room, engine, version);
+  return {
+    ok: true,
+    roomId,
+    version,
+    yourSeat: seat,
+    status: room.status,
+    public: publicState,
+    private: buildPrivateView(engine.state, seat),
+    animation: animationState(room, engine, OPENID),
+  };
 }
 
 /**
@@ -422,6 +528,60 @@ async function pull(event, ctx) {
     status: room.status,
     public: engine.state ? buildPublicState(engine.state) : null,
     private: (engine.state && seat >= 0) ? buildPrivateView(engine.state, seat) : { hand: [] },
+    animation: animationState(room, engine, OPENID),
+  };
+}
+
+/**
+ * 客户端完成当前公开动作动画后的幂等回执。最后一个必需回执会恢复一次服务端继续令牌。
+ */
+async function ackAnimation(event, ctx) {
+  const { db, OPENID } = ctx;
+  const room = await getRoom(db, event.roomId);
+  if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
+  if (seatOfOpenid(room, OPENID) < 0) return { ok: false, error: 'NOT_IN_ROOM' };
+  const engine = loadEngine(room.state || null);
+  animationMetrics(room).ackCallCount += 1;
+  const barrier = syncAnimationBarrier(room, engine);
+  if (!barrier) {
+    return { ok: true, version: room.version || 0, advanced: false, stale: true };
+  }
+  if (event.eventSeq !== barrier.eventSeq) {
+    return {
+      ok: true,
+      version: room.version || 0,
+      advanced: false,
+      stale: true,
+      currentEventSeq: barrier.eventSeq,
+    };
+  }
+
+  if ((barrier.requiredOpenids || []).indexOf(OPENID) >= 0 && (barrier.ackedOpenids || []).indexOf(OPENID) < 0) {
+    barrier.ackedOpenids.push(OPENID);
+  }
+  let advanced = false;
+  if (barrierComplete(barrier)) {
+    const duration = Math.max(0, Date.now() - (barrier.createdAt || Date.now()));
+    room.animationMetrics.lastAckDurationMs = duration;
+    room.animationMetrics.maxAckDurationMs = Math.max(room.animationMetrics.maxAckDurationMs || 0, duration);
+    engine.resumePublicEvent();
+    room.animationBarrier = null;
+    advanceUnobservedEvents(room, engine);
+    advanced = true;
+  }
+  if (engine.state && engine.state.phase === 'result' && !engine.state.publicEvent) room.status = 'finished';
+  const version = (room.version || 0) + 1;
+  const publicState = await writeRoomState(db, event.roomId, room, engine, version);
+  return {
+    ok: true,
+    roomId: event.roomId,
+    version,
+    yourSeat: seatOfOpenid(room, OPENID),
+    status: room.status,
+    advanced,
+    public: publicState,
+    private: buildPrivateView(engine.state, seatOfOpenid(room, OPENID)),
+    animation: animationState(room, engine, OPENID),
   };
 }
 
@@ -474,6 +634,7 @@ async function heartbeat(event, ctx) {
   const now = Date.now();
   const engine = loadEngine(room.state || null);
   let advanced = false;
+  const barrier = syncAnimationBarrier(room, engine, now);
   (room.players || []).forEach((player) => {
     if (player.openid === OPENID) {
       player.online = true;
@@ -482,9 +643,32 @@ async function heartbeat(event, ctx) {
     }
     if (player.online !== false && now - (player.lastSeenAt || room.createdAt || now) >= PLAYER_TIMEOUT_MS) {
       player.online = false;
-      advanced = advanceTimedOutSeat(engine, player.seat) || advanced;
+      if (engine.state && engine.state.seats[player.seat]) {
+        engine.state.seats[player.seat].online = false;
+        engine.state.seats[player.seat].isHuman = false;
+      }
+      if (!barrier) advanced = advanceTimedOutSeat(engine, player.seat) || advanced;
     }
   });
+  if (barrier && now >= barrier.deadlineAt) {
+    animationMetrics(room).timeoutCount += 1;
+    const acked = new Set(barrier.ackedOpenids || []);
+    (room.players || []).forEach((player) => {
+      if ((barrier.requiredOpenids || []).indexOf(player.openid) < 0 || acked.has(player.openid)) return;
+      player.online = false;
+      if (engine.state && engine.state.seats[player.seat]) {
+        engine.state.seats[player.seat].online = false;
+        engine.state.seats[player.seat].isHuman = false;
+      }
+    });
+    syncAnimationBarrier(room, engine, now);
+    if (barrierComplete(room.animationBarrier)) {
+      engine.resumePublicEvent();
+      room.animationBarrier = null;
+      advanceUnobservedEvents(room, engine);
+      advanced = true;
+    }
+  }
   const version = advanced ? (room.version || 0) + 1 : (room.version || 0);
   if (advanced) {
     await writeRoomState(db, event.roomId, room, engine, version);
@@ -507,5 +691,9 @@ module.exports = {
   op,
   pull,
   heartbeat,
+  ackAnimation,
   advanceTimedOutSeat,
+  animationState,
+  barrierComplete,
+  syncAnimationBarrier,
 };

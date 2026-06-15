@@ -83,9 +83,28 @@ function opErrorMessage(res = {}) {
     NOT_YOUR_TURN: '当前不是你的回合',
     NO_STATE: '牌桌状态尚未准备完成',
     VERSION_STALE: '牌桌状态已更新，正在重新同步',
+    ANIMATION_PENDING: '上一动作动画尚未完成，请稍候',
     UNKNOWN_OP_KIND: '无法识别这次操作',
   };
   return res.reason || messages[res.error] || `操作失败：${res.error || 'UNKNOWN_ERROR'}`;
+}
+
+function rotatePublicEvent(event, mySeat) {
+  if (!event) return null;
+  const mapped = Object.assign({}, event);
+  if (typeof event.seat === 'number') mapped.seat = rotateSeat(event.seat, mySeat);
+  if (event.result) mapped.result = rotateResult(event.result, mySeat);
+  return mapped;
+}
+
+function rotateAction(action, mySeat, index = null) {
+  const mapped = Object.assign({}, action, {
+    seat: rotateSeat(action.seat, mySeat),
+  });
+  if (typeof action.sourceSeat === 'number') mapped.sourceSeat = rotateSeat(action.sourceSeat, mySeat);
+  if (typeof action.ownerSeat === 'number') mapped.ownerSeat = rotateSeat(action.ownerSeat, mySeat);
+  if (typeof index === 'number') mapped.index = index;
+  return mapped;
 }
 
 /**
@@ -117,7 +136,7 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
     : null;
 
   const myTurnActions = pub.currentSeat === mySeat
-    ? (pub.playerActions || []).map((action, index) => Object.assign({}, action, { seat: 0, index }))
+    ? (pub.playerActions || []).map((action, index) => rotateAction(action, mySeat, index))
     : [];
 
   const recentDiscard = pub.recentDiscard
@@ -144,7 +163,7 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
     drawnCard,
     selectedCardId,
     recentDiscard,
-    pendingActions: (pub.pendingActions || []).map((a) => Object.assign({}, a, { seat: rotateSeat(a.seat, mySeat) })),
+    pendingActions: (pub.pendingActions || []).map((action) => rotateAction(action, mySeat)),
     playerActions: myTurnActions,
     feedback: pub.feedback || '',
     result: rotateResult(pub.result, mySeat),
@@ -169,6 +188,14 @@ export default class OnlineController {
     this.reconnectTimer = null;
     this.heartbeatTimer = null;
     this.boundNetworkChange = this.handleNetworkChange.bind(this);
+    this.currentEvent = null;
+    this.lastPlayedEventSeq = 0;
+    this.lastAckedEventSeq = 0;
+    this.isAnimating = false;
+    this.animationWaiting = false;
+    this.ackRetryTimer = null;
+    this.ackingEventSeq = 0;
+    this.localActionPreviewType = null;
   }
 
   setStatus(text) {
@@ -264,17 +291,137 @@ export default class OnlineController {
     if (!this.roomId) return false;
     try {
       const res = await callFunction('game', { action: 'pull', roomId: this.roomId });
-      if (!res || !res.ok || !res.public) return false;
-      this.mySeat = typeof res.yourSeat === 'number' && res.yourSeat >= 0 ? res.yourSeat : this.mySeat;
-      if (this.mySeat < 0) return false;
-      saveRoomSession(this.roomId, this.mySeat);
-      this.version = res.version;
-      const local = buildLocalState(res.public, res.private || { hand: [] }, this.mySeat, this.databus.selectedCardId);
-      this.databus.setRoundState(local);
-      this.setStatus('');
-      return true;
+      return this.applyServerSnapshot(res);
     } catch (err) {
       return false;
+    }
+  }
+
+  /** 立即应用一次服务端裁决附带的完整快照，避免再次 pull 时错过短暂动作事件。 */
+  applyServerSnapshot(res) {
+    if (!res || !res.ok || !res.public) return false;
+    this.mySeat = typeof res.yourSeat === 'number' && res.yourSeat >= 0 ? res.yourSeat : this.mySeat;
+    if (this.mySeat < 0) return false;
+    saveRoomSession(this.roomId, this.mySeat);
+    this.version = res.version;
+    const local = buildLocalState(res.public, res.private || { hand: [] }, this.mySeat, this.databus.selectedCardId);
+    this.animationWaiting = Boolean(res.animation && res.animation.waiting);
+    local.animationWaiting = this.animationWaiting;
+    if (this.animationWaiting) local.playerActions = [];
+    this.databus.setRoundState(local);
+    this.consumeAnimationState(res.animation || {
+      currentEvent: res.public.publicEvent || null,
+      selfAcked: false,
+      waiting: Boolean(res.public.publicEvent),
+    });
+    this.setStatus('');
+    return true;
+  }
+
+  consumeAnimationState(animation = {}) {
+    const event = rotatePublicEvent(animation.currentEvent, this.mySeat);
+    if (!event) {
+      if (this.renderer.releaseOnlineEvent) this.renderer.releaseOnlineEvent();
+      this.currentEvent = null;
+      this.isAnimating = false;
+      return;
+    }
+    this.currentEvent = event;
+    if (animation.selfAcked) {
+      this.lastAckedEventSeq = Math.max(this.lastAckedEventSeq, event.eventSeq);
+      this.lastPlayedEventSeq = Math.max(this.lastPlayedEventSeq, event.eventSeq);
+      this.isAnimating = false;
+      return;
+    }
+    if (event.eventSeq <= this.lastPlayedEventSeq || this.isAnimating) {
+      if (!this.isAnimating && event.eventSeq <= this.lastPlayedEventSeq) {
+        // 多客户端并发全量写可能覆盖单个回执；权威状态仍未记录本人时主动幂等补发。
+        this.lastAckedEventSeq = Math.min(this.lastAckedEventSeq, event.eventSeq - 1);
+        this.sendAnimationAck(event.eventSeq);
+      }
+      return;
+    }
+    if (this.lastPlayedEventSeq && event.eventSeq > this.lastPlayedEventSeq + 1) {
+      console.warn('[online] animation event gap, aligning to current authoritative event', {
+        previous: this.lastPlayedEventSeq,
+        current: event.eventSeq,
+      });
+    }
+    this.lastPlayedEventSeq = event.eventSeq;
+    this.isAnimating = true;
+    const usesLocalPreview = this.localActionPreviewType === event.type
+      && event.seat === 0
+      && this.renderer.confirmLocalActionPreview
+      && this.renderer.confirmLocalActionPreview(event, () => this.finishAnimation(event.eventSeq));
+    if (!usesLocalPreview) {
+      this.cancelLocalActionPreview();
+      this.playEventSound(event);
+    }
+    const started = usesLocalPreview || (this.renderer.playOnlineEvent
+      ? this.renderer.playOnlineEvent(event, () => this.finishAnimation(event.eventSeq))
+      : false);
+    if (!started) this.finishAnimation(event.eventSeq);
+  }
+
+  /** 在线动作只在首次播放对应事件时发声，重复快照与回执重试不会重复播放。 */
+  playEventSound(event) {
+    if (!this.music || !event) return;
+    if ((event.type === 'draw' || event.type === 'discard') && event.card && this.music.playCardVoice) {
+      this.music.playCardVoice(event.card);
+      return;
+    }
+    if (['chi', 'peng', 'zhao', 'ta', 'hu'].indexOf(event.type) >= 0 && this.music.playActionVoice) {
+      this.music.playActionVoice(event.type);
+    }
+  }
+
+  finishAnimation(eventSeq) {
+    if (!this.currentEvent || this.currentEvent.eventSeq !== eventSeq) return;
+    this.isAnimating = false;
+    this.cancelLocalActionPreview();
+    this.sendAnimationAck(eventSeq);
+  }
+
+  startLocalActionPreview(action) {
+    if (!action || !action.type) return;
+    this.localActionPreviewType = action.type;
+    if (this.music && action.type === 'discard' && action.card) {
+      this.music.playCardVoice(action.card);
+    } else if (this.music && ['chi', 'peng', 'zhao', 'ta', 'hu'].indexOf(action.type) >= 0) {
+      this.music.playActionVoice(action.type);
+    }
+    if (this.renderer.playLocalActionPreview) this.renderer.playLocalActionPreview(action);
+  }
+
+  cancelLocalActionPreview() {
+    if (!this.localActionPreviewType) return;
+    this.localActionPreviewType = null;
+    if (this.renderer.cancelLocalActionPreview) this.renderer.cancelLocalActionPreview();
+  }
+
+  async sendAnimationAck(eventSeq) {
+    if (!this.roomId || eventSeq <= this.lastAckedEventSeq) return;
+    if (this.ackingEventSeq === eventSeq) return;
+    this.ackingEventSeq = eventSeq;
+    try {
+      const res = await callFunction('game', {
+        action: 'ackAnimation',
+        roomId: this.roomId,
+        eventSeq,
+      });
+      if (!res || !res.ok) throw new Error((res && res.error) || 'ACK_FAILED');
+      this.lastAckedEventSeq = Math.max(this.lastAckedEventSeq, eventSeq);
+      this.ackingEventSeq = 0;
+      if (this.ackRetryTimer) clearTimeout(this.ackRetryTimer);
+      this.ackRetryTimer = null;
+      if (!this.applyServerSnapshot(res)) await this.refresh();
+    } catch (err) {
+      this.ackingEventSeq = 0;
+      if (this.ackRetryTimer) return;
+      this.ackRetryTimer = setTimeout(() => {
+        this.ackRetryTimer = null;
+        this.sendAnimationAck(eventSeq);
+      }, RECONNECT_DELAY_MS);
     }
   }
 
@@ -324,6 +471,10 @@ export default class OnlineController {
   }
 
   async sendOp(op, allowRetry = true) {
+    if (this.animationWaiting || this.isAnimating) {
+      this.databus.feedback = '请等待当前动作完成';
+      return;
+    }
     try {
       const res = await callFunction('game', Object.assign({ action: 'op', roomId: this.roomId, version: this.version }, op));
       if (!res || !res.ok) {
@@ -334,6 +485,7 @@ export default class OnlineController {
           }
         }
         this.databus.feedback = opErrorMessage(res);
+        this.cancelLocalActionPreview();
         console.warn('[online] operation rejected', {
           op,
           response: res,
@@ -343,14 +495,19 @@ export default class OnlineController {
         });
         return;
       }
-      await this.refresh();
+      if (!this.applyServerSnapshot(res)) await this.refresh();
     } catch (err) {
+      this.cancelLocalActionPreview();
       this.databus.feedback = '网络异常，请重试';
     }
   }
 
   handleTouch(event) {
     if (!this.active) return;
+    if (this.animationWaiting || this.isAnimating || this.localActionPreviewType) {
+      this.databus.feedback = '请等待当前动作完成';
+      return;
+    }
     const touch = event.touches && event.touches[0];
     if (!touch || !this.renderer.lastLayout) return;
     const region = this.renderer.layout.hit(this.renderer.lastLayout, touch.clientX, touch.clientY);
@@ -389,6 +546,8 @@ export default class OnlineController {
       return;
     }
     if (state.selectedCardId === cardId) {
+      const card = state.seats[0].hand.find((item) => item.id === cardId);
+      this.startLocalActionPreview({ type: 'discard', seat: 0, card });
       this.sendOp({ kind: 'discard', cardId });
       state.selectedCardId = null;
       return;
@@ -399,6 +558,7 @@ export default class OnlineController {
 
   handleActionTap(action) {
     if (!action) return;
+    this.startLocalActionPreview(action);
     if (action.type === 'acceptTakeover') {
       this.sendOp({ kind: 'takeover', accept: true });
       return;
@@ -427,6 +587,10 @@ export default class OnlineController {
     this.reconnectTimer = null;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
+    if (this.ackRetryTimer) clearTimeout(this.ackRetryTimer);
+    this.ackRetryTimer = null;
+    this.ackingEventSeq = 0;
+    this.cancelLocalActionPreview();
     if (wx.offNetworkStatusChange) wx.offNetworkStatusChange(this.boundNetworkChange);
     this.closeWatcher();
   }

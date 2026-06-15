@@ -73,7 +73,72 @@ class HuapaiEngine {
     if (state && state.rules) {
       this.rules = state.rules;
     }
+    this.ensureAnimationState();
     return this;
+  }
+
+  /** 兼容旧房间：补齐公开动作事件与可持久化继续令牌字段。 */
+  ensureAnimationState() {
+    if (!this.state) return;
+    if (typeof this.state.eventSeq !== 'number') this.state.eventSeq = 0;
+    if (!('publicEvent' in this.state)) this.state.publicEvent = null;
+    if (!('pendingContinuation' in this.state)) this.state.pendingContinuation = null;
+  }
+
+  /**
+   * 记录一个公开动作并暂停自动推进。房间层在所有在线真人完成动画后调用 resumePublicEvent。
+   */
+  emitPublicEvent(type, payload = {}, continuation = null) {
+    this.ensureAnimationState();
+    const state = this.state;
+    state.eventSeq += 1;
+    state.publicEvent = Object.assign({
+      eventSeq: state.eventSeq,
+      type,
+      createdAt: Date.now(),
+    }, payload);
+    state.pendingContinuation = continuation;
+    return state.publicEvent;
+  }
+
+  /** 动画屏障解除后仅恢复一个继续令牌；后续若产生公开动作会再次暂停。 */
+  resumePublicEvent() {
+    this.ensureAnimationState();
+    const continuation = this.state.pendingContinuation;
+    this.state.publicEvent = null;
+    this.state.pendingContinuation = null;
+    if (!continuation) return { ok: true, advanced: false };
+
+    switch (continuation.type) {
+      case 'handle-response-window':
+        this.handleResponseWindow(continuation.actions || [], continuation.sourceSeat);
+        break;
+      case 'next-draw':
+        this.scheduleNextDrawAfterDiscard(continuation.sourceSeat);
+        break;
+      case 'after-grouping':
+        this.afterGroupingAction(continuation.seatIndex, continuation.label);
+        break;
+      case 'draw-response-window':
+        if ((continuation.actions || []).length) {
+          this.handleResponseWindow(continuation.actions, continuation.sourceSeat);
+        } else {
+          this.discardUnclaimedDraw(continuation.sourceSeat, continuation.card);
+        }
+        break;
+      case 'process-takeover-queue':
+        this.processTakeoverQueue();
+        break;
+      case 'enter-dealer-gift':
+        this.enterDealerGiftPhase(continuation.slippedSeat, continuation.takerSeat);
+        break;
+      case 'settlement':
+        this.emitPublicEvent('settlement', { result: continuation.result });
+        break;
+      default:
+        return { ok: false, reason: `未知继续令牌：${continuation.type}` };
+    }
+    return { ok: true, advanced: true };
   }
 
   /**
@@ -90,6 +155,7 @@ class HuapaiEngine {
   startRound(options = {}) {
     const { seed, players = [] } = options;
     const prevRound = (this.state && this.state.round) || 0;
+    const prevEventSeq = (this.state && this.state.eventSeq) || 0;
     const prevNextDealer = this.state && typeof this.state.nextDealerSeat === 'number'
       ? this.state.nextDealerSeat
       : null;
@@ -136,6 +202,9 @@ class HuapaiEngine {
       result: null,
       round: prevRound + 1,
       seed: roundSeed,
+      eventSeq: prevEventSeq,
+      publicEvent: null,
+      pendingContinuation: null,
     };
 
     if (!hasTriplet(seats[roundDealer].hand)) {
@@ -212,7 +281,11 @@ class HuapaiEngine {
     state.takeoverDealer = seatIndex;
     state.takeoverQueue = [];
     state.playerActions = [];
-    this.enterDealerGiftPhase(state.slippedDealer, seatIndex);
+    this.emitPublicEvent('accept-takeover', { seat: seatIndex }, {
+      type: 'enter-dealer-gift',
+      slippedSeat: state.slippedDealer,
+      takerSeat: seatIndex,
+    });
   }
 
   /**
@@ -265,7 +338,9 @@ class HuapaiEngine {
     state.takeoverQueue = state.takeoverQueue.filter((seat) => seat !== seatIndex);
     state.playerActions = [];
     this.setFeedback(`${state.seats[seatIndex].name}不接庄`);
-    this.processTakeoverQueue();
+    this.emitPublicEvent('decline-takeover', { seat: seatIndex }, {
+      type: 'process-takeover-queue',
+    });
   }
 
   /** 滑庄流局：无人接庄，下局庄家轮转 */
@@ -283,6 +358,7 @@ class HuapaiEngine {
       reason,
       summary: `${reason}，下局${state.seats[nextDealer].name}坐庄`,
     };
+    this.emitPublicEvent('draw-round', { result: state.result });
   }
 
   /** 牌堆 < lowDeckDrawThreshold 流局，庄家不变 */
@@ -302,6 +378,7 @@ class HuapaiEngine {
       reason: '牌堆少于15张',
       summary: '牌堆少于15张流局，庄家不变',
     };
+    this.emitPublicEvent('draw-round', { result: state.result });
   }
 
   /**
@@ -392,7 +469,15 @@ class HuapaiEngine {
     if (this.music) this.music.playCardVoice(card);
 
     const actions = filterHighestPriority(findResponseActions(state, seatIndex, card, this.rules));
-    this.handleResponseWindow(actions, seatIndex);
+    this.emitPublicEvent('discard', {
+      seat: seatIndex,
+      card,
+      source,
+    }, {
+      type: 'handle-response-window',
+      actions,
+      sourceSeat: seatIndex,
+    });
   }
 
   /** 摸牌无人可响应：牌直接进入弃牌区，轮到下家摸牌 */
@@ -410,7 +495,14 @@ class HuapaiEngine {
     state.appearingCard = null;
     state.recentDiscard = { seat: seatIndex, card, source: APPEARING_CARD_SOURCES.DRAW, unclaimed: true };
     this.setFeedback(`${seat.name}摸牌无人可用，${card.text}进入弃牌区`);
-    this.scheduleNextDrawAfterDiscard(seatIndex);
+    this.emitPublicEvent('unclaimed', {
+      seat: seatIndex,
+      card,
+      source: APPEARING_CARD_SOURCES.DRAW,
+    }, {
+      type: 'next-draw',
+      sourceSeat: seatIndex,
+    });
   }
 
   /**
@@ -442,7 +534,11 @@ class HuapaiEngine {
       return;
     }
 
-    this.handleResponseWindow(actions.filter((action) => action.seat !== responseSeat), sourceSeat);
+    this.emitPublicEvent('pass', { seat: responseSeat }, {
+      type: 'handle-response-window',
+      actions: actions.filter((action) => action.seat !== responseSeat),
+      sourceSeat,
+    });
   }
 
   /** 无人响应：摸牌走 discardUnclaimedDraw，出牌则进弃牌区并下家摸牌 */
@@ -460,7 +556,14 @@ class HuapaiEngine {
       state.recentDiscard.resolved = true;
     }
     this.setFeedback(`${state.seats[sourceSeat].name}打出的牌无人响应，进入弃牌区`);
-    this.scheduleNextDrawAfterDiscard(sourceSeat);
+    this.emitPublicEvent('unclaimed', {
+      seat: sourceSeat,
+      card: state.recentDiscard ? state.recentDiscard.card : null,
+      source: APPEARING_CARD_SOURCES.DISCARD,
+    }, {
+      type: 'next-draw',
+      sourceSeat,
+    });
   }
 
   scheduleNextDrawAfterDiscard(sourceSeat) {
@@ -481,7 +584,17 @@ class HuapaiEngine {
     state.playerActions = [];
     state.phase = PHASES.AI_THINKING;
     this.setFeedback(`${state.seats[seatIndex].nickName}${label}，等待动作完成`);
-    this.afterGroupingAction(seatIndex, label);
+    const melds = state.seats[seatIndex].melds || [];
+    const meld = melds[melds.length - 1] || null;
+    this.emitPublicEvent(meld ? meld.type : 'meld', {
+      seat: seatIndex,
+      actionType: meld ? meld.type : label,
+      meld,
+    }, {
+      type: 'after-grouping',
+      seatIndex,
+      label,
+    });
   }
 
   /**
@@ -510,7 +623,11 @@ class HuapaiEngine {
     const source = state.appearingCard
       ? state.appearingCard.sourceSeat
       : (state.recentDiscard ? state.recentDiscard.seat : state.currentSeat);
-    this.handleResponseWindow(remaining, source);
+    this.emitPublicEvent('pass', { seat: seatIndex }, {
+      type: 'handle-response-window',
+      actions: remaining,
+      sourceSeat: source,
+    });
   }
 
   validateSeatSupportPairs(seat) {
@@ -717,12 +834,16 @@ class HuapaiEngine {
     state.drawnCard = drawnCard;
     if (this.music) this.music.playCardVoice(drawnCard);
     const actions = filterHighestPriority(findAppearingCardActions(state, seatIndex, drawnCard, APPEARING_CARD_SOURCES.DRAW, this.rules));
-    if (!actions.length) {
-      this.discardUnclaimedDraw(seatIndex, drawnCard);
-      return;
-    }
-
-    this.handleResponseWindow(actions, seatIndex);
+    this.emitPublicEvent('draw', {
+      seat: seatIndex,
+      card: drawnCard,
+      source: APPEARING_CARD_SOURCES.DRAW,
+    }, {
+      type: 'draw-response-window',
+      actions,
+      sourceSeat: seatIndex,
+      card: drawnCard,
+    });
   }
 
   aiDiscard(seatIndex) {
@@ -792,6 +913,10 @@ class HuapaiEngine {
       doors: win.doors,
     };
     if (this.music) this.music.playActionVoice('hu');
+    this.emitPublicEvent('hu', { seat: winner, card, result: this.state.result }, {
+      type: 'settlement',
+      result: this.state.result,
+    });
   }
 
   /** 进圈：违规者付三家各 circleLossPoint 分 */
@@ -810,6 +935,10 @@ class HuapaiEngine {
       this.state.seats[payment.from].score -= payment.points;
       this.state.seats[payment.to].score += payment.points;
     });
+    this.emitPublicEvent('circle-loss', { seat: loser, result }, {
+      type: 'settlement',
+      result,
+    });
   }
 
   finishDraw() {
@@ -817,6 +946,7 @@ class HuapaiEngine {
     this.state.playerActions = [];
     this.state.appearingCard = null;
     this.state.result = { type: RESULT_TYPES.DRAW, reasonCode: DRAW_ROUND_REASONS.EXHAUSTED_DECK, summary: '荒庄' };
+    this.emitPublicEvent('draw-round', { result: this.state.result });
   }
 
   // ===================== 服务端意图入口 =====================
@@ -942,6 +1072,8 @@ function buildPublicState(state) {
     appearingCard: state.appearingCard || null,
     pendingActions: state.pendingActions || [],
     playerActions: state.playerActions || [],
+    eventSeq: typeof state.eventSeq === 'number' ? state.eventSeq : 0,
+    publicEvent: serializePublicEvent(state.publicEvent),
     seats: (state.seats || []).map((seat) => ({
       id: seat.id,
       nickName: seat.nickName || seat.name,
@@ -963,6 +1095,22 @@ function buildPublicState(state) {
   };
 }
 
+/**
+ * 公开事件只包含桌面上已经可见的信息；继续令牌与未公开手牌永不进入公共视图。
+ */
+function serializePublicEvent(event) {
+  if (!event) return null;
+  const output = {
+    eventSeq: event.eventSeq,
+    type: event.type,
+    createdAt: event.createdAt,
+  };
+  ['seat', 'source', 'actionType', 'card', 'meld', 'result'].forEach((key) => {
+    if (event[key] !== undefined) output[key] = event[key];
+  });
+  return output;
+}
+
 /** 构建私密视图：仅 pull 时下发给本人，含完整 hand 与 drawnCard */
 function buildPrivateView(state, seatIndex) {
   if (!state || !state.seats || !state.seats[seatIndex]) return { hand: [] };
@@ -978,4 +1126,5 @@ module.exports = {
   HuapaiEngine,
   buildPublicState,
   buildPrivateView,
+  serializePublicEvent,
 };

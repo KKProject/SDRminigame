@@ -41,6 +41,7 @@ const room = require('./room');
  *   op            提交游戏操作（出牌/响应/接庄）
  *   pull          拉取全量状态（断线重连）
  *   heartbeat     心跳 + 掉线检测
+ *   ackAnimation  当前公开动作动画完成回执
  */
 const handlers = {
   /** 连通性探测，返回当前用户 openid */
@@ -71,6 +72,7 @@ const handlers = {
   op: room.op,
   pull: room.pull,
   heartbeat: room.heartbeat,
+  ackAnimation: room.ackAnimation,
 };
 
 /**

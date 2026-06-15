@@ -57,6 +57,46 @@ const publicState = serverEngine.buildPublicState({
   playerActions: [],
 });
 if (publicState.seats.some((seat) => 'hand' in seat)) throw new Error('public state must not expose player hands');
+const sanitizedEvent = serverEngine.serializePublicEvent({
+  eventSeq: 7,
+  type: 'discard',
+  seat: 0,
+  card: serverDeck[0],
+  privateHand: serverDeck.slice(1, 4),
+  pendingContinuation: { type: 'secret' },
+});
+if ('privateHand' in sanitizedEvent || 'pendingContinuation' in sanitizedEvent) {
+  throw new Error('public animation events must not expose private hands or continuation tokens');
+}
+
+const legacyEngine = new serverEngine.HuapaiEngine(serverRules.DEFAULT_RULES);
+legacyEngine.load({ seats: [], phase: 'human-discard' });
+if (legacyEngine.state.eventSeq !== 0 || legacyEngine.state.publicEvent !== null || legacyEngine.state.pendingContinuation !== null) {
+  throw new Error('loading legacy rooms should initialize animation event compatibility fields');
+}
+
+const pausedEngine = new serverEngine.HuapaiEngine(serverRules.DEFAULT_RULES);
+pausedEngine.startRound({
+  seed: 1,
+  players: [
+    { nickName: '真人', isHuman: true },
+    { isHuman: false },
+    { isHuman: false },
+    { isHuman: false },
+  ],
+});
+if (pausedEngine.state.phase === 'human-discard') {
+  const legal = serverEvaluator.getLegalDiscards(pausedEngine.state.seats[pausedEngine.state.currentSeat], serverRules.DEFAULT_RULES)[0];
+  pausedEngine.submitDiscard(pausedEngine.state.currentSeat, legal.id);
+  if (!pausedEngine.state.publicEvent || pausedEngine.state.publicEvent.type !== 'discard' || !pausedEngine.state.pendingContinuation) {
+    throw new Error('a public discard should pause the engine with a serializable continuation token');
+  }
+  const pausedSeq = pausedEngine.state.eventSeq;
+  pausedEngine.resumePublicEvent();
+  if (pausedEngine.state.eventSeq < pausedSeq) {
+    throw new Error('resuming a public event must preserve monotonic event sequence numbers');
+  }
+}
 
 const timeoutEngine = new serverEngine.HuapaiEngine(serverRules.DEFAULT_RULES);
 timeoutEngine.startRound({

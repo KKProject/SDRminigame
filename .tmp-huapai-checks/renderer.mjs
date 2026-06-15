@@ -17,6 +17,7 @@ const ACTION_EFFECT_LABELS = {
   hu: '胡',
   pass: '过',
 };
+const MELD_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta'];
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
@@ -77,6 +78,10 @@ export default class TableRenderer {
     this.buttonPanelStartedAt = 0;
     this.buttonPress = null;
     this.previousHandCards = [];
+    this.onlinePlayback = null;
+    this.localActionPreview = null;
+    this.suppressNextMeldEffect = false;
+    this.suppressNextResultEffect = false;
   }
 
   render(ctx, state) {
@@ -84,6 +89,8 @@ export default class TableRenderer {
     this.lastLayout = layout;
 
     ctx.clearRect(0, 0, layout.width, layout.height);
+    this.updateLocalActionPreview();
+    this.updateOnlinePlayback();
     this.updateAnimation(state, layout);
     this.updateEffects(state, layout);
     this.drawBackground(ctx, layout);
@@ -250,6 +257,7 @@ export default class TableRenderer {
   }
 
   updateAnimation(state, layout) {
+    if (this.onlinePlayback || this.localActionPreview) return;
     if (this.isWinResult(state)) {
       this.clearMotionAnimations();
       return;
@@ -313,6 +321,215 @@ export default class TableRenderer {
     }
   }
 
+  /**
+   * 在线模式显式播放一个服务端公开事件。完成回调只触发一次，由控制器据此发送动画回执。
+   */
+  playOnlineEvent(event, onComplete) {
+    if (!event || typeof event.eventSeq !== 'number') return false;
+    if (this.onlinePlayback && this.onlinePlayback.eventSeq === event.eventSeq) return true;
+    const layout = this.lastLayout;
+    const durationByType = {
+      draw: DRAW_FRONT_DURATION_MS,
+      discard: DISCARD_FRONT_DURATION_MS,
+      unclaimed: DISCARD_RESOLVE_DURATION_MS,
+      chi: CHI_COMBO_DURATION_MS,
+      peng: 760,
+      zhao: 820,
+      ta: 820,
+      pass: 560,
+      'accept-takeover': 700,
+      'decline-takeover': 700,
+      hu: 1050,
+      'circle-loss': 1050,
+      'draw-round': 900,
+      settlement: 900,
+    };
+    const duration = durationByType[event.type] || 700;
+    this.onlinePlayback = {
+      eventSeq: event.eventSeq,
+      event,
+      onComplete,
+      endsAt: Date.now() + duration,
+      completed: false,
+    };
+    if (MELD_EVENT_TYPES.indexOf(event.type) >= 0) this.suppressNextMeldEffect = true;
+    if (['hu', 'circle-loss', 'draw-round', 'settlement'].indexOf(event.type) >= 0) this.suppressNextResultEffect = true;
+
+    const heldCard = layout && event.meld && this.animation && this.animation.card
+      && (event.meld.cards || []).some((card) => card.id === this.animation.card.id)
+      ? this.animation.card
+      : null;
+    if (layout && heldCard && typeof event.seat === 'number') {
+      const start = this.animation.end || this.animationEndForSeat(event.seat, layout);
+      this.animation = this.createCardAnimation(
+        `${event.type}:${event.seat}:${heldCard.id}:online:${event.eventSeq}`,
+        heldCard,
+        start,
+        this.claimedAnimationEnd(event.seat, layout),
+        'to-claimed',
+        duration
+      );
+      const point = this.effectPointForSeat(event.seat, layout);
+      this.addTextEffect(ACTION_EFFECT_LABELS[event.type] || '成', point.x, point.y, {
+        tone: event.type,
+        duration,
+      });
+    } else if (layout && event.card && typeof event.seat === 'number') {
+      const priorHold = this.lastDiscardEvent
+        && this.lastDiscardEvent.card
+        && this.lastDiscardEvent.card.id === event.card.id
+        && this.lastDiscardEvent.holdPosition;
+      const start = event.type === 'unclaimed'
+        ? (priorHold || this.animationEndForSeat(event.seat, layout))
+        : this.animationStartForSeat(event.seat, layout);
+      let end = this.animationEndForSeat(event.seat, layout);
+      let stage = 'to-front';
+      let signature = `${event.type}:${event.seat}:${event.card.id}:online:${event.eventSeq}`;
+      if (event.type === 'unclaimed') {
+        end = this.discardAnimationEnd(event.seat, layout);
+        stage = 'to-discard';
+      }
+      this.animation = this.createCardAnimation(signature, event.card, start, end, stage, duration);
+      this.lastEventSignature = `${event.type === 'draw' ? 'draw' : 'discard'}:${event.seat}:${event.card.id}`;
+      if (event.type === 'discard' || event.type === 'unclaimed') {
+        this.lastDiscardEvent = { seat: event.seat, card: event.card, holdPosition: end };
+      }
+    } else if (layout) {
+      const point = this.effectPointForSeat(typeof event.seat === 'number' ? event.seat : 0, layout);
+      const label = ACTION_EFFECT_LABELS[event.actionType]
+        || ACTION_EFFECT_LABELS[event.type]
+        || ({
+          'accept-takeover': '接庄',
+          'decline-takeover': '不接',
+          'circle-loss': '进圈',
+          'draw-round': '流局',
+        })[event.type];
+      if (label) {
+        this.addTextEffect(label, point.x, point.y, { tone: event.actionType || event.type, duration });
+      }
+    }
+    return true;
+  }
+
+  /**
+   * 本人点击响应动作后立即预演，用动作动画遮盖网络等待；不修改权威牌局状态。
+   */
+  playLocalActionPreview(action) {
+    if (!action || !action.type || !this.lastLayout) return false;
+    const durationByType = {
+      chi: CHI_COMBO_DURATION_MS,
+      peng: 760,
+      zhao: 820,
+      ta: 820,
+      hu: 1050,
+      pass: 560,
+      acceptTakeover: 700,
+      declineTakeover: 700,
+      discard: DISCARD_FRONT_DURATION_MS,
+    };
+    const duration = durationByType[action.type] || 700;
+    const point = this.effectPointForSeat(0, this.lastLayout);
+    const label = ACTION_EFFECT_LABELS[action.type]
+      || ({ acceptTakeover: '接庄', declineTakeover: '不接' })[action.type];
+    if (label) this.addTextEffect(label, point.x, point.y, {
+      tone: action.type,
+      duration,
+    });
+
+    if (action.type === 'discard' && action.card) {
+      const handCard = this.previousHandCards.find((region) => region.card && region.card.id === action.card.id);
+      const start = handCard
+        ? { x: handCard.x, y: handCard.y }
+        : this.animationStartForSeat(0, this.lastLayout);
+      this.animation = this.createCardAnimation(
+        `local-preview:discard:${action.card.id}`,
+        action.card,
+        start,
+        this.animationEndForSeat(0, this.lastLayout),
+        'local-preview',
+        duration
+      );
+    } else if (MELD_EVENT_TYPES.indexOf(action.type) >= 0 && action.card) {
+      const start = this.animation && this.animation.card && this.animation.card.id === action.card.id
+        ? (this.animation.end || this.animationEndForSeat(0, this.lastLayout))
+        : this.animationEndForSeat(typeof action.sourceSeat === 'number' ? action.sourceSeat : 0, this.lastLayout);
+      this.animation = this.createCardAnimation(
+        `local-preview:${action.type}:${action.card.id}`,
+        action.card,
+        start,
+        this.claimedAnimationEnd(0, this.lastLayout),
+        'local-preview',
+        duration
+      );
+    }
+    this.localActionPreview = {
+      type: action.type,
+      cardId: action.card ? action.card.id : null,
+      startedAt: Date.now(),
+      endsAt: Date.now() + duration,
+      confirmedEvent: null,
+      onComplete: null,
+      completed: false,
+    };
+    return true;
+  }
+
+  /** 服务端确认与本地预演为同一动作时，沿用当前动画并在完成后通知控制器。 */
+  confirmLocalActionPreview(event, onComplete) {
+    const preview = this.localActionPreview;
+    if (!preview || !event || preview.type !== event.type || event.seat !== 0) return false;
+    if (MELD_EVENT_TYPES.indexOf(event.type) >= 0) this.suppressNextMeldEffect = true;
+    if (event.type === 'hu') this.suppressNextResultEffect = true;
+    if (event.type === 'discard' && event.card) {
+      this.lastEventSignature = `discard:${event.seat}:${event.card.id}`;
+      this.lastDiscardEvent = {
+        seat: event.seat,
+        card: event.card,
+        holdPosition: this.animation
+          ? this.animation.end
+          : this.animationEndForSeat(event.seat, this.lastLayout),
+      };
+    }
+    preview.confirmedEvent = event;
+    preview.onComplete = onComplete;
+    if (preview.completed && typeof onComplete === 'function') onComplete(event);
+    return true;
+  }
+
+  cancelLocalActionPreview() {
+    this.localActionPreview = null;
+    if (this.animation && this.animation.stage === 'local-preview') this.animation = null;
+  }
+
+  updateLocalActionPreview() {
+    const preview = this.localActionPreview;
+    if (!preview || preview.completed || Date.now() < preview.endsAt) return;
+    preview.completed = true;
+    if (this.animation && this.animation.stage === 'local-preview') this.animation = null;
+    if (preview.confirmedEvent && typeof preview.onComplete === 'function') {
+      preview.onComplete(preview.confirmedEvent);
+    }
+  }
+
+  updateOnlinePlayback() {
+    const playback = this.onlinePlayback;
+    if (!playback || playback.completed || Date.now() < playback.endsAt) return;
+    playback.completed = true;
+    const callback = playback.onComplete;
+    if (typeof callback === 'function') callback(playback.event);
+  }
+
+  isOnlineEventPlaying() {
+    return Boolean(this.onlinePlayback && !this.onlinePlayback.completed);
+  }
+
+  releaseOnlineEvent(eventSeq) {
+    if (!this.onlinePlayback) return;
+    if (typeof eventSeq === 'number' && this.onlinePlayback.eventSeq !== eventSeq) return;
+    this.onlinePlayback = null;
+    if (this.animation && this.animation.stage === 'hold-online') this.animation = null;
+  }
+
   isWinResult(state) {
     return state.phase === 'result' && state.result && state.result.type === 'win';
   }
@@ -371,11 +588,12 @@ export default class TableRenderer {
 
   updateMeldEffects(state, layout, now) {
     const current = {};
+    const suppress = this.suppressNextMeldEffect;
     (state.seats || []).forEach((seat, seatIndex) => {
       (seat.melds || []).forEach((meld) => {
         const signature = this.meldSignature(seatIndex, meld);
         current[signature] = true;
-        if (this.lastMeldSignatures && !this.lastMeldSignatures[signature]) {
+        if (!suppress && this.lastMeldSignatures && !this.lastMeldSignatures[signature]) {
           const point = this.effectPointForSeat(seatIndex, layout);
           this.addTextEffect(meld.label || ACTION_EFFECT_LABELS[meld.type] || '成', point.x, point.y, {
             tone: meld.type,
@@ -388,12 +606,13 @@ export default class TableRenderer {
       });
     });
     this.lastMeldSignatures = current;
+    this.suppressNextMeldEffect = false;
   }
 
   updateResultEffects(state, layout, now) {
     const result = state.result;
     const signature = result ? `${result.type}:${result.winner}:${result.loser}:${state.round}` : '';
-    if (signature && signature !== this.lastResultEffectSignature && result.type === 'win') {
+    if (!this.suppressNextResultEffect && signature && signature !== this.lastResultEffectSignature && result.type === 'win') {
       const winner = typeof result.winner === 'number' ? result.winner : state.humanSeat;
       const point = this.effectPointForSeat(winner, layout);
       this.addTextEffect('胡', point.x, point.y, {
@@ -404,6 +623,7 @@ export default class TableRenderer {
       });
     }
     this.lastResultEffectSignature = signature;
+    this.suppressNextResultEffect = false;
   }
 
   meldSignature(seatIndex, meld) {
@@ -766,6 +986,18 @@ export default class TableRenderer {
       if (this.lastDiscardEvent) this.lastDiscardEvent.holdPosition = this.animation.end;
       return;
     }
+    if (
+      this.animation.stage === 'to-front'
+      && this.onlinePlayback
+      && this.onlinePlayback.event
+      && this.onlinePlayback.event.card
+      && this.onlinePlayback.event.card.id === this.animation.card.id
+    ) {
+      this.animation.stage = 'hold-online';
+      this.animation.start = this.animation.end;
+      return;
+    }
+    if (this.animation.stage === 'hold-online') return;
 
     if (['to-discard', 'to-claimed'].indexOf(this.animation.stage) >= 0) {
       this.lastDiscardEvent = null;
@@ -881,6 +1113,11 @@ export default class TableRenderer {
 
   drawPlayerHand(ctx, state, layout) {
     layout.handCards.forEach((region) => {
+      if (
+        this.localActionPreview
+        && this.localActionPreview.type === 'discard'
+        && this.localActionPreview.cardId === region.card.id
+      ) return;
       const selected = state.selectedCardId === region.card.id;
       this.drawCard(ctx, region.card, region.x, region.y, region.width, region.height, true, selected, 'small');
     });
