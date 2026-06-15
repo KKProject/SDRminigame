@@ -6,6 +6,12 @@ const ROOM_SESSION_KEY = 'huapai-online-room';
 const RECONNECT_DELAY_MS = 1500;
 const HEARTBEAT_INTERVAL_MS = 20000;
 
+function animationActionType(type) {
+  if (type === 'acceptTakeover') return 'accept-takeover';
+  if (type === 'declineTakeover') return 'decline-takeover';
+  return type;
+}
+
 function readRoomSession() {
   try {
     return wx.getStorageSync ? (wx.getStorageSync(ROOM_SESSION_KEY) || null) : null;
@@ -173,10 +179,11 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
 }
 
 export default class OnlineController {
-  constructor(databus, renderer, music) {
+  constructor(databus, renderer, music, animator = null) {
     this.databus = databus;
     this.renderer = renderer;
     this.music = music;
+    this.animator = animator || renderer.animationController || renderer;
     this.roomId = null;
     this.mySeat = 0;
     this.version = -1;
@@ -321,7 +328,7 @@ export default class OnlineController {
   consumeAnimationState(animation = {}) {
     const event = rotatePublicEvent(animation.currentEvent, this.mySeat);
     if (!event) {
-      if (this.renderer.releaseOnlineEvent) this.renderer.releaseOnlineEvent();
+      if (this.animator.releaseOnlineEvent) this.animator.releaseOnlineEvent();
       this.currentEvent = null;
       this.isAnimating = false;
       return;
@@ -351,14 +358,14 @@ export default class OnlineController {
     this.isAnimating = true;
     const usesLocalPreview = this.localActionPreviewType === event.type
       && event.seat === 0
-      && this.renderer.confirmLocalActionPreview
-      && this.renderer.confirmLocalActionPreview(event, () => this.finishAnimation(event.eventSeq));
+      && this.animator.confirmLocalActionPreview
+      && this.animator.confirmLocalActionPreview(event, () => this.finishAnimation(event.eventSeq));
     if (!usesLocalPreview) {
       this.cancelLocalActionPreview();
       this.playEventSound(event);
     }
-    const started = usesLocalPreview || (this.renderer.playOnlineEvent
-      ? this.renderer.playOnlineEvent(event, () => this.finishAnimation(event.eventSeq))
+    const started = usesLocalPreview || (this.animator.playOnlineEvent
+      ? this.animator.playOnlineEvent(event, () => this.finishAnimation(event.eventSeq))
       : false);
     if (!started) this.finishAnimation(event.eventSeq);
   }
@@ -384,19 +391,19 @@ export default class OnlineController {
 
   startLocalActionPreview(action) {
     if (!action || !action.type) return;
-    this.localActionPreviewType = action.type;
+    this.localActionPreviewType = animationActionType(action.type);
     if (this.music && action.type === 'discard' && action.card) {
       this.music.playCardVoice(action.card);
     } else if (this.music && ['chi', 'peng', 'zhao', 'ta', 'hu'].indexOf(action.type) >= 0) {
       this.music.playActionVoice(action.type);
     }
-    if (this.renderer.playLocalActionPreview) this.renderer.playLocalActionPreview(action);
+    if (this.animator.playLocalActionPreview) this.animator.playLocalActionPreview(action);
   }
 
   cancelLocalActionPreview() {
     if (!this.localActionPreviewType) return;
     this.localActionPreviewType = null;
-    if (this.renderer.cancelLocalActionPreview) this.renderer.cancelLocalActionPreview();
+    if (this.animator.cancelLocalActionPreview) this.animator.cancelLocalActionPreview();
   }
 
   async sendAnimationAck(eventSeq) {

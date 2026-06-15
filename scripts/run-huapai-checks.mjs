@@ -20,6 +20,15 @@ for (const file of files) {
   const source = await readFile(join(sourceDir, `${file}.js`), 'utf8');
   await writeFile(join(tempDir, `${file}.mjs`), rewriteImports(source));
 }
+await mkdir(join(tempDir, 'animation'), { recursive: true });
+for (const file of ['manager', 'presets', 'targets', 'state-controller', 'controller']) {
+  const source = await readFile(join(sourceDir, 'animation', `${file}.js`), 'utf8');
+  await writeFile(
+    join(tempDir, 'animation', `${file}.mjs`),
+    rewriteImports(source).replace("from '../../vendor/tween/tween.esm'", "from '../tween.mjs'")
+  );
+}
+await writeFile(join(tempDir, 'tween.mjs'), await readFile(join(root, 'js/vendor/tween/tween.esm.js'), 'utf8'));
 await writeFile(join(tempDir, 'render-runtime.mjs'), await readFile(join(root, 'js/render.js'), 'utf8'));
 await writeFile(join(tempDir, 'render-stub.mjs'), [
   'export const SCREEN_WIDTH = 375;',
@@ -1183,142 +1192,6 @@ const animationSize = directionRenderer.animationCardSize(discardResolutionLayou
 if (Math.abs((animationSize.width / animationSize.height) - (88 / 307)) > 0.01) {
   throw new Error('big-card animation should preserve the big atlas card ratio');
 }
-let animatedCards = [];
-const easingRenderer = new TableRenderer({
-  getImage() { return null; },
-  getCardSprite() { return null; },
-  getCardBackSprite() { return null; },
-});
-easingRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size, options) => {
-  animatedCards.push({ card, x, y, cardWidth, cardHeight, size, options });
-};
-easingRenderer.animation = easingRenderer.createCardAnimation(
-  'draw-test',
-  renderDeck[0],
-  { x: 0, y: 0 },
-  { x: 100, y: 0 },
-  'to-front',
-  1000
-);
-easingRenderer.animation.startedAt -= 500;
-easingRenderer.drawCardAnimation({}, discardResolutionLayout);
-if (
-  animatedCards.length !== 1
-  || animatedCards[0].x <= 50
-  || animatedCards[0].cardWidth <= animationSize.width
-  || !animatedCards[0].options
-  || !animatedCards[0].options.glow
-) {
-  throw new Error('card animation should ease forward, scale up mid-flight and draw with glow');
-}
-animatedCards = [];
-easingRenderer.animation.startedAt -= 500;
-easingRenderer.drawCardAnimation({}, discardResolutionLayout);
-if (
-  animatedCards.length !== 1
-  || Math.abs(animatedCards[0].cardWidth - animationSize.width) > 0.01
-  || Math.abs(animatedCards[0].cardHeight - animationSize.height) > 0.01
-  || easingRenderer.animation
-) {
-  throw new Error('card animation should settle back to the normal big-card size and clear itself');
-}
-const preemptRenderer = new TableRenderer({
-  getImage() { return null; },
-  getCardSprite() { return null; },
-  getCardBackSprite() { return null; },
-});
-const staleCard = renderDeck[20];
-const activeResponseCard = renderDeck[21];
-preemptRenderer.animation = preemptRenderer.createCardAnimation(
-  `discard-zone:1:${staleCard.id}`,
-  staleCard,
-  preemptRenderer.animationEndForSeat(1, discardResolutionLayout),
-  preemptRenderer.discardAnimationEnd(1, discardResolutionLayout),
-  'to-discard',
-  500
-);
-preemptRenderer.lastDiscardEvent = {
-  seat: 1,
-  card: staleCard,
-  holdPosition: preemptRenderer.animationEndForSeat(1, discardResolutionLayout),
-};
-preemptRenderer.lastEventSignature = `discard:1:${staleCard.id}`;
-preemptRenderer.updateAnimation({
-  ...layoutState,
-  recentDiscard: { seat: 2, card: activeResponseCard },
-  pendingActions: [{ type: 'peng', seat: 0 }],
-  playerActions: [{ type: 'peng', seat: 0 }, { type: 'pass', seat: 0 }],
-  drawnCard: null,
-  currentSeat: 0,
-  phase: PHASES.HUMAN_RESPONSE,
-}, discardResolutionLayout);
-if (
-  !preemptRenderer.animation
-  || preemptRenderer.animation.card.id !== activeResponseCard.id
-  || preemptRenderer.lastDiscardEvent.card.id !== activeResponseCard.id
-) {
-  throw new Error('current response card should preempt stale resolving animations');
-}
-const drawnResponseCard = renderDeck[22];
-const drawPreemptRenderer = new TableRenderer({
-  getImage() { return null; },
-  getCardSprite() { return null; },
-  getCardBackSprite() { return null; },
-});
-drawPreemptRenderer.animation = drawPreemptRenderer.createCardAnimation(
-  `discard-zone:1:${staleCard.id}`,
-  staleCard,
-  drawPreemptRenderer.animationEndForSeat(1, discardResolutionLayout),
-  drawPreemptRenderer.discardAnimationEnd(1, discardResolutionLayout),
-  'to-discard',
-  500
-);
-drawPreemptRenderer.lastDiscardEvent = {
-  seat: 1,
-  card: staleCard,
-  holdPosition: drawPreemptRenderer.animationEndForSeat(1, discardResolutionLayout),
-};
-drawPreemptRenderer.lastEventSignature = `discard:1:${staleCard.id}`;
-const drawnResponseState = {
-  ...layoutState,
-  recentDiscard: null,
-  drawnCard: drawnResponseCard,
-  currentSeat: 0,
-  pendingActions: [{ type: 'zhao', seat: 0, card: drawnResponseCard }],
-  playerActions: [{ type: 'zhao', seat: 0, card: drawnResponseCard }, { type: 'pass', seat: 0, label: '过' }],
-  phase: PHASES.HUMAN_RESPONSE,
-};
-drawPreemptRenderer.updateAnimation(drawnResponseState, discardResolutionLayout);
-if (!drawPreemptRenderer.animation || drawPreemptRenderer.animation.card.id !== drawnResponseCard.id) {
-  throw new Error('drawn response card should preempt stale resolving animations');
-}
-drawPreemptRenderer.animation.startedAt -= drawPreemptRenderer.animation.duration;
-drawPreemptRenderer.drawCard = () => {};
-drawPreemptRenderer.drawCardAnimation({}, discardResolutionLayout);
-let heldDraws = [];
-drawPreemptRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size, options) => {
-  heldDraws.push({ card, size, options });
-};
-drawPreemptRenderer.drawHeldDrawFallback({}, drawnResponseState, discardResolutionLayout);
-if (
-  heldDraws.length !== 1
-  || heldDraws[0].card.id !== drawnResponseCard.id
-  || heldDraws[0].size !== 'big'
-  || !heldDraws[0].options.glow
-) {
-  throw new Error('drawn response card should remain visible at the player front while action prompt is open');
-}
-let staleDiscardDraws = [];
-drawPreemptRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size, options) => {
-  staleDiscardDraws.push({ card, size, options });
-};
-drawPreemptRenderer.drawHeldDiscardFallback({}, {
-  ...drawnResponseState,
-  recentDiscard: { seat: 1, card: staleCard },
-}, discardResolutionLayout);
-if (staleDiscardDraws.length) {
-  throw new Error('stale recent discard should not remain visible while a drawn response card prompt is open');
-}
 if (!directionRenderer.shouldHoldRecentDiscard({
   ...layoutState,
   recentDiscard: { seat: 1, card: renderDeck[24] },
@@ -1342,11 +1215,8 @@ const pendingDiscardRenderer = new TableRenderer({
   getCardSprite() { return null; },
   getCardBackSprite() { return null; },
 });
-pendingDiscardRenderer.updateAnimation(pendingDiscardState, discardResolutionLayout);
-pendingDiscardRenderer.animation.startedAt -= pendingDiscardRenderer.animation.duration;
-pendingDiscardRenderer.drawCard = () => {};
-pendingDiscardRenderer.drawCardAnimation({}, discardResolutionLayout);
-if (pendingDiscardRenderer.animation.stage !== 'hold-discard') {
+pendingDiscardRenderer.stateAnimationController.observe(pendingDiscardState, discardResolutionLayout);
+if (!pendingDiscardRenderer.managedCardVisual(pendingDiscardCard.id)) {
   throw new Error('pending human response should hold the discard at the player front');
 }
 if (!pendingDiscardRenderer.shouldHideDiscardMini(pendingDiscardState, 1)) {
@@ -1374,9 +1244,10 @@ const claimState = {
   currentSeat: 2,
 };
 claimState.seats = createSeats(DEFAULT_RULES);
-claimState.seats[0].melds = [{ id: 'claim-test', cards: [pendingDiscardCard] }];
-pendingDiscardRenderer.updateAnimation(claimState, discardResolutionLayout);
-if (pendingDiscardRenderer.animation.stage !== 'to-claimed' || pendingDiscardRenderer.animation.card.id !== pendingDiscardCard.id) {
+claimState.seats[0].melds = [{ id: 'claim-test', type: 'peng', cards: [pendingDiscardCard] }];
+pendingDiscardRenderer.stateAnimationController.observe(claimState, discardResolutionLayout);
+const claimedVisual = pendingDiscardRenderer.managedCardVisual(pendingDiscardCard.id);
+if (!claimedVisual || claimedVisual.stage !== 'peng') {
   throw new Error('claimed discard should resolve to the claiming player before later draw animations');
 }
 if (pendingDiscardRenderer.resolvingClaimedMiniId(claimState, 0) !== pendingDiscardCard.id) {
@@ -1387,35 +1258,22 @@ const passRenderer = new TableRenderer({
   getCardSprite() { return null; },
   getCardBackSprite() { return null; },
 });
-passRenderer.animation = passRenderer.createCardAnimation(
-  `discard:1:${pendingDiscardCard.id}`,
-  pendingDiscardCard,
-  passRenderer.animationEndForSeat(1, discardResolutionLayout),
-  passRenderer.animationEndForSeat(1, discardResolutionLayout),
-  'hold-discard',
-  420
-);
-passRenderer.lastDiscardEvent = {
-  seat: 1,
-  card: pendingDiscardCard,
-  holdPosition: passRenderer.animationEndForSeat(1, discardResolutionLayout),
-};
 const passState = {
   ...pendingDiscardState,
   pendingActions: [],
   playerActions: [],
-  drawnCard: renderDeck[31],
+  recentDiscard: { seat: 1, card: pendingDiscardCard, unclaimed: true, resolved: true },
+  drawnCard: null,
   currentSeat: 2,
 };
-passRenderer.updateAnimation(passState, discardResolutionLayout);
-if (passRenderer.animation.stage !== 'to-discard' || passRenderer.animation.card.id !== pendingDiscardCard.id) {
+passRenderer.stateAnimationController.observe(pendingDiscardState, discardResolutionLayout);
+passRenderer.stateAnimationController.observe(passState, discardResolutionLayout);
+const passedVisual = passRenderer.managedCardVisual(pendingDiscardCard.id);
+if (!passedVisual || passedVisual.stage !== 'unclaimed') {
   throw new Error('passed discard should resolve to the discarder area before later draw animations');
 }
 if (passRenderer.resolvingDiscardMiniId(1) !== pendingDiscardCard.id) {
   throw new Error('discard mini card should stay hidden until the discard animation completes');
-}
-if (!passRenderer.effects.find((effect) => effect.kind === 'text' && effect.label === '过')) {
-  throw new Error('passed discard should create a short pass text effect');
 }
 
 const effectRenderer = new TableRenderer({
@@ -1424,17 +1282,17 @@ const effectRenderer = new TableRenderer({
   getCardBackSprite() { return null; },
 });
 const effectCtx = createFakeRenderContext();
-effectRenderer.addTextEffect('碰', 120, 80, { startedAt: Date.now() - 80 });
-effectRenderer.drawEffects(effectCtx, discardResolutionLayout);
+effectRenderer.addTextEffect('碰', 120, 80);
+effectRenderer.animationManager.update(0);
+effectRenderer.drawManagedAnimations(effectCtx, discardResolutionLayout);
 if (
   !effectCtx.calls.find((call) => call[0] === 'strokeText' && call[1][0] === '碰')
   || !effectCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === '碰')
 ) {
   throw new Error('action text effect should draw stroke and fill text');
 }
-effectRenderer.effects[0].startedAt -= effectRenderer.effects[0].duration;
-effectRenderer.updateEffects({ ...layoutState, seats: createSeats(DEFAULT_RULES), result: null }, discardResolutionLayout);
-if (effectRenderer.effects.length) {
+for (let time = 0; time <= 1200; time += 50) effectRenderer.animationManager.update(time);
+if (effectRenderer.animationManager.getVisualState().some((visual) => visual.kind === 'text')) {
   throw new Error('expired text effects should be cleaned up');
 }
 
@@ -1448,30 +1306,20 @@ resultEffectRenderer.updateResultEffects({
   result: { type: 'win', winner: 0 },
   round: 9,
 }, discardResolutionLayout, Date.now());
-if (!resultEffectRenderer.effects.find((effect) => effect.label === '胡' && effect.fontSize > 70)) {
+if (!resultEffectRenderer.animationManager.getVisualState().find((effect) => effect.label === '胡' && effect.fontSize > 70)) {
   throw new Error('win result should create a prominent hu text effect');
 }
-resultEffectRenderer.animation = resultEffectRenderer.createCardAnimation(
-  `discard-zone:1:${pendingDiscardCard.id}`,
-  pendingDiscardCard,
-  resultEffectRenderer.animationEndForSeat(1, discardResolutionLayout),
-  resultEffectRenderer.discardAnimationEnd(1, discardResolutionLayout),
-  'to-discard',
-  500
-);
-resultEffectRenderer.lastDiscardEvent = {
-  seat: 1,
-  card: pendingDiscardCard,
-  holdPosition: resultEffectRenderer.animationEndForSeat(1, discardResolutionLayout),
-};
-resultEffectRenderer.comboAnimations = [{ cards: [pendingDiscardCard], startedAt: Date.now(), duration: 500 }];
-resultEffectRenderer.updateAnimation({
+resultEffectRenderer.stateAnimationController.observe({
+  ...layoutState,
+  recentDiscard: { seat: 1, card: pendingDiscardCard },
+}, discardResolutionLayout);
+resultEffectRenderer.stateAnimationController.observe({
   ...layoutState,
   phase: PHASES.RESULT,
   result: { type: 'win', winner: 0 },
   recentDiscard: { seat: 1, card: pendingDiscardCard },
 }, discardResolutionLayout);
-if (resultEffectRenderer.animation || resultEffectRenderer.lastDiscardEvent || resultEffectRenderer.comboAnimations.length) {
+if (resultEffectRenderer.animationManager.getVisualState().length || resultEffectRenderer.lastDiscardEvent) {
   throw new Error('win result should clear moving card animations and prevent later card motion');
 }
 
@@ -1576,8 +1424,7 @@ const comboState = {
 comboState.seats[0].melds = [{ id: 'combo-test', type: 'chi', label: '吃', cards: comboCards }];
 comboRenderer.updateMeldEffects(comboState, discardResolutionLayout, Date.now());
 if (
-  comboRenderer.comboAnimations.length !== 1
-  || comboRenderer.comboAnimations[0].cards.length !== 3
+  comboRenderer.animationManager.getVisualState().filter((visual) => visual.stage === 'chi-combo').length !== 3
   || comboRenderer.resolvingClaimedMiniIds(comboState, 0).length !== 3
 ) {
   throw new Error('chi meld should create a three-card combo animation and hide all moving mini cards');
@@ -1587,7 +1434,7 @@ let comboDraws = [];
 comboRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size, options) => {
   comboDraws.push({ card, options, size });
 };
-comboRenderer.drawEffects(comboCtx, discardResolutionLayout);
+comboRenderer.drawManagedAnimations(comboCtx, discardResolutionLayout);
 if (comboDraws.length !== 3 || comboDraws.some((draw) => draw.size !== 'big' || !draw.options.glow)) {
   throw new Error('chi combo animation should draw all grouped cards as glowing big cards');
 }
@@ -1603,9 +1450,8 @@ fallbackComboRenderer.lastDiscardEvent = {
 };
 fallbackComboRenderer.createChiComboAnimation(0, { type: 'chi', cards: comboCards }, discardResolutionLayout, Date.now());
 if (
-  fallbackComboRenderer.comboAnimations.length !== 1
-  || fallbackComboRenderer.comboAnimations[0].cards.length !== 1
-  || fallbackComboRenderer.comboAnimations[0].cards[0].id !== comboCards[2].id
+  fallbackComboRenderer.animationManager.getVisualState().filter((visual) => visual.stage === 'chi-combo').length !== 1
+  || fallbackComboRenderer.animationManager.getVisualState().find((visual) => visual.stage === 'chi-combo').card.id !== comboCards[2].id
 ) {
   throw new Error('chi combo animation should fall back to only the incoming card when source hand positions are unavailable');
 }
@@ -1642,14 +1488,9 @@ if (fakeCtx.calls.find((call) => call[0] === 'createLinearGradient')) {
 if (fakeCtx.calls.find((call) => call[0] === 'fillRect')) {
   throw new Error('renderer should not tint or cover the background image during normal play');
 }
-if (!renderer.animation || renderer.animation.card.id !== renderDeck[24].id) {
+const inferredDiscardVisual = renderer.animationManager.getVisualState().find((visual) => visual.kind === 'card');
+if (!inferredDiscardVisual || inferredDiscardVisual.card.id !== renderDeck[24].id) {
   throw new Error('renderer should create a big-card animation for recent discard');
-}
-if (
-  renderer.animation.start.x === renderer.animation.end.x
-  && renderer.animation.start.y === renderer.animation.end.y
-) {
-  throw new Error('card animation should have distinct movement endpoints');
 }
 
 const onlineRenderer = new TableRenderer({
@@ -1659,14 +1500,11 @@ const onlineRenderer = new TableRenderer({
 });
 onlineRenderer.lastLayout = renderer.lastLayout;
 const onlineIncoming = renderDeck[25];
-onlineRenderer.animation = onlineRenderer.createCardAnimation(
-  'held-online-card',
-  onlineIncoming,
-  { x: 100, y: 100 },
-  { x: 180, y: 120 },
-  'hold-online',
-  1
-);
+onlineRenderer.lastDiscardEvent = {
+  seat: 3,
+  card: onlineIncoming,
+  holdPosition: { x: 180, y: 120 },
+};
 let onlineCompletionCount = 0;
 const onlineMeldEvent = {
   eventSeq: 11,
@@ -1674,46 +1512,43 @@ const onlineMeldEvent = {
   seat: 1,
   meld: { id: 'online-peng', type: 'peng', cards: [onlineIncoming] },
 };
-if (!onlineRenderer.playOnlineEvent(onlineMeldEvent, () => { onlineCompletionCount += 1; })) {
+if (!onlineRenderer.animationController.playOnlineEvent(onlineMeldEvent, () => { onlineCompletionCount += 1; })) {
   throw new Error('renderer should accept explicit online events');
 }
-if (!onlineRenderer.animation || onlineRenderer.animation.stage !== 'to-claimed') {
+const onlineMeldVisual = onlineRenderer.animationManager.getVisualState().find((visual) => visual.kind === 'card');
+if (!onlineMeldVisual || onlineMeldVisual.stage !== 'peng') {
   throw new Error('online chi/peng/zhao/ta events should move the held response card to the claimed area');
 }
-onlineRenderer.playOnlineEvent(onlineMeldEvent, () => { onlineCompletionCount += 100; });
-onlineRenderer.onlinePlayback.endsAt = 0;
-onlineRenderer.updateOnlinePlayback();
-onlineRenderer.updateOnlinePlayback();
+onlineRenderer.animationController.playOnlineEvent(onlineMeldEvent, () => { onlineCompletionCount += 100; });
+for (let time = 0; time <= 2000; time += 50) onlineRenderer.animationManager.update(time);
 if (onlineCompletionCount !== 1) {
   throw new Error('an online event completion callback should run exactly once');
 }
-onlineRenderer.releaseOnlineEvent(11);
-if (onlineRenderer.onlinePlayback) {
+onlineRenderer.animationController.releaseOnlineEvent(11);
+if (onlineRenderer.animationController.onlinePlayback) {
   throw new Error('renderer should release a completed online event before the next event');
 }
 let localPreviewCompleted = 0;
-onlineRenderer.playLocalActionPreview({
+onlineRenderer.animationController.playLocalActionPreview({
   type: 'peng',
   seat: 0,
   sourceSeat: 1,
   card: onlineIncoming,
 });
-if (!onlineRenderer.localActionPreview || !onlineRenderer.animation || onlineRenderer.animation.stage !== 'local-preview') {
+if (!onlineRenderer.animationController.localActionPreview || !onlineRenderer.animationManager.getVisualState().length) {
   throw new Error('local action preview should begin immediately before the network response arrives');
 }
-if (!onlineRenderer.confirmLocalActionPreview({ eventSeq: 12, type: 'peng', seat: 0 }, () => {
+if (!onlineRenderer.animationController.confirmLocalActionPreview({ eventSeq: 12, type: 'peng', seat: 0 }, () => {
   localPreviewCompleted += 1;
 })) {
   throw new Error('matching authoritative action should attach to the active local preview');
 }
-onlineRenderer.localActionPreview.endsAt = 0;
-onlineRenderer.updateLocalActionPreview();
-onlineRenderer.updateLocalActionPreview();
+for (let time = 2000; time <= 4000; time += 50) onlineRenderer.animationManager.update(time);
 if (localPreviewCompleted !== 1) {
   throw new Error('confirmed local action preview should complete exactly once');
 }
-onlineRenderer.cancelLocalActionPreview();
-if (onlineRenderer.localActionPreview) {
+onlineRenderer.animationController.cancelLocalActionPreview();
+if (onlineRenderer.animationController.localActionPreview) {
   throw new Error('local action preview should be cancellable after rejection or completion');
 }
 onlineRenderer.previousHandCards = [{
@@ -1723,39 +1558,37 @@ onlineRenderer.previousHandCards = [{
   width: 36,
   height: 110,
 }];
-onlineRenderer.playLocalActionPreview({ type: 'discard', seat: 0, card: onlineIncoming });
+onlineRenderer.animationController.playLocalActionPreview({ type: 'discard', seat: 0, card: onlineIncoming });
 if (
-  !onlineRenderer.localActionPreview
-  || onlineRenderer.localActionPreview.cardId !== onlineIncoming.id
-  || !onlineRenderer.animation
-  || onlineRenderer.animation.stage !== 'local-preview'
+  !onlineRenderer.animationController.localActionPreview
+  || onlineRenderer.animationController.localActionPreview.cardId !== onlineIncoming.id
+  || !onlineRenderer.animationManager.getVisualState().find((visual) => visual.kind === 'card')
 ) {
   throw new Error('local discard preview should immediately fly the selected hand card toward the table');
 }
-const localDiscardAnimation = onlineRenderer.animation;
-onlineRenderer.updateAnimation({
+const localDiscardVisual = onlineRenderer.animationManager.getVisualState().find((visual) => visual.kind === 'card');
+onlineRenderer.stateAnimationController.observe({
   phase: 'ai-thinking',
   drawnCard: null,
   recentDiscard: { seat: 0, card: onlineIncoming },
-}, onlineRenderer.lastLayout);
-if (onlineRenderer.animation !== localDiscardAnimation) {
+}, onlineRenderer.lastLayout, Boolean(onlineRenderer.animationController.localActionPreview));
+if (onlineRenderer.animationManager.getVisualState().find((visual) => visual.kind === 'card') !== localDiscardVisual) {
   throw new Error('authoritative discard snapshot must not start a second animation over an active local preview');
 }
-onlineRenderer.confirmLocalActionPreview({
+onlineRenderer.animationController.confirmLocalActionPreview({
   eventSeq: 13,
   type: 'discard',
   seat: 0,
   card: onlineIncoming,
 }, () => {});
-onlineRenderer.localActionPreview.endsAt = 0;
-onlineRenderer.updateLocalActionPreview();
-onlineRenderer.cancelLocalActionPreview();
-onlineRenderer.updateAnimation({
+for (let time = 4000; time <= 6000; time += 50) onlineRenderer.animationManager.update(time);
+onlineRenderer.animationController.cancelLocalActionPreview();
+onlineRenderer.stateAnimationController.observe({
   phase: 'ai-thinking',
   drawnCard: null,
   recentDiscard: { seat: 0, card: onlineIncoming },
 }, onlineRenderer.lastLayout);
-if (onlineRenderer.animation) {
+if (onlineRenderer.animation || onlineRenderer.animationManager.getVisualState().length) {
   throw new Error('confirmed local discard preview must suppress inferred replay after it completes');
 }
 

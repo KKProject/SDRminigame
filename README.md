@@ -29,6 +29,7 @@
 │   │   ├── input.js              // 微信触摸事件路由
 │   │   ├── layout.js             // 响应式牌桌布局
 │   │   ├── renderer.js           // Canvas 牌桌渲染
+│   │   ├── animation             // Tween.js 动画编排、预设与目标解析
 │   │   ├── rules.js              // 默认规则配置
 │   │   └── self-check.js         // 规则自检入口
 │   ├── runtime
@@ -59,5 +60,10 @@
 
 ```bash
 node scripts/run-huapai-checks.mjs
+node scripts/run-animation-checks.mjs
+node scripts/run-online-checks.mjs
+node scripts/run-server-core-checks.mjs
 npx --yes esbuild game.js --bundle --format=iife --platform=browser --outfile=/tmp/sdrminigame-rules-bundle.js
 ```
+
+客户端动画统一由 `js/main.js` 的帧循环更新时间。项目内固定使用 Tween.js 25.0.0 的 ESM 发布文件，位于 `js/vendor/tween/`，许可证为 MIT；动画维护边界见 `js/game/animation/README.md`。

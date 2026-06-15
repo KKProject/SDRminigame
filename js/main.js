@@ -49,7 +49,7 @@ export default class Main {
   startOnline(profile = {}) {
     if (this.online && this.online.starting) return;
     this.menu.setBusy(true);
-    this.online = new OnlineController(GameGlobal.databus, this.renderer, GameGlobal.musicManager);
+    this.online = new OnlineController(GameGlobal.databus, this.renderer, GameGlobal.musicManager, this.renderer.animationController);
     this.online.onStatus = (text) => this.menu.setStatus(text);
     this.online.startSoloOnline(profile)
       .then(() => {
@@ -78,7 +78,8 @@ export default class Main {
     }
   }
 
-  loop() {
+  loop(time) {
+    this.renderer.animationController.update(time);
     this.render();
     this.aniId = requestAnimationFrame(this.loop.bind(this));
   }

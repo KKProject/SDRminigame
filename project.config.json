@@ -78,6 +78,10 @@
       },
       {
         "type": "folder",
+        "value": ".tmp-animation-checks"
+      },
+      {
+        "type": "folder",
         "value": "openspec"
       },
       {

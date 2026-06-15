@@ -488,8 +488,12 @@ if (/\.doc\([^)]*\)\.set\(\{\s*data:\s*\{\s*_id:/s.test(roomSource)) {
 if (!/async function writeRoomState[\s\S]*?collection\(ROOMS\)\.doc\(roomId\)\.set\(/.test(roomSource)) {
   throw new Error('authoritative room state must use document.set to safely replace null and nested object fields');
 }
-if (!/playOnlineEvent\(event, onComplete\)/.test(await readFile(join(root, 'js/game/renderer.js'), 'utf8'))) {
-  throw new Error('renderer should expose an explicit online event animation API');
+const animationControllerSource = await readFile(join(root, 'js/game/animation/controller.js'), 'utf8');
+if (!/playOnlineEvent\(event, onComplete\)/.test(animationControllerSource)) {
+  throw new Error('animation controller should expose an explicit online event animation API');
+}
+if (/eventSeq|playOnlineEvent/.test(await readFile(join(root, 'js/game/renderer.js'), 'utf8'))) {
+  throw new Error('renderer should not manage online event sequence or animation lifecycle');
 }
 
 await rm(tempDir, { recursive: true, force: true });

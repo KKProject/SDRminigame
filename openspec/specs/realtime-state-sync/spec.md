@@ -76,12 +76,17 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **AND** 服务端 MUST 在重连后允许其继续参与，或在超时后按托管规则处理
 
 ### Requirement: 动画完成回执同步
-系统 SHALL 提供按 OPENID 鉴权且幂等的动画完成回执操作。客户端 MUST 在当前公开事件动画完成后提交对应 `eventSeq`；服务端 MUST 同步当前必需回执名单、已回执名单和回执截止时间。
+系统 SHALL 提供按 OPENID 鉴权且幂等的动画完成回执操作。客户端 MUST 在动画管理器完成当前权威公开事件的全部必需阶段后提交对应 `eventSeq`；本地预演完成、动画开始或中间停留阶段 MUST NOT 被视为权威动画完成。服务端 MUST 同步当前必需回执名单、已回执名单和回执截止时间。
 
 #### Scenario: 客户端动画完成回执
-- **WHEN** 客户端完成当前公开事件动画
+- **WHEN** 动画管理器完成当前权威公开事件的全部必需动画阶段
 - **THEN** 客户端 MUST 提交包含当前 `eventSeq` 的动画完成回执
 - **AND** 服务端 MUST 记录该客户端已完成当前动画
+
+#### Scenario: 本地预演确认后回执
+- **WHEN** 当前权威事件确认了正在播放或已经播放部分阶段的本地预演
+- **THEN** 客户端 MUST 复用该预演并完成权威事件要求的剩余动画阶段
+- **AND** 客户端 MUST 仅在权威动画完成通知触发后提交对应 `eventSeq` 回执
 
 #### Scenario: 非必需客户端不阻塞
 - **WHEN** 客户端在事件发布时已经掉线、托管或不属于当前真人牌桌玩家
@@ -92,4 +97,9 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **WHEN** 客户端提交的动画回执序号早于当前待确认事件
 - **THEN** 服务端 MUST 幂等忽略该回执
 - **AND** 当前动画等待状态 MUST 保持正确
+
+#### Scenario: 取消动画不得回执
+- **WHEN** 当前动画因权威事件不匹配、状态恢复或场景退出被取消
+- **THEN** 客户端 MUST NOT 因该动画的旧完成回调提交回执
+- **AND** 客户端 MUST 依据最新权威事件决定是否播放并回执
 
