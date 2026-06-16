@@ -213,7 +213,7 @@ export function meldGroupPlan(event, context = {}) {
   const seat = typeof event.seat === 'number' ? event.seat : 0;
   const baseSize = cardSize(layout);
   const center = tableCenter(layout);
-  const stackStep = Math.round(baseSize.height * 0.5);
+  const stackStep = Math.round(baseSize.height * 0.2);
   const groupHeight = baseSize.height + Math.max(0, meld.cards.length - 1) * stackStep;
   const targets = context.meldTargets || claimedMeldTargets(seat, layout, event.meldIndex, meld.cards.length, event.meldCount);
   const visuals = meld.cards.map((card, index) => ({
