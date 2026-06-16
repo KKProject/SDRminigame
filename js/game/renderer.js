@@ -28,6 +28,12 @@ const ACTION_EFFECT_LABELS = {
 };
 const MELD_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta'];
 
+function appearanceTrace(source, payload = {}) {
+  if (typeof console !== 'undefined' && console.warn) {
+    console.warn('[appearance-trace]', source, payload);
+  }
+}
+
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
 }
@@ -86,6 +92,8 @@ export default class TableRenderer {
     this.animationController = new TableAnimationController(this, this.animationManager);
     this.viewportSignature = '';
     this.restoreAnimationsAfterLayout = false;
+    this.fallbackTraceSignature = '';
+    appearanceTrace('trace:boot', { scope: 'renderer' });
   }
 
   setViewport(metrics) {
@@ -124,7 +132,9 @@ export default class TableRenderer {
     }
 
     ctx.clearRect(0, 0, layout.width, layout.height);
-    this.stateAnimationController.observe(state, layout, this.animationController.isBlockingStateAnimation());
+    const blockStateAnimation = this.animationController.isBlockingStateAnimation()
+      || Boolean(state.animationWaiting);
+    this.stateAnimationController.observe(state, layout, blockStateAnimation);
     if (this.stateAnimationController.active && this.stateAnimationController.active.event.card) {
       this.lastDiscardEvent = {
         seat: this.stateAnimationController.active.event.seat,
@@ -577,6 +587,19 @@ export default class TableRenderer {
     if (this.managedCardVisual(state.recentDiscard.card.id)) return;
     const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
     const position = this.animationEndForSeat(state.recentDiscard.seat, layout);
+    this.traceFallbackOnce('fallback:discard', {
+      type: 'discard',
+      seat: state.recentDiscard.seat,
+      cardId: state.recentDiscard.card.id,
+      phase: state.phase,
+      currentSeat: state.currentSeat,
+      animationWaiting: Boolean(state.animationWaiting),
+      pendingActionCount: (state.pendingActions || []).length,
+      playerActionCount: (state.playerActions || []).length,
+      managedSameCardCount: this.animationManager.getVisualState().filter((visual) => (
+        visual.kind === 'card' && visual.card && visual.card.id === state.recentDiscard.card.id
+      )).length,
+    });
     this.drawCard(ctx, state.recentDiscard.card, position.x, position.y, cardWidth, cardHeight, true, false, 'big', {
       glow: true,
       shadow: true,
@@ -588,10 +611,38 @@ export default class TableRenderer {
     if (this.managedCardVisual(state.drawnCard.id)) return;
     const { width: cardWidth, height: cardHeight } = this.animationCardSize(layout);
     const position = this.animationEndForSeat(state.currentSeat, layout);
+    this.traceFallbackOnce('fallback:draw', {
+      type: 'draw',
+      seat: state.currentSeat,
+      cardId: state.drawnCard.id,
+      sourceSeat: state.appearingCard && state.appearingCard.sourceSeat,
+      phase: state.phase,
+      animationWaiting: Boolean(state.animationWaiting),
+      pendingActionCount: (state.pendingActions || []).length,
+      playerActionCount: (state.playerActions || []).length,
+      managedSameCardCount: this.animationManager.getVisualState().filter((visual) => (
+        visual.kind === 'card' && visual.card && visual.card.id === state.drawnCard.id
+      )).length,
+    });
     this.drawCard(ctx, state.drawnCard, position.x, position.y, cardWidth, cardHeight, true, false, 'big', {
       glow: true,
       shadow: true,
     });
+  }
+
+  traceFallbackOnce(source, payload) {
+    const signature = [
+      source,
+      payload.cardId || '',
+      payload.seat,
+      payload.phase || '',
+      payload.animationWaiting ? 'waiting' : 'ready',
+      payload.pendingActionCount || 0,
+      payload.playerActionCount || 0,
+    ].join(':');
+    if (signature === this.fallbackTraceSignature) return;
+    this.fallbackTraceSignature = signature;
+    appearanceTrace(source, payload);
   }
 
   managedCardVisual(cardId) {

@@ -189,3 +189,106 @@ TBD - created by archiving change refactor-tween-animation-system. Update Purpos
 - **THEN** 客户端 MUST 直接恢复正确静态牌面
 - **AND** 客户端 MAY 使用明确标记的恢复动画，但 MUST NOT 将其当作正常动作动画重复回执
 
+### Requirement: 在线待响应出牌出现动画唯一
+在线权威出牌事件处于动画等待或响应窗口期间时，客户端 SHALL 使用该权威事件作为出牌出现动画的唯一正常播放入口；状态观察补偿入口 MUST NOT 为同一 `recentDiscard` 启动额外出现动画。
+
+#### Scenario: 其他玩家出牌且本机需要响应
+- **WHEN** 客户端收到其他玩家的 `discard` 权威事件，且服务端快照包含同一张 `recentDiscard` 与本机可用响应动作
+- **THEN** 客户端 MUST 只播放一次该出牌的出现动画
+- **AND** 客户端 MUST NOT 同时启动 `online:<eventSeq>` 与 `state:discard:<seat>:<cardId>` 两个出现牌动画
+- **AND** 入场动画完成后该牌 MUST 保留在出牌玩家前方等待响应
+
+#### Scenario: 在线动画等待期间状态观察不抢播
+- **WHEN** 服务端快照标记当前存在在线动画等待，且 `recentDiscard` 指向当前权威出牌事件
+- **THEN** 状态观察器 MUST NOT 根据该 `recentDiscard` 播放补偿出现动画
+- **AND** 权威事件入口 MUST 继续负责播放、保留和完成回执
+
+#### Scenario: 无权威事件恢复仍显示牌面
+- **WHEN** 客户端恢复时没有可播放的在线权威事件，但权威状态仍包含需要展示的待响应出牌
+- **THEN** 客户端 MUST 恢复正确牌面显示
+- **AND** 客户端 MAY 使用状态补偿或静态恢复路径
+- **AND** 客户端 MUST NOT 在已播放过同一权威事件后重新播放入场动画
+
+## ADDED Requirements
+
+### Requirement: 出现牌座位归属稳定
+状态驱动的出现牌（抓牌/亮牌）动画 SHALL 使用产生该牌的座位（摸/亮牌人）作为动画座位，并 MUST 在整个响应窗口内保持该座位不变；该动画 MUST NOT 因响应权（`currentSeat`）轮转到其他玩家而重播或迁移到响应方区域。
+
+#### Scenario: 别人摸/亮牌且响应权轮到我
+- **WHEN** 其他玩家摸出/亮出一张需要响应的牌，且响应权随后轮转到本机座位
+- **THEN** 该出现牌动画 MUST 始终停留在摸/亮牌玩家前方
+- **AND** 客户端 MUST NOT 在本机（响应方）区域重新播放该牌的出现动画
+
+#### Scenario: 出牌待响应座位固定
+- **WHEN** 其他玩家打出一张需要响应的牌，且响应权随后轮转到本机座位
+- **THEN** 该出现牌动画 MUST 始终停留在出牌玩家前方
+- **AND** 客户端 MUST NOT 因响应权轮转而迁移或重播该牌
+
+### Requirement: 响应本地预演必须是完整凑牌动画
+在线玩家点击吃、碰、招或踏响应动作时，客户端 SHALL 只在能够构造完整凑牌牌组时播放本地响应预演；客户端 MUST NOT 将响应本地预演退化为单张牌飞行动画。
+
+#### Scenario: 可构造完整吃碰招踏牌组
+- **WHEN** 玩家点击吃、碰、招或踏，且客户端可从当前手牌、当前出现牌和动作描述构造完整凑牌牌组
+- **THEN** 客户端 MUST 播放完整凑牌牌组本地预演
+- **AND** 客户端 MUST NOT 播放额外单张 incoming card 飞行动画
+
+#### Scenario: 无法构造完整响应牌组
+- **WHEN** 玩家点击吃、碰、招或踏，但客户端无法在本地构造完整凑牌牌组
+- **THEN** 客户端 MUST 跳过本地响应预演
+- **AND** 客户端 MUST 等待服务端权威凑牌事件播放完整凑牌动画
+- **AND** 客户端 MUST NOT 播放单张牌 fallback 动画
+
+#### Scenario: 跳过本地预演后权威事件接手
+- **WHEN** 客户端跳过本地响应预演，随后收到匹配的吃、碰、招或踏权威事件
+- **THEN** 客户端 MUST 播放一次该权威事件的完整凑牌牌组动画
+- **AND** 动画完成后 MUST 正常发送动画完成回执
+
+#### Scenario: 本地完整预演被权威事件确认
+- **WHEN** 客户端已经播放完整凑牌本地预演，随后收到匹配的吃、碰、招或踏权威事件
+- **THEN** 客户端 MUST 将权威事件与本地预演对账
+- **AND** 客户端 MUST NOT 重新播放该权威凑牌动画
+
+#### Scenario: 本机完整响应预演接管保留出现牌
+- **WHEN** 本机玩家对一张已出现且可响应的牌点击吃、碰、招或踏，且客户端可构造完整凑牌牌组
+- **THEN** 客户端 MUST 在完整凑牌本地预演开始时移除该出现牌的保留视觉
+- **AND** 状态补偿 MUST NOT 在本地预演完成后再播放该出现牌飞入本机凑牌区的动画
+
+#### Scenario: 待响应权威出现动画接管状态补偿
+- **WHEN** 客户端收到一张需要本机响应的权威摸牌或出牌出现动画，且同一张牌的状态补偿出现动画已经启动
+- **THEN** 客户端 MUST 在权威出现动画开始时移除同一张牌的状态补偿视觉
+- **AND** 客户端 MUST 只保留一次权威出现动画
+- **AND** 动画等待期间客户端 MUST NOT 暴露 `pendingActions` 或 `playerActions` 给渲染层触发额外待响应保留视觉
+
+#### Scenario: 权威出现动画未结束时服务端快照已进入响应窗口
+- **WHEN** 客户端本地正在播放待响应权威摸牌或出牌出现动画，随后收到不再包含 `currentEvent` 的响应窗口快照
+- **THEN** 客户端 MUST NOT 取消本地正在播放的权威出现动画
+- **AND** 客户端 MUST NOT 因响应窗口快照再次播放同一张牌的出现动画
+
+#### Scenario: 缺少 appearanceResolution 的权威出现事件
+- **WHEN** 客户端收到摸牌或出牌权威出现事件，事件未携带 `appearanceResolution`
+- **AND** 当前状态中的 `drawnCard` / `appearingCard` 或未解决 `recentDiscard` 指向同一张牌
+- **THEN** 客户端 MUST 将该权威出现事件按 `await-response` 处理并保留该牌视觉
+- **AND** 客户端 MUST NOT 在响应窗口快照到达后通过状态补偿重播同一张牌的出现动画
+
+#### Scenario: currentEvent 存在时强制视为动画等待
+- **WHEN** 服务端快照包含 `currentEvent`，即使 `animation.waiting` 为 false 或缺失
+- **THEN** 客户端 MUST 将该快照视为动画等待中
+- **AND** 客户端 MUST 暂不暴露 `pendingActions` 或 `playerActions` 给渲染层
+
+### Requirement: 布局尺寸变化时动画安全恢复
+客户端动画系统 SHALL 在稳定屏幕指标变化时停止使用旧布局坐标，并 MUST 清理或恢复所有依赖旧动画目标的临时视觉状态。
+
+#### Scenario: 活动动画期间稳定尺寸变化
+- **WHEN** 抓牌、出牌、归位或凑牌动画播放期间稳定屏幕指标发生变化
+- **THEN** 动画管理器 MUST 取消依赖旧布局坐标的活动 Tween 和旧完成回调
+- **AND** 客户端 MUST 使用新布局与最新牌局状态恢复必要的静态牌或等待牌
+
+#### Scenario: 等待响应牌期间稳定尺寸变化
+- **WHEN** 一张出现牌正在保留等待响应且稳定屏幕指标发生变化
+- **THEN** 客户端 MUST 移除旧坐标下的保留视觉
+- **AND** 客户端 MUST 在新布局对应玩家前方恢复该等待牌
+
+#### Scenario: 重复相同尺寸不影响动画
+- **WHEN** 客户端收到与当前稳定指标相同的重复窗口通知
+- **THEN** 动画管理器 MUST NOT 取消或重启动当前动画
+- **AND** 动画完成通知与音效 MUST NOT 因重复通知再次触发

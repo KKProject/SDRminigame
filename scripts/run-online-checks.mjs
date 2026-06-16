@@ -188,6 +188,8 @@ let completeLocalPreview = null;
 let localPreviewFinished = false;
 let localPreviewAuthority = null;
 let localPreviewAuthorityEvent = null;
+let activeLocalPreview = false;
+let failNextLocalPreview = false;
 const cardSoundEvents = [];
 const actionSoundEvents = [];
 globalThis.wx.cloud.callFunction = (options) => {
@@ -205,6 +207,13 @@ const onlineRenderer = {
     localPreviewFinished = false;
     localPreviewAuthority = null;
     localPreviewAuthorityEvent = null;
+    completeLocalPreview = null;
+    if (failNextLocalPreview) {
+      failNextLocalPreview = false;
+      activeLocalPreview = false;
+      return false;
+    }
+    activeLocalPreview = true;
     completeLocalPreview = () => {
       localPreviewFinished = true;
       if (typeof onLocalComplete === 'function') onLocalComplete(action);
@@ -214,6 +223,7 @@ const onlineRenderer = {
   },
   confirmLocalActionPreview(event, onComplete) {
     localPreviewConfirmCount += 1;
+    if (!activeLocalPreview) return false;
     localPreviewAuthority = onComplete;
     localPreviewAuthorityEvent = event;
     if (localPreviewFinished) onComplete(event);
@@ -221,6 +231,7 @@ const onlineRenderer = {
   },
   cancelLocalActionPreview() {
     localPreviewCancelCount += 1;
+    activeLocalPreview = false;
   },
   releaseOnlineEvent() {},
 };
@@ -316,6 +327,114 @@ onlineController.consumeAnimationState({
 if (actionSoundEvents.join(',') !== 'peng') {
   throw new Error('online action voice should play exactly once for the first consumption of an action event');
 }
+animationPlayCount = 0;
+cardSoundEvents.length = 0;
+onlineController.lastPlayedEventSeq = 8;
+onlineController.lastAckedEventSeq = 8;
+onlineController.isAnimating = false;
+onlineController.currentEvent = null;
+const responseDiscardCard = { id: 'response-discard-card', key: 'shang' };
+const responseDiscardSnapshot = {
+  ok: true,
+  version: 9,
+  yourSeat: 0,
+  public: {
+    seats: [
+      { id: 0, nickName: '我', handCount: 3, melds: [], discards: [] },
+      { id: 1, nickName: '下家', handCount: 2, melds: [], discards: [responseDiscardCard] },
+      { id: 2, nickName: '对家', handCount: 2, melds: [], discards: [] },
+      { id: 3, nickName: '上家', handCount: 2, melds: [], discards: [] },
+    ],
+    phase: 'human-response',
+    currentSeat: 0,
+    dealerSeat: 0,
+    playerActions: [{ type: 'peng', seat: 0, card: responseDiscardCard }, { type: 'pass', seat: 0 }],
+    pendingActions: [{ type: 'peng', seat: 0, card: responseDiscardCard }, { type: 'pass', seat: 0 }],
+    recentDiscard: { seat: 1, card: responseDiscardCard },
+  },
+  private: { hand: [{ id: 'response-hand-card', key: 'da' }] },
+  animation: {
+    waiting: true,
+    selfAcked: false,
+    currentEvent: {
+      eventSeq: 9,
+      type: 'discard',
+      seat: 1,
+      card: responseDiscardCard,
+      appearanceResolution: 'await-response',
+    },
+  },
+};
+if (!onlineController.applyServerSnapshot(responseDiscardSnapshot)) {
+  throw new Error('online controller should apply a response-window discard snapshot');
+}
+if (
+  animationPlayCount !== 1
+  || cardSoundEvents.join(',') !== 'response-discard-card'
+  || !onlineDatabus.animationWaiting
+  || onlineDatabus.pendingActions.length
+  || onlineDatabus.playerActions.length
+) {
+  throw new Error('other-player response discard should schedule exactly one authoritative appearance event while hiding response actions during animation-waiting');
+}
+const looseWaitingCard = { id: 'loose-waiting-card', key: 'ren' };
+const looseWaitingSnapshot = {
+  ...responseDiscardSnapshot,
+  version: 10,
+  public: {
+    ...responseDiscardSnapshot.public,
+    playerActions: [{ type: 'peng', seat: 0, card: looseWaitingCard }, { type: 'pass', seat: 0 }],
+    pendingActions: [{ type: 'peng', seat: 0, card: looseWaitingCard }, { type: 'pass', seat: 0 }],
+    recentDiscard: { seat: 1, card: looseWaitingCard },
+  },
+  animation: {
+    waiting: false,
+    selfAcked: false,
+    currentEvent: {
+      eventSeq: 10,
+      type: 'discard',
+      seat: 1,
+      card: looseWaitingCard,
+      appearanceResolution: 'await-response',
+    },
+  },
+};
+onlineController.isAnimating = false;
+onlineController.lastPlayedEventSeq = 9;
+onlineController.lastAckedEventSeq = 9;
+if (!onlineController.applyServerSnapshot(looseWaitingSnapshot)) {
+  throw new Error('online controller should apply a currentEvent snapshot even when waiting is false');
+}
+if (
+  animationPlayCount !== 2
+  || !onlineDatabus.animationWaiting
+  || onlineDatabus.pendingActions.length
+  || onlineDatabus.playerActions.length
+) {
+  throw new Error('a snapshot with currentEvent should be treated as animation-waiting and hide response actions even if waiting is false');
+}
+let releaseWhileAnimatingCount = 0;
+const activeRenderer = {
+  playOnlineEvent(event, onComplete) {
+    completeAnimation = onComplete;
+    return true;
+  },
+  releaseOnlineEvent() {
+    releaseWhileAnimatingCount += 1;
+  },
+};
+const activeController = new online.default(onlineDatabus, activeRenderer, null);
+activeController.roomId = 'active-animation-room';
+activeController.mySeat = 0;
+activeController.consumeAnimationState({
+  waiting: true,
+  selfAcked: false,
+  currentEvent: { eventSeq: 31, type: 'discard', seat: 1, card: { id: 'active-card' } },
+});
+activeController.consumeAnimationState({ waiting: false, selfAcked: false, currentEvent: null });
+if (!activeController.isAnimating || !activeController.currentEvent || releaseWhileAnimatingCount !== 0) {
+  throw new Error('a no-event snapshot must not cancel an authoritative appearance animation that is still playing locally');
+}
 onlineController.isAnimating = false;
 onlineController.lastPlayedEventSeq = 6;
 onlineController.startLocalActionPreview({ type: 'chi', seat: 0, card: { id: 'chi-card' } });
@@ -344,21 +463,65 @@ if (localPreviewCancelCount !== 1) {
 }
 onlineController.isAnimating = false;
 onlineController.lastPlayedEventSeq = 7;
+onlineController.lastAckedEventSeq = 7;
+const skippedPreviewPlayCount = animationPlayCount;
+const skippedPreviewAckCount = animationAckCount;
+failNextLocalPreview = true;
+onlineController.startLocalActionPreview({ type: 'peng', seat: 0, card: { id: 'skipped-peng' } });
+if (
+  localPreviewCount !== 2
+  || !onlineController.pendingLocalAction
+  || !onlineController.pendingLocalAction.localAnimationCompleted
+) {
+  throw new Error('unconstructable local meld preview should be skipped while keeping pending ownership for authority');
+}
+onlineController.consumeAnimationState({
+  waiting: true,
+  selfAcked: false,
+  currentEvent: {
+    eventSeq: 8,
+    type: 'peng',
+    seat: 0,
+    actingSeat: 0,
+    meld: { cards: [{ id: 'skipped-peng' }, { id: 'skipped-hand-1' }, { id: 'skipped-hand-2' }] },
+  },
+});
+if (localPreviewConfirmCount !== 2 || animationPlayCount !== skippedPreviewPlayCount + 1) {
+  throw new Error('skipped local meld preview should let the authoritative meld event play once');
+}
+if (animationAckCount !== skippedPreviewAckCount) {
+  throw new Error('skipped local preview must wait for the authoritative animation before acknowledging');
+}
+completeAnimation();
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (
+  animationAckCount !== skippedPreviewAckCount + 1
+  || onlineController.lastAckedEventSeq !== 8
+  || localPreviewCancelCount !== 2
+) {
+  throw new Error(`authoritative meld event after a skipped local preview should complete, acknowledge, and clear ownership: ack=${animationAckCount}/${skippedPreviewAckCount + 1}, lastAcked=${onlineController.lastAckedEventSeq}, cancel=${localPreviewCancelCount}`);
+}
+onlineController.isAnimating = false;
+onlineController.lastPlayedEventSeq = 8;
+const localDiscardSoundBaseline = cardSoundEvents.join(',');
+const expectedLocalDiscardSounds = localDiscardSoundBaseline
+  ? `${localDiscardSoundBaseline},local-discard`
+  : 'local-discard';
 onlineController.startLocalActionPreview({ type: 'discard', seat: 0, card: { id: 'local-discard' } });
-if (localPreviewCount !== 2 || cardSoundEvents.join(',') !== 'discarded-card,card-5,local-discard') {
+if (localPreviewCount !== 3 || cardSoundEvents.join(',') !== expectedLocalDiscardSounds) {
   throw new Error('local discard preview should begin with its card voice before the network response arrives');
 }
 completeLocalPreview();
 onlineController.consumeAnimationState({
   waiting: true,
   selfAcked: false,
-  currentEvent: { eventSeq: 8, type: 'discard', seat: 0, card: { id: 'local-discard' } },
+  currentEvent: { eventSeq: 9, type: 'discard', seat: 0, card: { id: 'local-discard' } },
 });
-if (localPreviewConfirmCount !== 2 || cardSoundEvents.join(',') !== 'discarded-card,card-5,local-discard') {
+if (localPreviewConfirmCount !== 3 || cardSoundEvents.join(',') !== expectedLocalDiscardSounds) {
   throw new Error('matching authoritative discard should reuse the local preview without replaying its card voice');
 }
 await new Promise((resolve) => setTimeout(resolve, 0));
-if (localPreviewCancelCount !== 2) {
+if (localPreviewCancelCount !== 3) {
   throw new Error('an already completed local animation should acknowledge immediately after authoritative confirmation');
 }
 globalThis.wx.cloud.callFunction = (options) => {
@@ -368,7 +531,7 @@ onlineController.animationWaiting = false;
 onlineController.isAnimating = false;
 onlineController.startLocalActionPreview({ type: 'peng', seat: 0, card: { id: 'rejected-peng' } });
 await onlineController.sendOp({ kind: 'response', ref: { index: 0, type: 'peng' } });
-if (onlineController.pendingLocalAction || onlineController.localActionPreviewType || localPreviewCancelCount !== 3) {
+if (onlineController.pendingLocalAction || onlineController.localActionPreviewType || localPreviewCancelCount !== 4) {
   throw new Error('rejected local actions should cancel their optimistic animation and pending ownership');
 }
 globalThis.wx.cloud.callFunction = (options) => {
@@ -549,8 +712,12 @@ const animationControllerSource = await readFile(join(root, 'js/game/animation/c
 if (!/playOnlineEvent\(event, onComplete\)/.test(animationControllerSource)) {
   throw new Error('animation controller should expose an explicit online event animation API');
 }
-if (/eventSeq|playOnlineEvent/.test(await readFile(join(root, 'js/game/renderer.js'), 'utf8'))) {
+const rendererSource = await readFile(join(root, 'js/game/renderer.js'), 'utf8');
+if (/eventSeq|playOnlineEvent/.test(rendererSource)) {
   throw new Error('renderer should not manage online event sequence or animation lifecycle');
+}
+if (!/state\.animationWaiting/.test(rendererSource)) {
+  throw new Error('renderer should block state compensation while an online authoritative animation is waiting');
 }
 
 await rm(tempDir, { recursive: true, force: true });

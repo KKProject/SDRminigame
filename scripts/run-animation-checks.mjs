@@ -249,6 +249,568 @@ assert(
   'appearing draw card MUST NOT be replayed at the responder (local) seat'
 );
 
+// 在线出牌待响应双入口：即使状态补偿已经先启动，同一张牌也必须交给权威 online 出现动画接管。
+const duplicateDiscardCard = { id: 'online-discard-await', key: 'shang' };
+const duplicateSeats = [{ melds: [] }, { melds: [] }, { melds: [] }, { melds: [] }];
+const duplicateState = {
+  phase: 'human-response',
+  currentSeat: 0,
+  drawnCard: null,
+  recentDiscard: { seat: 1, card: duplicateDiscardCard },
+  pendingActions: [],
+  playerActions: [{ type: 'peng', seat: 0, card: duplicateDiscardCard }, { type: 'pass', seat: 0 }],
+  seats: duplicateSeats,
+};
+const unblockedManager = new AnimationManager();
+const unblockedStateController = new StateAnimationController(unblockedManager);
+const unblockedRenderer = {
+  lastLayout: layout,
+  lastDiscardEvent: null,
+  suppressNextMeldEffect: false,
+  suppressNextResultEffect: false,
+  stateAnimationController: unblockedStateController,
+  animationEndForSeat(seat, currentLayout) {
+    return seatFront(seat, currentLayout);
+  },
+  claimedAnimationEnd(seat, currentLayout) {
+    return claimedTarget(seat, currentLayout);
+  },
+};
+const unblockedOnlineController = new TableAnimationController(unblockedRenderer, unblockedManager);
+unblockedStateController.observe(duplicateState, layout, false);
+unblockedOnlineController.playOnlineEvent({
+  eventSeq: 91,
+  type: 'discard',
+  seat: 1,
+  card: duplicateDiscardCard,
+  appearanceResolution: 'await-response',
+}, () => {});
+const unblockedOwners = unblockedManager.getVisualState().map((visual) => visual.ownerId);
+assert(
+  unblockedOwners.indexOf(`state:discard:1:${duplicateDiscardCard.id}`) < 0
+  && unblockedOwners.indexOf('online:91') >= 0,
+  'authoritative online discard response should release an already-started state appearance plan'
+);
+
+// 修复目标：在线动画等待期间，renderer 应把 state.animationWaiting 纳入 blocked，状态补偿不得抢播同一 recentDiscard。
+const blockedManager = new AnimationManager();
+const blockedStateController = new StateAnimationController(blockedManager);
+const blockedRenderer = {
+  lastLayout: layout,
+  lastDiscardEvent: null,
+  suppressNextMeldEffect: false,
+  suppressNextResultEffect: false,
+  stateAnimationController: blockedStateController,
+  animationEndForSeat(seat, currentLayout) {
+    return seatFront(seat, currentLayout);
+  },
+  claimedAnimationEnd(seat, currentLayout) {
+    return claimedTarget(seat, currentLayout);
+  },
+};
+const blockedOnlineController = new TableAnimationController(blockedRenderer, blockedManager);
+const waitingState = { ...duplicateState, animationWaiting: true };
+blockedStateController.observe(waitingState, layout, Boolean(waitingState.animationWaiting));
+blockedOnlineController.playOnlineEvent({
+  eventSeq: 92,
+  type: 'discard',
+  seat: 1,
+  card: duplicateDiscardCard,
+  appearanceResolution: 'await-response',
+}, () => {});
+const blockedOwners = blockedManager.getVisualState().map((visual) => visual.ownerId);
+assert(
+  blockedOwners.indexOf(`state:discard:1:${duplicateDiscardCard.id}`) < 0
+  && blockedOwners.indexOf('online:92') >= 0,
+  'online waiting discard response MUST use the authoritative online appearance plan only'
+);
+for (let time = 0; time <= 700; time += 50) blockedManager.update(time);
+assert(
+  blockedOnlineController.heldAppearance
+  && blockedOnlineController.heldAppearance.card.id === duplicateDiscardCard.id
+  && blockedOnlineController.heldAppearance.position.x === seatFront(1, layout).x,
+  'authoritative discard appearance should remain held at the discarding seat after the pulse'
+);
+blockedStateController.observe(waitingState, layout, Boolean(waitingState.animationWaiting));
+assert(
+  blockedManager.getVisualState().filter((visual) => visual.kind === 'card' && visual.card.id === duplicateDiscardCard.id).length === 1,
+  'response buttons MUST NOT cause an extra state discard appearance while the online event is held'
+);
+
+function assertOnlineAppearanceReleasesActiveState(label, event, state) {
+  const managerForRelease = new AnimationManager();
+  const stateControllerForRelease = new StateAnimationController(managerForRelease);
+  stateControllerForRelease.observe(state, layout, false);
+  assert(
+    stateControllerForRelease.active
+    && managerForRelease.getVisualState().some((visual) => visual.ownerId && visual.ownerId.indexOf(`state:${event.type}:`) === 0),
+    `${label} should first be reproducible as an active state appearance`
+  );
+  const rendererForRelease = {
+    lastLayout: layout,
+    lastState: state,
+    lastDiscardEvent: null,
+    suppressNextMeldEffect: false,
+    suppressNextResultEffect: false,
+    stateAnimationController: stateControllerForRelease,
+    animationEndForSeat(seat, currentLayout) {
+      return seatFront(seat, currentLayout);
+    },
+    claimedAnimationEnd(seat, currentLayout) {
+      return claimedTarget(seat, currentLayout);
+    },
+  };
+  const onlineControllerForRelease = new TableAnimationController(rendererForRelease, managerForRelease);
+  assert(
+    onlineControllerForRelease.playOnlineEvent(event, () => {}),
+    `${label} authoritative online appearance should start`
+  );
+  assert(
+    !stateControllerForRelease.active
+    && !managerForRelease.getVisualState().some((visual) => visual.ownerId && visual.ownerId.indexOf(`state:${event.type}:`) === 0)
+    && managerForRelease.getVisualState().some((visual) => visual.ownerId === `online:${event.eventSeq}`),
+    `${label} authoritative online appearance MUST release any already-active state appearance for the same card`
+  );
+  stateControllerForRelease.observe(state, layout, false);
+  assert(
+    managerForRelease.getVisualState().filter((visual) => visual.kind === 'card' && visual.card.id === event.card.id).length === 1,
+    `${label} state compensation MUST NOT restart a second appearance after online ownership is established`
+  );
+}
+
+assertOnlineAppearanceReleasesActiveState(
+  'discard response',
+  {
+    eventSeq: 93,
+    type: 'discard',
+    seat: 1,
+    card: duplicateDiscardCard,
+    appearanceResolution: 'await-response',
+  },
+  duplicateState
+);
+
+const duplicateDrawCard = { id: 'online-draw-await', key: 'ren' };
+assertOnlineAppearanceReleasesActiveState(
+  'draw response',
+  {
+    eventSeq: 94,
+    type: 'draw',
+    seat: 1,
+    card: duplicateDrawCard,
+    appearanceResolution: 'await-response',
+  },
+  {
+    phase: 'human-response',
+    currentSeat: 0,
+    drawnCard: duplicateDrawCard,
+    appearingCard: { card: duplicateDrawCard, source: 'draw', sourceSeat: 1 },
+    recentDiscard: null,
+    pendingActions: [],
+    playerActions: [{ type: 'peng', seat: 0, card: duplicateDrawCard }, { type: 'pass', seat: 0 }],
+    seats: [{ melds: [] }, { melds: [] }, { melds: [] }, { melds: [] }],
+  }
+);
+
+function assertMissingResolutionAppearanceHeld(label, event, state) {
+  const managerForInference = new AnimationManager();
+  const stateControllerForInference = new StateAnimationController(managerForInference);
+  stateControllerForInference.observe(state, layout, false);
+  assert(
+    stateControllerForInference.active,
+    `${label} should first be reproducible as a state-owned appearance`
+  );
+  const rendererForInference = {
+    lastLayout: layout,
+    lastState: state,
+    lastDiscardEvent: null,
+    suppressNextMeldEffect: false,
+    suppressNextResultEffect: false,
+    stateAnimationController: stateControllerForInference,
+    animationEndForSeat(seat, currentLayout) {
+      return seatFront(seat, currentLayout);
+    },
+    claimedAnimationEnd(seat, currentLayout) {
+      return claimedTarget(seat, currentLayout);
+    },
+  };
+  const onlineControllerForInference = new TableAnimationController(rendererForInference, managerForInference);
+  const completed = [];
+  assert(
+    onlineControllerForInference.playOnlineEvent(event, (completedEvent) => completed.push(completedEvent)),
+    `${label} online appearance without appearanceResolution should still start`
+  );
+  assert(
+    onlineControllerForInference.onlinePlayback
+    && onlineControllerForInference.onlinePlayback.event.appearanceResolution === 'await-response'
+    && onlineControllerForInference.onlinePlayback.event.inferredAppearanceResolution,
+    `${label} should infer await-response from the current visible state`
+  );
+  for (let time = 0; time <= 700; time += 50) managerForInference.update(time);
+  assert(
+    completed.length === 1
+    && completed[0].appearanceResolution === 'await-response'
+    && completed[0].inferredAppearanceResolution,
+    `${label} should complete with the inferred await-response event`
+  );
+  assert(
+    onlineControllerForInference.heldAppearance
+    && onlineControllerForInference.heldAppearance.card.id === event.card.id,
+    `${label} should keep the authority appearance held after completion`
+  );
+  stateControllerForInference.observe(
+    state,
+    layout,
+    onlineControllerForInference.isBlockingStateAnimation()
+  );
+  assert(
+    !managerForInference.getVisualState().some((visual) => (
+      visual.ownerId
+      && visual.ownerId.indexOf(`state:${event.type}:`) === 0
+    ))
+    && managerForInference.getVisualState().filter((visual) => (
+      visual.kind === 'card'
+      && visual.card
+      && visual.card.id === event.card.id
+    )).length === 1,
+    `${label} MUST NOT restart a second state appearance after the inferred online hold`
+  );
+}
+
+assertMissingResolutionAppearanceHeld(
+  'legacy discard response',
+  {
+    eventSeq: 95,
+    type: 'discard',
+    seat: 1,
+    card: { id: 'legacy-discard-await', key: 'shang' },
+  },
+  {
+    phase: 'human-response',
+    currentSeat: 0,
+    drawnCard: null,
+    recentDiscard: { seat: 1, card: { id: 'legacy-discard-await', key: 'shang' } },
+    pendingActions: [],
+    playerActions: [],
+    seats: [{ melds: [] }, { melds: [] }, { melds: [] }, { melds: [] }],
+  }
+);
+
+const legacyDrawCard = { id: 'legacy-draw-await', key: 'kong' };
+assertMissingResolutionAppearanceHeld(
+  'legacy draw response',
+  {
+    eventSeq: 96,
+    type: 'draw',
+    seat: 2,
+    card: legacyDrawCard,
+  },
+  {
+    phase: 'human-response',
+    currentSeat: 0,
+    drawnCard: legacyDrawCard,
+    appearingCard: { card: legacyDrawCard, source: 'draw', sourceSeat: 2 },
+    recentDiscard: null,
+    pendingActions: [],
+    playerActions: [],
+    seats: [{ melds: [] }, { melds: [] }, { melds: [] }, { melds: [] }],
+  }
+);
+
+const legacyAutoDrawCard = { id: 'legacy-auto-draw', key: 'da' };
+const legacyAutoDrawManager = new AnimationManager();
+const legacyAutoDrawRenderer = {
+  lastLayout: layout,
+  lastState: {
+    phase: 'ai-thinking',
+    currentSeat: 2,
+    drawnCard: legacyAutoDrawCard,
+    appearingCard: { card: legacyAutoDrawCard, source: 'draw', sourceSeat: 2 },
+    recentDiscard: null,
+    pendingActions: [],
+    playerActions: [],
+    seats: [{ melds: [] }, { melds: [] }, { melds: [] }, { melds: [] }],
+  },
+  lastDiscardEvent: null,
+  suppressNextMeldEffect: false,
+  suppressNextResultEffect: false,
+  stateAnimationController: { lastSignature: '', resolutionSignature: '' },
+  animationEndForSeat(seat, currentLayout) {
+    return seatFront(seat, currentLayout);
+  },
+  claimedAnimationEnd(seat, currentLayout) {
+    return claimedTarget(seat, currentLayout);
+  },
+};
+const legacyAutoDrawController = new TableAnimationController(legacyAutoDrawRenderer, legacyAutoDrawManager);
+assert(
+  legacyAutoDrawController.playOnlineEvent({
+    eventSeq: 97,
+    type: 'draw',
+    seat: 2,
+    card: legacyAutoDrawCard,
+    discardIndex: 0,
+  }, () => {}),
+  'legacy draw with discardIndex 0 should still start'
+);
+assert(
+  legacyAutoDrawController.onlinePlayback
+  && !legacyAutoDrawController.onlinePlayback.event.appearanceResolution
+  && !legacyAutoDrawController.onlinePlayback.event.inferredAppearanceResolution,
+  'draw events with discardIndex 0 MUST NOT be inferred as await-response'
+);
+for (let time = 0; time <= 700; time += 50) legacyAutoDrawManager.update(time);
+assert(
+  !legacyAutoDrawController.heldAppearance,
+  'draw events with discardIndex 0 MUST NOT create a held await-response appearance'
+);
+
+const fallbackMeldPreviewPlan = eventPlan({
+  type: 'peng',
+  seat: 0,
+  card: duplicateDiscardCard,
+}, {
+  layout,
+  start: seatFront(1, layout),
+  end: claimedTarget(0, layout),
+});
+assert(
+  fallbackMeldPreviewPlan.visuals.some((visual) => (
+    visual.kind === 'card'
+    && visual.stage === 'peng'
+    && !visual.meldId
+    && visual.card.id === duplicateDiscardCard.id
+  )),
+  'a meld event without a complete meld would fall back to a single-card flight if not blocked by the controller'
+);
+
+function makePreviewRenderer(lastState, previewManager) {
+  return {
+    lastLayout: layout,
+    lastState,
+    lastDiscardEvent: {
+      seat: 1,
+      card: duplicateDiscardCard,
+      holdPosition: seatFront(1, layout),
+    },
+    suppressNextMeldEffect: false,
+    suppressNextResultEffect: false,
+    stateAnimationController: { lastSignature: '', resolutionSignature: '' },
+    animationEndForSeat(seat, currentLayout) {
+      return seatFront(seat, currentLayout);
+    },
+    claimedAnimationEnd(seat, currentLayout) {
+      return claimedTarget(seat, currentLayout);
+    },
+    animationManager: previewManager,
+  };
+}
+
+const missingMeldManager = new AnimationManager();
+const missingMeldController = new TableAnimationController(
+  makePreviewRenderer({ seats: [{ hand: [], melds: [] }] }, missingMeldManager),
+  missingMeldManager
+);
+missingMeldController.heldAppearance = {
+  id: `held:${duplicateDiscardCard.id}`,
+  card: duplicateDiscardCard,
+  position: seatFront(1, layout),
+  event: null,
+};
+assert(
+  !missingMeldController.playLocalActionPreview({
+    type: 'peng',
+    seat: 0,
+    card: duplicateDiscardCard,
+    sourceSeat: 1,
+    keys: ['shang', 'shang'],
+  }),
+  'incomplete response meld preview should be skipped instead of creating a single-card local fallback'
+);
+assert(
+  missingMeldManager.getVisualState().length === 0
+  && !missingMeldController.localActionPreview
+  && missingMeldController.heldAppearance,
+  'skipped meld preview MUST NOT create local-preview visuals or release the held appearance before authority takes over'
+);
+
+function assertCompleteLocalMeldPreview(label, action, state, expectedCardCount) {
+  const previewManager = new AnimationManager();
+  const previewController = new TableAnimationController(makePreviewRenderer(state, previewManager), previewManager);
+  previewController.heldAppearance = {
+    id: `held:${action.card.id}`,
+    card: action.card,
+    position: seatFront(typeof action.sourceSeat === 'number' ? action.sourceSeat : 1, layout),
+    event: null,
+  };
+  assert(previewController.playLocalActionPreview(action, () => {}), `${label} should start a complete local meld preview`);
+  const cardVisuals = previewManager.getVisualState().filter((visual) => visual.kind === 'card');
+  assert(
+    cardVisuals.length === expectedCardCount
+    && cardVisuals.every((visual) => visual.ownerId === `local-preview:${action.type}:${action.card.id}` && visual.meldId),
+    `${label} local preview should be a complete meld group, not a single-card flight`
+  );
+  assert(
+    previewController.localActionPreview
+    && previewController.localActionPreview.meld
+    && !previewController.heldAppearance,
+    `${label} complete local preview should own the meld animation and consume the held appearance`
+  );
+}
+
+assertCompleteLocalMeldPreview(
+  'chi',
+  {
+    type: 'chi',
+    seat: 0,
+    card: { id: 'chi-incoming', key: 'shang' },
+    sourceSeat: 1,
+    keys: ['da', 'ren'],
+    label: '吃',
+  },
+  {
+    seats: [{
+      hand: [{ id: 'chi-da', key: 'da' }, { id: 'chi-ren', key: 'ren' }],
+      melds: [],
+    }],
+  },
+  3
+);
+assertCompleteLocalMeldPreview(
+  'peng',
+  {
+    type: 'peng',
+    seat: 0,
+    card: { id: 'peng-incoming', key: 'shang' },
+    sourceSeat: 1,
+    keys: ['shang', 'shang'],
+    label: '碰',
+  },
+  {
+    seats: [{
+      hand: [{ id: 'peng-a', key: 'shang' }, { id: 'peng-b', key: 'shang' }],
+      melds: [],
+    }],
+  },
+  3
+);
+assertCompleteLocalMeldPreview(
+  'zhao',
+  {
+    type: 'zhao',
+    seat: 0,
+    card: { id: 'zhao-incoming', key: 'shang' },
+    sourceSeat: 1,
+    keys: ['shang', 'shang', 'shang'],
+    label: '招',
+  },
+  {
+    seats: [{
+      hand: [{ id: 'zhao-a', key: 'shang' }, { id: 'zhao-b', key: 'shang' }, { id: 'zhao-c', key: 'shang' }],
+      melds: [],
+    }],
+  },
+  4
+);
+assertCompleteLocalMeldPreview(
+  'ta',
+  {
+    type: 'ta',
+    seat: 0,
+    card: { id: 'ta-incoming', key: 'shang' },
+    sourceSeat: 0,
+    ownerSeat: 0,
+    meldId: 'ta-base',
+    keys: [],
+    label: '踏',
+  },
+  {
+    seats: [{
+      hand: [],
+      melds: [{
+        id: 'ta-base',
+        type: 'zhao',
+        label: '招',
+        key: 'shang',
+        cards: [{ id: 'ta-a', key: 'shang' }, { id: 'ta-b', key: 'shang' }, { id: 'ta-c', key: 'shang' }],
+      }],
+    }],
+  },
+  4
+);
+
+const localResponseManager = new AnimationManager();
+const localResponseStateController = new StateAnimationController(localResponseManager);
+const localResponseCard = { id: 'local-response-held', key: 'shang' };
+const localResponseSeats = [
+  {
+    hand: [{ id: 'local-response-a', key: 'shang' }, { id: 'local-response-b', key: 'shang' }],
+    melds: [],
+  },
+  { hand: [], melds: [], discards: [localResponseCard] },
+  { hand: [], melds: [], discards: [] },
+  { hand: [], melds: [], discards: [] },
+];
+localResponseStateController.observe({
+  phase: 'human-response',
+  currentSeat: 0,
+  drawnCard: null,
+  recentDiscard: { seat: 1, card: localResponseCard },
+  pendingActions: [],
+  playerActions: [{ type: 'peng', seat: 0, card: localResponseCard }, { type: 'pass', seat: 0 }],
+  seats: localResponseSeats,
+}, layout, false);
+for (let time = 0; time <= 700; time += 50) localResponseManager.update(time);
+assert(
+  localResponseStateController.active
+  && localResponseManager.getVisualState().some((visual) => visual.ownerId === `state:discard:1:${localResponseCard.id}`),
+  'state compensation should be able to hold the response card before the local player acts'
+);
+const localResponseRenderer = makePreviewRenderer({ seats: localResponseSeats }, localResponseManager);
+localResponseRenderer.lastDiscardEvent = {
+  seat: 1,
+  card: localResponseCard,
+  holdPosition: seatFront(1, layout),
+};
+localResponseRenderer.stateAnimationController = localResponseStateController;
+const localResponseController = new TableAnimationController(localResponseRenderer, localResponseManager);
+assert(
+  localResponseController.playLocalActionPreview({
+    type: 'peng',
+    seat: 0,
+    card: localResponseCard,
+    sourceSeat: 1,
+    keys: ['shang', 'shang'],
+  }, () => {}),
+  'local response preview should start when a complete local peng meld can be built'
+);
+assert(
+  !localResponseStateController.active
+  && !localResponseManager.getVisualState().some((visual) => visual.ownerId === `state:discard:1:${localResponseCard.id}`),
+  'starting a complete local response preview MUST remove the retained state appearance card'
+);
+localResponseSeats[0].melds = [{
+  id: 'local-response-peng',
+  type: 'peng',
+  cards: [localResponseCard, { id: 'local-response-a', key: 'shang' }, { id: 'local-response-b', key: 'shang' }],
+}];
+localResponseStateController.observe({
+  phase: 'human-discard',
+  currentSeat: 0,
+  drawnCard: null,
+  recentDiscard: null,
+  pendingActions: [],
+  playerActions: [],
+  seats: localResponseSeats,
+}, layout, false);
+assert(
+  !localResponseManager.getVisualState().some((visual) => (
+    typeof visual.ownerId === 'string'
+    && visual.ownerId.indexOf(`state:claim:0:${localResponseCard.id}`) === 0
+  )),
+  'state compensation MUST NOT replay a claimed-card flight after local response preview has taken ownership'
+);
+
 const recoveryManager = new AnimationManager();
 const recoveryRenderer = {
   lastLayout: layout,

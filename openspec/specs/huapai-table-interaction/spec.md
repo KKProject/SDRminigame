@@ -516,3 +516,44 @@ The system SHALL configure the WeChat minigame to run in landscape orientation f
 - **THEN** 客户端 MUST 重试同一事件序号的回执
 - **AND** 客户端 MUST NOT 重复播放已经完成的动画
 
+## ADDED Requirements
+
+### Requirement: 运行时屏幕指标稳定与重布局
+系统 SHALL 使用最新稳定的横屏窗口宽高、渲染像素比和安全区作为菜单、牌桌布局、绘制和触摸命中的统一逻辑指标。系统 MUST NOT 使用启动期间无效、未稳定或属于纵屏过渡状态的指标创建正式交互布局。
+
+#### Scenario: 启动首帧返回异常尺寸
+- **WHEN** 微信运行时在横屏游戏启动首帧返回无效尺寸、过小尺寸或宽度不大于高度的过渡尺寸
+- **THEN** 系统 MUST NOT 使用该候选指标创建正式菜单、牌桌元素或触摸命中区域
+- **AND** 系统 MUST 在后续帧或窗口变化通知后重新读取窗口指标
+
+#### Scenario: 横屏尺寸稳定后创建布局
+- **WHEN** 系统确认一组有效横屏窗口指标已经稳定
+- **THEN** 系统 MUST 使用该组逻辑宽高、安全区和渲染像素比配置 Canvas 与正式布局
+- **AND** 头像、手牌、弃牌区、凑牌区、菜单按钮和触摸区域 MUST 使用同一组稳定指标
+
+#### Scenario: 稳定尺寸发生变化
+- **WHEN** 微信运行时报告与当前稳定指标不同的有效横屏宽高、像素比或安全区
+- **THEN** 系统 MUST 原子更新 Canvas backing store、2D context 逻辑缩放和安全内容区域
+- **AND** 系统 MUST 重新计算菜单、牌桌元素和触摸命中区域
+- **AND** 背景 MUST 继续覆盖更新后的完整 Canvas
+
+#### Scenario: 异常候选不覆盖稳定布局
+- **WHEN** 已存在稳定横屏布局后运行时短暂返回无效或纵屏过渡指标
+- **THEN** 系统 MUST 保留当前稳定布局
+- **AND** 异常候选 MUST NOT 导致元素挤在一起、Canvas 重置或触摸区域错位
+
+#### Scenario: 重复相同指标通知
+- **WHEN** 系统重复收到与当前稳定指标相同的窗口信息
+- **THEN** 系统 MUST 幂等忽略重复通知
+- **AND** 系统 MUST NOT 重复重置 Canvas、布局或原生授权按钮
+
+#### Scenario: 启动未稳定期间保持背景可见
+- **WHEN** 首次启动尚未获得稳定横屏指标
+- **THEN** 系统 MAY 显示覆盖完整 Canvas 的背景或轻量等待状态
+- **AND** 系统 MUST NOT 显示基于错误尺寸计算的正式交互元素
+
+#### Scenario: 自动检查覆盖异常首帧恢复
+- **WHEN** 运行布局与渲染自检脚本
+- **THEN** 检查 MUST 模拟异常启动尺寸随后恢复为稳定横屏尺寸
+- **AND** 检查 MUST 断言正式布局只使用稳定尺寸且重复通知不会重复重建
+

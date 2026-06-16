@@ -4,6 +4,12 @@ import { claimedTarget, seatFront } from './targets';
 // 这些动作类型意味着某张牌被“响应”了（吃/碰/招/踏/胡/过）。
 const RESPONSE_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'];
 
+function appearanceTrace(source, payload = {}) {
+  if (typeof console !== 'undefined' && console.warn) {
+    console.warn('[appearance-trace]', source, payload);
+  }
+}
+
 /**
  * 在全局 state 中查找某张牌出现在哪个座位的 meld（副露）里。
  * 用于判断一张被弃的牌是否已经被某家“吃碰”。
@@ -101,6 +107,14 @@ export default class StateAnimationController {
     const plan = eventPlan(event, { layout });
     if (!plan) return;
     plan.id = id;
+    appearanceTrace('state:start', {
+      id,
+      type: event.type,
+      seat: event.seat,
+      cardId: event.card && event.card.id,
+      lastSignature: this.lastSignature,
+      resolutionSignature: this.resolutionSignature,
+    });
 
     // 把 plan 里的所有卡牌视觉对象标记为 retain，使其在动画结束后仍显示。
     (plan.visuals || []).forEach((visual) => {
@@ -144,6 +158,13 @@ export default class StateAnimationController {
         end: claimedTarget(claim.seat, layout),
       });
       plan.id = `state:${signature}`;
+      appearanceTrace('state:resolve-claim', {
+        id: plan.id,
+        type: claim.meld.type,
+        seat: claim.seat,
+        cardId,
+        fromActiveId: active.id,
+      });
       this.manager.play(plan);
       return true;
     }
@@ -162,6 +183,12 @@ export default class StateAnimationController {
       start: active.position,
     });
     plan.id = `state:${signature}`;
+    appearanceTrace('state:resolve-unclaimed', {
+      id: plan.id,
+      seat: event.seat,
+      cardId,
+      fromActiveId: active.id,
+    });
     this.manager.play(plan);
     return true;
   }
@@ -181,8 +208,27 @@ export default class StateAnimationController {
    */
   releaseActive() {
     if (!this.active) return;
+    appearanceTrace('state:release-active', {
+      id: this.active.id,
+      type: this.active.event && this.active.event.type,
+      seat: this.active.event && this.active.event.seat,
+      cardId: this.active.event && this.active.event.card && this.active.event.card.id,
+    });
     this.manager.release(this.active.id);
     this.active = null;
+  }
+
+  releaseActiveCard(cardId) {
+    if (!cardId || !this.active || !this.active.event || !this.active.event.card) return false;
+    if (this.active.event.card.id !== cardId) return false;
+    appearanceTrace('state:release-card', {
+      id: this.active.id,
+      type: this.active.event.type,
+      seat: this.active.event.seat,
+      cardId,
+    });
+    this.releaseActive();
+    return true;
   }
 
   /**

@@ -2,6 +2,68 @@ import { eventPlan } from './presets.mjs';
 
 // 属于“吃碰杠”类型的动作，本地预览和网络事件都会用到。
 const MELD_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta'];
+const RESPONSE_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'];
+
+function appearanceTrace(source, payload = {}) {
+  if (typeof console !== 'undefined' && console.warn) {
+    console.warn('[appearance-trace]', source, payload);
+  }
+}
+
+function isResponseActionForCard(action, cardId) {
+  return action
+    && RESPONSE_EVENT_TYPES.indexOf(action.type) >= 0
+    && (!action.card || action.card.id === cardId);
+}
+
+function inferAppearanceResolution(event, renderer) {
+  if (
+    !event
+    || (event.type !== 'draw' && event.type !== 'discard')
+    || !event.card
+    || event.appearanceResolution
+  ) return event;
+
+  const state = renderer && renderer.lastState ? renderer.lastState : null;
+  if (!state) return event;
+
+  const cardId = event.card.id;
+  const actions = (state.pendingActions || []).concat(state.playerActions || []);
+  const hasResponseAction = actions.some((action) => isResponseActionForCard(action, cardId));
+  const sameAppearingDraw = Boolean(
+    state.appearingCard
+    && state.appearingCard.card
+    && state.appearingCard.card.id === cardId
+    && state.appearingCard.source === 'draw'
+    && (
+      typeof state.appearingCard.sourceSeat !== 'number'
+      || state.appearingCard.sourceSeat === event.seat
+    )
+  );
+  const sameDraw = Boolean(state.drawnCard && state.drawnCard.id === cardId);
+  const sameRecentDiscard = Boolean(
+    state.recentDiscard
+    && state.recentDiscard.card
+    && state.recentDiscard.card.id === cardId
+    && state.recentDiscard.seat === event.seat
+  );
+  const unresolvedRecentDiscard = sameRecentDiscard
+    && !state.recentDiscard.unclaimed
+    && !state.recentDiscard.resolved;
+  const shouldInferAwaitResponse = event.type === 'draw'
+    ? typeof event.discardIndex !== 'number' && (sameDraw || sameAppearingDraw || hasResponseAction)
+    : (hasResponseAction || unresolvedRecentDiscard);
+
+  if (!shouldInferAwaitResponse) return event;
+  const reason = event.type === 'draw'
+    ? (hasResponseAction ? 'draw-response-action' : 'draw-visible-state')
+    : (hasResponseAction ? 'discard-response-action' : 'discard-unresolved-state');
+  return {
+    ...event,
+    appearanceResolution: 'await-response',
+    inferredAppearanceResolution: reason,
+  };
+}
 
 function previewMeld(action, state) {
   if (!action || MELD_EVENT_TYPES.indexOf(action.type) < 0 || !action.card) return null;
@@ -75,6 +137,7 @@ export default class TableAnimationController {
     const renderer = this.renderer;
     const layout = renderer.lastLayout;
     if (!layout) return false;
+    event = inferAppearanceResolution(event, renderer);
 
     // 释放上一个网络事件的资源，避免多个网络事件动画重叠。
     if (this.onlinePlayback) this.manager.release(`online:${this.onlinePlayback.eventSeq}`);
@@ -94,6 +157,38 @@ export default class TableAnimationController {
 
     // 构造动画上下文：默认只需要 layout。
     const context = { layout };
+    const isAwaitResponseAppearance = (
+      (event.type === 'draw' || event.type === 'discard')
+      && event.appearanceResolution === 'await-response'
+      && event.card
+    );
+    let releasedStateAppearance = false;
+    if (
+      isAwaitResponseAppearance
+      && renderer.stateAnimationController
+      && renderer.stateAnimationController.releaseActiveCard
+    ) {
+      releasedStateAppearance = renderer.stateAnimationController.releaseActiveCard(event.card.id);
+      renderer.stateAnimationController.lastSignature = `${event.type}:${event.seat}:${event.card.id}`;
+    }
+    if (event.type === 'draw' || event.type === 'discard' || isAwaitResponseAppearance) {
+      appearanceTrace('online:start', {
+        eventSeq: event.eventSeq,
+        type: event.type,
+        seat: event.seat,
+        cardId: event.card && event.card.id,
+        resolution: event.appearanceResolution || '',
+        inferredResolution: event.inferredAppearanceResolution || '',
+        releasedStateAppearance,
+        heldCardId: this.heldAppearance && this.heldAppearance.card && this.heldAppearance.card.id,
+        stateActiveId: renderer.stateAnimationController && renderer.stateAnimationController.active
+          ? renderer.stateAnimationController.active.id
+          : null,
+        sameCardVisualCount: event.card
+          ? this.manager.getVisualState().filter((visual) => visual.kind === 'card' && visual.card && visual.card.id === event.card.id).length
+          : 0,
+      });
+    }
 
     // 如果当前事件有卡牌，并且上一张打出的牌（lastDiscardEvent）就是这张牌，
     // 那么让动画从“上一张牌停留的位置”开始飞，而不是从手牌区开始飞。
@@ -130,6 +225,21 @@ export default class TableAnimationController {
     const plan = eventPlan(event, context);
     return this.manager.play(plan, () => {
       if (!this.onlinePlayback || this.onlinePlayback.eventSeq !== event.eventSeq) return;
+      if (event.type === 'draw' || event.type === 'discard') {
+        appearanceTrace('online:complete', {
+          eventSeq: event.eventSeq,
+          type: event.type,
+          seat: event.seat,
+          cardId: event.card && event.card.id,
+          resolution: event.appearanceResolution || '',
+          inferredResolution: event.inferredAppearanceResolution || '',
+          willHold: Boolean(
+            (event.type === 'draw' || event.type === 'discard')
+            && event.appearanceResolution === 'await-response'
+            && event.card
+          ),
+        });
+      }
       if (
         (event.type === 'draw' || event.type === 'discard')
         && event.appearanceResolution === 'await-response'
@@ -159,6 +269,12 @@ export default class TableAnimationController {
   releaseOnlineEvent(eventSeq) {
     if (!this.onlinePlayback) return;
     if (typeof eventSeq === 'number' && this.onlinePlayback.eventSeq !== eventSeq) return;
+    appearanceTrace('online:release', {
+      eventSeq: this.onlinePlayback.eventSeq,
+      type: this.onlinePlayback.event && this.onlinePlayback.event.type,
+      cardId: this.onlinePlayback.event && this.onlinePlayback.event.card && this.onlinePlayback.event.card.id,
+      heldCardId: this.heldAppearance && this.heldAppearance.card && this.heldAppearance.card.id,
+    });
     this.manager.release(`online:${this.onlinePlayback.eventSeq}`);
     this.onlinePlayback = null;
   }
@@ -168,10 +284,26 @@ export default class TableAnimationController {
     const heldId = `held:${card.id}`;
     this.manager.transferVisuals(planId, heldId);
     this.heldAppearance = { id: heldId, card, position, event };
+    appearanceTrace('held:create', {
+      fromPlanId: planId,
+      heldId,
+      cardId: card.id,
+      eventSeq: event && event.eventSeq,
+      type: event && event.type,
+      seat: event && event.seat,
+      x: Math.round(position.x),
+      y: Math.round(position.y),
+    });
   }
 
   releaseHeldAppearance() {
     if (!this.heldAppearance) return;
+    appearanceTrace('held:release', {
+      heldId: this.heldAppearance.id,
+      cardId: this.heldAppearance.card && this.heldAppearance.card.id,
+      eventSeq: this.heldAppearance.event && this.heldAppearance.event.eventSeq,
+      type: this.heldAppearance.event && this.heldAppearance.event.type,
+    });
     this.manager.release(this.heldAppearance.id);
     this.heldAppearance = null;
   }
@@ -215,6 +347,9 @@ export default class TableAnimationController {
   playLocalActionPreview(action, onLocalComplete) {
     const renderer = this.renderer;
     if (!action || !action.type || !renderer.lastLayout) return false;
+    const isMeldAction = MELD_EVENT_TYPES.indexOf(action.type) >= 0;
+    const localMeld = isMeldAction ? previewMeld(action, renderer.lastState) : null;
+    if (isMeldAction && !localMeld) return false;
 
     // 把驼峰命名转换成 plan 里用的短横线命名。
     const normalizedType = action.type === 'acceptTakeover'
@@ -222,14 +357,24 @@ export default class TableAnimationController {
       : (action.type === 'declineTakeover' ? 'decline-takeover' : action.type);
 
     const context = { layout: renderer.lastLayout };
-    if (MELD_EVENT_TYPES.indexOf(action.type) >= 0 || action.type === 'hu') this.releaseHeldAppearance();
+    if (isMeldAction || action.type === 'hu') {
+      this.releaseHeldAppearance();
+      if (
+        isMeldAction
+        && action.card
+        && renderer.stateAnimationController
+        && renderer.stateAnimationController.releaseActiveCard
+      ) {
+        renderer.stateAnimationController.releaseActiveCard(action.card.id);
+      }
+    }
 
     // 打牌动作：从手牌位置开始飞。
     if (action.type === 'discard' && action.card) {
       context.start = renderer.animationEndForSeat(0, renderer.lastLayout);
 
     // 吃碰等动作：从被打出的牌的位置开始飞。
-    } else if (MELD_EVENT_TYPES.indexOf(action.type) >= 0 && action.card) {
+    } else if (isMeldAction && action.card) {
       const held = renderer.lastDiscardEvent;
       context.start = held && held.card.id === action.card.id
         ? (held.holdPosition || renderer.animationEndForSeat(action.sourceSeat || 0, renderer.lastLayout))
@@ -237,7 +382,6 @@ export default class TableAnimationController {
       context.end = renderer.claimedAnimationEnd(0, renderer.lastLayout);
     }
 
-    const localMeld = previewMeld(action, renderer.lastState);
     const previewEvent = localMeld
       ? {
         ...action,
