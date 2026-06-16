@@ -209,8 +209,6 @@ TBD - created by archiving change refactor-tween-animation-system. Update Purpos
 - **AND** 客户端 MAY 使用状态补偿或静态恢复路径
 - **AND** 客户端 MUST NOT 在已播放过同一权威事件后重新播放入场动画
 
-## ADDED Requirements
-
 ### Requirement: 出现牌座位归属稳定
 状态驱动的出现牌（抓牌/亮牌）动画 SHALL 使用产生该牌的座位（摸/亮牌人）作为动画座位，并 MUST 在整个响应窗口内保持该座位不变；该动画 MUST NOT 因响应权（`currentSeat`）轮转到其他玩家而重播或迁移到响应方区域。
 

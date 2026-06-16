@@ -516,8 +516,6 @@ The system SHALL configure the WeChat minigame to run in landscape orientation f
 - **THEN** 客户端 MUST 重试同一事件序号的回执
 - **AND** 客户端 MUST NOT 重复播放已经完成的动画
 
-## ADDED Requirements
-
 ### Requirement: 运行时屏幕指标稳定与重布局
 系统 SHALL 使用最新稳定的横屏窗口宽高、渲染像素比和安全区作为菜单、牌桌布局、绘制和触摸命中的统一逻辑指标。系统 MUST NOT 使用启动期间无效、未稳定或属于纵屏过渡状态的指标创建正式交互布局。
 

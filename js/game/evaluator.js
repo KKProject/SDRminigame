@@ -134,6 +134,7 @@ export function findChiActions(state, seatIndex, incomingCard, sourceSeat, sourc
 
   const seat = state.seats[seatIndex];
   if (seat.history && seat.history.chiLocked) return [];
+  if (hasDiscardedKey(seat, incomingCard.key)) return [];
   if (phraseHasExactComplete(seat.hand, incomingCard.phraseId, rules)) return [];
 
   const phraseKeys = getPhraseKeysForKey(incomingCard.key, rules);
@@ -261,7 +262,7 @@ export function findAppearingCardActions(state, sourceSeat, incomingCard, source
       const win = evaluateWin(seat.hand.concat([incomingCard]), seat.melds, sourceType === 'draw' && seatIndex === sourceSeat ? 'self' : sourceType, rules, {
         jiangPhraseId: state.jiangPhraseId,
       });
-      if (win.isWin) {
+      if (win.isWin && !isChiStyleHuBlocked(seat, incomingCard, sourceType, win)) {
         actions.push({
           type: 'hu',
           seat: seatIndex,
@@ -484,23 +485,92 @@ export function computePhraseTripletLocks(hand, rules = DEFAULT_RULES) {
   }, {});
 }
 
-// 判断打出 card 是否会破坏「需保留的完整原句（xyz）」。
-// 下限以发牌锁定的原句数 N0 为准：摸牌不抬高（用 N0 封顶），吃碰消耗后用当前值兜底。
-// 实际下限 floor = min(当前原句数 before, N0)，打出后原句数 after < floor 即破坏。
-//   xxyyz 最多打 2 张且 z 不可打；xxyz 最多打 1 张且仅 x 可打；
-//   xyyzzz 最多打 3 张且 x 不可打；摸到额外牌变 xxyyzz 仍只需保留 1 个原句。
-function wouldBreakCompletePhrase(seat, card, rules = DEFAULT_RULES) {
+function isDiscardHistoryEntry(entry) {
+  return entry && (entry.type === 'discard' || entry.type === 'auto-discard-draw');
+}
+
+function discardedKeyCounts(seat, keys) {
+  const keySet = new Set(keys);
+  return ((seat.history && seat.history.actionHistory) || []).reduce((counts, entry) => {
+    if (isDiscardHistoryEntry(entry) && keySet.has(entry.key)) {
+      counts[entry.key] = (counts[entry.key] || 0) + 1;
+    }
+    return counts;
+  }, {});
+}
+
+function hasDiscardedKey(seat, key) {
+  return ((seat.history && seat.history.actionHistory) || [])
+    .some((entry) => isDiscardHistoryEntry(entry) && entry.key === key);
+}
+
+function isChiStyleHuBlocked(seat, incomingCard, sourceType, win) {
+  if (sourceType !== 'discard' || !hasDiscardedKey(seat, incomingCard.key)) return false;
+  return ((win && win.doors) || []).some((door) => (
+    (door.type === 'xy' || door.type === 'xyz')
+    && (door.keys || []).indexOf(incomingCard.key) >= 0
+  ));
+}
+
+function sumCounts(counts, keys) {
+  return keys.reduce((total, key) => total + (counts[key] || 0), 0);
+}
+
+function phraseDoorTargets(phraseKeys) {
+  return [
+    phraseKeys,
+    [phraseKeys[0], phraseKeys[0], phraseKeys[0]],
+    [phraseKeys[1], phraseKeys[1], phraseKeys[1]],
+    [phraseKeys[2], phraseKeys[2], phraseKeys[2]],
+  ];
+}
+
+function countsContainKeys(counts, keys) {
+  const needed = keys.reduce((result, key) => {
+    result[key] = (result[key] || 0) + 1;
+    return result;
+  }, {});
+  return Object.keys(needed).every((key) => (counts[key] || 0) >= needed[key]);
+}
+
+function canReachFinalPhraseDoor(counts, phraseKeys, remainingDiscards) {
+  const total = sumCounts(counts, phraseKeys);
+  const extraCards = total - 3;
+  if (extraCards < 0 || extraCards > remainingDiscards) return false;
+  return phraseDoorTargets(phraseKeys).some((target) => countsContainKeys(counts, target));
+}
+
+function isInitialTwoPairStop(countsBefore, countsAfter, phraseKeys, usedBefore, usedAfter, allowance, cardKey) {
+  if (usedBefore !== 0 || usedAfter >= allowance) return false;
+  if ((countsBefore[cardKey] || 0) !== 1) return false;
+  const beforeValues = phraseKeys.map((key) => countsBefore[key] || 0).sort((a, b) => a - b);
+  const afterValues = phraseKeys.map((key) => countsAfter[key] || 0).sort((a, b) => a - b);
+  return beforeValues.join(',') === '1,2,2' && afterValues.join(',') === '0,2,2';
+}
+
+function canDiscardPreservingPhraseDoor(seat, card, rules = DEFAULT_RULES) {
   const phraseKeys = getPhraseKeysForKey(card.key, rules);
-  if (phraseKeys.length !== 3) return false;
-  const counts = countByKey(seat.hand || []);
-  const before = Math.min(...phraseKeys.map((key) => counts[key] || 0));
-  if (before === 0) return false;
-  const locked = (seat.history
-    && seat.history.lockedPhraseTriplets
-    && seat.history.lockedPhraseTriplets[card.phraseId]);
-  const floor = Math.min(before, typeof locked === 'number' ? locked : before);
-  const after = Math.min(...phraseKeys.map((key) => (counts[key] || 0) - (key === card.key ? 1 : 0)));
-  return after < floor;
+  if (phraseKeys.length !== 3) return true;
+
+  const handCounts = countByKey(seat.hand || []);
+  const discardedCounts = discardedKeyCounts(seat, phraseKeys);
+  const currentTotal = sumCounts(handCounts, phraseKeys);
+  const discardedTotal = sumCounts(discardedCounts, phraseKeys);
+  const originalTotal = currentTotal + discardedTotal;
+  if (originalTotal <= 3) {
+    return !phraseKeys.every((key) => (handCounts[key] || 0) > 0);
+  }
+  const allowance = Math.max(0, originalTotal - 3);
+  const usedAfter = discardedTotal + 1;
+
+  if (usedAfter > allowance) return false;
+
+  const afterCounts = cloneCounts(handCounts);
+  afterCounts[card.key] = (afterCounts[card.key] || 0) - 1;
+  const remainingDiscards = allowance - usedAfter;
+
+  if (canReachFinalPhraseDoor(afterCounts, phraseKeys, remainingDiscards)) return true;
+  return isInitialTwoPairStop(handCounts, afterCounts, phraseKeys, discardedTotal, usedAfter, allowance, card.key);
 }
 
 export function isLegalDiscard(seat, card, rules = DEFAULT_RULES) {
@@ -508,8 +578,8 @@ export function isLegalDiscard(seat, card, rules = DEFAULT_RULES) {
   if (history.forcedDiscardCardId && card.id !== history.forcedDiscardCardId) {
     return { legal: false, reason: '特殊搭子凑牌后必须先打出剩余牌' };
   }
-  if (wouldBreakCompletePhrase(seat, card, rules)) {
-    return { legal: false, reason: '不能打出会破坏原句的牌' };
+  if (!canDiscardPreservingPhraseDoor(seat, card, rules)) {
+    return { legal: false, reason: '同句出牌后必须保留可成门路径' };
   }
   return { legal: true };
 }

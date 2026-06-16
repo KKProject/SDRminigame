@@ -41,8 +41,8 @@ function chooseDiscard(seat, rules = DEFAULT_RULES) {
   const hand = seat.hand || seat;
   const counts = countByKey(hand);
   const legal = hand.filter((card) => isLegalDiscard(seat.hand ? seat : { hand, history: { discardPhraseCounts: {} } }, card, rules).legal);
-  const candidates = legal.length ? legal : hand;
-  return candidates.slice().sort((a, b) => {
+  if (!legal.length) return null;
+  return legal.slice().sort((a, b) => {
     const aScore = cardKeepScore(a, counts, rules);
     const bScore = cardKeepScore(b, counts, rules);
     if (aScore !== bScore) return aScore - bScore;

@@ -62,6 +62,21 @@ function makeState() {
   };
 }
 
+function discardFromSeat(seat, key) {
+  const index = seat.hand.findIndex((card) => card.key === key);
+  assert(index >= 0, `test hand should contain ${key}`);
+  const card = seat.hand[index];
+  assert(isLegalDiscard(seat, card, DEFAULT_RULES).legal, `${key} should be legal before test discard`);
+  seat.hand.splice(index, 1);
+  seat.history.actionHistory.push({ type: 'discard', key: card.key });
+  seat.history.discardPhraseCounts[card.phraseId] = (seat.history.discardPhraseCounts[card.phraseId] || 0) + 1;
+  return card;
+}
+
+function legalDiscardKeys(seat) {
+  return getLegalDiscards(seat, DEFAULT_RULES).map((card) => card.key).sort().join(',');
+}
+
 function makeTestAtlas() {
   const frame = (x, y, w, h, label, category = 'tile', confidence = 'high') => ({
     frame: { x, y, w, h },
@@ -159,10 +174,17 @@ const SDR_RULE_TEST_CASES = [
   ['T038', '自摸'],
   ['T039', '点炮'],
   ['T040', '截胡'],
+  ['T041', 'xxyz 保门出牌'],
+  ['T042', 'xxxyz 双路径保门'],
+  ['T043', 'xxyyz 单张停止'],
+  ['T044', 'zzzxxy 双目标门'],
+  ['T045', '出过不吃'],
+  ['T046', '出过不吃胡'],
+  ['T047', '出过仍可非吃胡'],
 ].map(([id, scenario]) => ({ id, scenario }));
 
 export function runSelfChecks() {
-  assert(SDR_RULE_TEST_CASES.length === 40, 'T001-T040 rule test skeleton should include 40 cases');
+  assert(SDR_RULE_TEST_CASES.length === 47, 'T001-T047 rule test skeleton should include 47 cases');
   SDR_RULE_TEST_CASES.forEach((testCase, index) => {
     assert(testCase.id === `T${String(index + 1).padStart(3, '0')}`, `missing rule test skeleton ${index + 1}`);
     assert(Boolean(testCase.scenario), `${testCase.id} should describe its scenario`);
@@ -275,6 +297,43 @@ export function runSelfChecks() {
     const protectedPhraseActions = findResponseActions(protectedPhraseState, 3, protectedPhraseState.seats[3].hand[0], DEFAULT_RULES);
     assert(!protectedPhraseActions.find((action) => action.seat === 0 && action.type === 'chi'), `exact complete phrase must not offer chi for appearing ${incomingKey}`);
   });
+  const discardedChiState = makeState();
+  discardedChiState.seats[0].hand = cardsFor(['da', 'ren']);
+  discardedChiState.seats[0].history.actionHistory.push({ type: 'discard', key: 'shang' });
+  discardedChiState.seats[3].hand = cardsFor(['shang']);
+  const discardedChiActions = findResponseActions(discardedChiState, 3, discardedChiState.seats[3].hand[0], DEFAULT_RULES);
+  assert(!discardedChiActions.find((action) => action.seat === 0 && action.type === 'chi'), 'previously discarded key must not be chi');
+  const discardedChiHuState = makeState();
+  discardedChiHuState.seats[0].hand = cardsFor([
+    'shang', 'shang', 'shang',
+    'ren',
+    'kong', 'yi', 'ji',
+    'hua', 'san', 'qian',
+    'qi', 'shi', 'tu',
+    'er', 'xiao', 'sheng',
+    'fu', 'lu', 'shou',
+    'jia', 'zuo', 'ren2',
+  ]);
+  discardedChiHuState.seats[0].history.actionHistory.push({ type: 'discard', key: 'da' });
+  discardedChiHuState.seats[3].hand = cardsFor(['da']);
+  const discardedChiHuActions = findResponseActions(discardedChiHuState, 3, discardedChiHuState.seats[3].hand[0], DEFAULT_RULES);
+  assert(!discardedChiHuActions.find((action) => action.seat === 0 && action.type === 'hu'), 'previously discarded key must not produce chi-style hu');
+  const discardedSameHuState = makeState();
+  discardedSameHuState.seats[0].hand = cardsFor([
+    'shang', 'shang',
+    'da', 'ren',
+    'kong', 'yi', 'ji',
+    'hua', 'san', 'qian',
+    'qi', 'shi', 'tu',
+    'er', 'xiao', 'sheng',
+    'fu', 'lu', 'shou',
+    'jia', 'zuo', 'ren2',
+  ]);
+  discardedSameHuState.seats[0].history.actionHistory.push({ type: 'discard', key: 'shang' });
+  discardedSameHuState.seats[3].hand = cardsFor(['shang']);
+  const discardedSameHuActions = findResponseActions(discardedSameHuState, 3, discardedSameHuState.seats[3].hand[0], DEFAULT_RULES);
+  assert(discardedSameHuActions.find((action) => action.seat === 0 && action.type === 'hu'), 'previously discarded key should still allow non-chi hu');
+  assert(!discardedSameHuActions.find((action) => action.seat === 0 && action.type === 'chi'), 'previously discarded key should still block chi even when hu is available');
 
   const zhaoHand = cardsFor(['shang', 'shang', 'shang', 'da', 'da']);
   const zhaoCard = cardsFor(['shang'])[0];
@@ -350,6 +409,30 @@ export function runSelfChecks() {
   extraPhraseSeat.hand = cardsFor(['shang', 'shang', 'da', 'ren']);
   assert(isLegalDiscard(extraPhraseSeat, extraPhraseSeat.hand[0], DEFAULT_RULES).legal, 'xxyz should allow one extra-card discard');
   assert(getLegalDiscards(discardSeat, DEFAULT_RULES).length === 1, 'only non-protected phrase cards should remain legal discard candidates');
+  assert(legalDiscardKeys(extraPhraseSeat) === 'shang,shang', 'xxyz should only allow discarding the extra x');
+  const xxxyzSeat = createSeats(DEFAULT_RULES, 0)[0];
+  xxxyzSeat.hand = cardsFor(['shang', 'shang', 'shang', 'da', 'ren']);
+  assert(legalDiscardKeys(xxxyzSeat) === 'da,ren,shang,shang,shang', 'xxxyz should allow x, y, and z as first discard');
+  discardFromSeat(xxxyzSeat, 'da');
+  assert(legalDiscardKeys(xxxyzSeat) === 'ren', 'xxxyz path y should only continue with z and preserve xxx');
+  const xxxyzTripletSeat = createSeats(DEFAULT_RULES, 0)[0];
+  xxxyzTripletSeat.hand = cardsFor(['shang', 'shang', 'shang', 'da', 'ren']);
+  discardFromSeat(xxxyzTripletSeat, 'shang');
+  assert(legalDiscardKeys(xxxyzTripletSeat) === 'shang,shang', 'xxxyz path x should only continue with x and preserve xyz');
+  const xxyyzSeat = createSeats(DEFAULT_RULES, 0)[0];
+  xxyyzSeat.hand = cardsFor(['shang', 'shang', 'da', 'da', 'ren']);
+  assert(legalDiscardKeys(xxyyzSeat) === 'da,da,ren,shang,shang', 'xxyyz should allow x, y, or singleton z as first discard');
+  discardFromSeat(xxyyzSeat, 'ren');
+  assert(getLegalDiscards(xxyyzSeat, DEFAULT_RULES).length === 0, 'xxyyz path z should stop further same-phrase discards');
+  const xxyyzPhraseSeat = createSeats(DEFAULT_RULES, 0)[0];
+  xxyyzPhraseSeat.hand = cardsFor(['shang', 'shang', 'da', 'da', 'ren']);
+  discardFromSeat(xxyyzPhraseSeat, 'shang');
+  assert(legalDiscardKeys(xxyyzPhraseSeat) === 'da,da', 'xxyyz path x should only continue with y and preserve xyz');
+  const zzzxxySeat = createSeats(DEFAULT_RULES, 0)[0];
+  zzzxxySeat.hand = cardsFor(['ren', 'ren', 'ren', 'shang', 'shang', 'da']);
+  assert(legalDiscardKeys(zzzxxySeat) === 'da,ren,ren,ren,shang,shang', 'zzzxxy should allow x, y, or z as first discard');
+  discardFromSeat(zzzxxySeat, 'ren');
+  assert(legalDiscardKeys(zzzxxySeat) === 'ren,ren,shang,shang', 'zzzxxy path z should still reach xzz or xxy, but not zy');
   assert(buildCircleLossResult(0, createSeats(DEFAULT_RULES), '测试进圈').type === 'circle-loss', 'circle-loss result should be created');
   assert(buildCircleLossResult(0, createSeats(DEFAULT_RULES), '测试进圈').settlement.payments.length === 3, 'circle-loss should pay three players');
   assert(typeof isListening(cardsFor(['shang', 'shang']), [], DEFAULT_RULES) === 'boolean', 'listening evaluator should return boolean');
