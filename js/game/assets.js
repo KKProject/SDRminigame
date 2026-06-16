@@ -75,6 +75,12 @@ export const APPEARANCE_OVERLAY_FRAME_CONFIG = {
   move: 'ui_left_move_panel_ban',
 };
 
+export const JIANG_OVERLAY_FRAME_CONFIG = {
+  big: { frameName: 'icon_jiang_big' },
+  small: { frameName: 'icon_jiang_small' },
+  mini: { frameName: 'icon_jian_mini_hr', rotateCcw: true },
+};
+
 export const CARD_ATLAS_LABEL_KEYS = {
   上: 'shang',
   大: 'da',
@@ -405,6 +411,16 @@ export default class AssetLoader {
     const frameName = APPEARANCE_OVERLAY_FRAME_CONFIG[type];
     if (!frameName) return null;
     return this.getAtlasSprite(frameName, 'cards');
+  }
+
+  getJiangOverlaySprite(size = 'big') {
+    const requestedSize = normalizeSpriteSize(size);
+    const config = JIANG_OVERLAY_FRAME_CONFIG[requestedSize];
+    if (!config) return null;
+    return this.getAtlasSprite(config.frameName, 'cards', {
+      rotateCcw: config.rotateCcw,
+      rotateCw: config.rotateCw,
+    });
   }
 
   getCardFrame(card, size = 'big') {

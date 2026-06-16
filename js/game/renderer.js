@@ -16,6 +16,11 @@ import {
 
 const BIG_CARD_ASPECT_RATIO = 88 / 307;
 const BIG_CARD_SOURCE_SIZE = { width: 88, height: 307 };
+const CARD_SOURCE_SIZES = {
+  big: BIG_CARD_SOURCE_SIZE,
+  small: { width: 88, height: 108 },
+  mini: { width: 38, height: 42 },
+};
 const CHI_COMBO_DURATION_MS = 900;
 const CHI_COMBO_FALLBACK_DURATION_MS = 650;
 const GLOW_STROKE = '#2ee8ff';
@@ -94,6 +99,7 @@ export default class TableRenderer {
     this.viewportSignature = '';
     this.restoreAnimationsAfterLayout = false;
     this.fallbackTraceSignature = '';
+    this.currentJiangPhraseId = null;
     appearanceTrace('trace:boot', { scope: 'renderer' });
   }
 
@@ -127,6 +133,7 @@ export default class TableRenderer {
     const layout = this.layout.build(state);
     this.lastLayout = layout;
     this.lastState = state;
+    this.currentJiangPhraseId = state.jiangPhraseId || null;
     if (this.restoreAnimationsAfterLayout) {
       this.restoreAnimationsAfterLayout = false;
       this.animationController.restoreAfterLayoutChange();
@@ -934,9 +941,9 @@ export default class TableRenderer {
       : { width: frame.w, height: frame.h };
   }
 
-  appearanceOverlayBounds(sprite, baseSprite, x, y, width, height) {
+  overlayBounds(sprite, baseSprite, x, y, width, height, fallbackBaseSize = BIG_CARD_SOURCE_SIZE) {
     const overlaySize = this.spriteSourceSize(sprite);
-    const baseSize = this.spriteSourceSize(baseSprite, BIG_CARD_SOURCE_SIZE);
+    const baseSize = this.spriteSourceSize(baseSprite, fallbackBaseSize);
     if (
       !overlaySize
       || !baseSize
@@ -953,11 +960,45 @@ export default class TableRenderer {
     };
   }
 
+  appearanceOverlayBounds(sprite, baseSprite, x, y, width, height) {
+    return this.overlayBounds(sprite, baseSprite, x, y, width, height, BIG_CARD_SOURCE_SIZE);
+  }
+
   drawAppearanceOverlay(ctx, overlayType, x, y, width, height, options = {}, baseSprite = null) {
     if (!overlayType || !this.assets.getAppearanceOverlaySprite) return false;
     const sprite = this.assets.getAppearanceOverlaySprite(overlayType);
     if (!sprite) return false;
     const bounds = this.appearanceOverlayBounds(sprite, baseSprite, x, y, width, height);
+    this.drawAtlasSprite(ctx, sprite, bounds.x, bounds.y, bounds.width, bounds.height, false, {
+      border: false,
+      alpha: options.alpha,
+    });
+    return true;
+  }
+
+  cardSourceSizeFor(size = 'big') {
+    return CARD_SOURCE_SIZES[size] || CARD_SOURCE_SIZES.big;
+  }
+
+  isJiangCard(card, options = {}) {
+    if (options.jiangOverlay === false) return false;
+    const jiangPhraseId = options.jiangPhraseId || this.currentJiangPhraseId;
+    return Boolean(card && card.phraseId && jiangPhraseId && card.phraseId === jiangPhraseId);
+  }
+
+  drawJiangOverlay(ctx, card, size, x, y, width, height, options = {}, baseSprite = null) {
+    if (!this.isJiangCard(card, options) || !this.assets.getJiangOverlaySprite) return false;
+    const sprite = this.assets.getJiangOverlaySprite(size);
+    if (!sprite) return false;
+    const bounds = this.overlayBounds(
+      sprite,
+      baseSprite,
+      x,
+      y,
+      width,
+      height,
+      this.cardSourceSizeFor(size)
+    );
     this.drawAtlasSprite(ctx, sprite, bounds.x, bounds.y, bounds.width, bounds.height, false, {
       border: false,
       alpha: options.alpha,
@@ -981,6 +1022,7 @@ export default class TableRenderer {
     if (sprite) {
       this.drawAtlasSprite(ctx, sprite, x, y, width, height, selected, options);
       this.drawAppearanceOverlay(ctx, options.appearanceOverlay, x, y, width, height, options, sprite);
+      this.drawJiangOverlay(ctx, card, size, x, y, width, height, options, sprite);
       return;
     }
 
@@ -1015,6 +1057,7 @@ export default class TableRenderer {
     }
     ctx.restore();
     this.drawAppearanceOverlay(ctx, options.appearanceOverlay, x, y, width, height, options);
+    this.drawJiangOverlay(ctx, card, size, x, y, width, height, options);
   }
 
   drawCardBack(ctx, x, y, width, height, size = 'big', options = {}) {

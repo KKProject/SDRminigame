@@ -54,6 +54,7 @@ const {
   ACTION_ATLAS_FRAME_CONFIG,
   APPEARANCE_OVERLAY_FRAME_CONFIG,
   ASSET_MANIFEST,
+  JIANG_OVERLAY_FRAME_CONFIG,
   buildAtlasOriginalIndexMap,
   buildCardAtlasFrameMap,
 } = await import(pathToFileURL(join(tempDir, 'assets.mjs')));
@@ -391,6 +392,29 @@ if (
 ) {
   throw new Error('appearance overlay frame config should map play/move to the requested atlas frames');
 }
+if (
+  !atlas.frames.icon_jiang_big
+  || !atlas.frames.icon_jiang_small
+  || !atlas.frames.icon_jian_mini_hr
+) {
+  throw new Error('cards atlas should expose big/small/mini jiang overlay frames by the requested names');
+}
+if (
+  atlas.frames.icon_jiang_big.frame.w !== 83
+  || atlas.frames.icon_jiang_big.frame.h !== 302
+  || atlas.frames.icon_jiang_small.frame.w !== 87
+  || atlas.frames.icon_jiang_small.frame.h !== 108
+) {
+  throw new Error('big/small jiang overlays should use the full atlas panel regions, not the centered small icon crops');
+}
+if (
+  JIANG_OVERLAY_FRAME_CONFIG.big.frameName !== 'icon_jiang_big'
+  || JIANG_OVERLAY_FRAME_CONFIG.small.frameName !== 'icon_jiang_small'
+  || JIANG_OVERLAY_FRAME_CONFIG.mini.frameName !== 'icon_jian_mini_hr'
+  || !JIANG_OVERLAY_FRAME_CONFIG.mini.rotateCcw
+) {
+  throw new Error('jiang overlay frame config should map sizes to requested atlas frames and rotate mini left');
+}
 const playOverlay = overlayLoader.getAppearanceOverlaySprite('play');
 const moveOverlay = overlayLoader.getAppearanceOverlaySprite('move');
 if (!playOverlay || playOverlay.name !== 'ui_left_play_panel_da') {
@@ -405,6 +429,21 @@ if (overlayLoader.getAppearanceOverlaySprite('unknown') !== null) {
 const missingOverlayLoader = new AssetLoader({ images: {}, atlases: {}, audio: {} });
 if (missingOverlayLoader.getAppearanceOverlaySprite('play') !== null) {
   throw new Error('missing cards atlas should safely return no appearance overlay sprite');
+}
+const bigJiangOverlay = overlayLoader.getJiangOverlaySprite('big');
+const smallJiangOverlay = overlayLoader.getJiangOverlaySprite('small');
+const miniJiangOverlay = overlayLoader.getJiangOverlaySprite('mini');
+if (!bigJiangOverlay || bigJiangOverlay.name !== 'icon_jiang_big') {
+  throw new Error('big jiang overlay should resolve icon_jiang_big from the cards atlas');
+}
+if (!smallJiangOverlay || smallJiangOverlay.name !== 'icon_jiang_small') {
+  throw new Error('small jiang overlay should resolve icon_jiang_small from the cards atlas');
+}
+if (!miniJiangOverlay || miniJiangOverlay.name !== 'icon_jian_mini_hr' || !miniJiangOverlay.rotateCcw) {
+  throw new Error('mini jiang overlay should resolve icon_jian_mini_hr and rotate left');
+}
+if (missingOverlayLoader.getJiangOverlaySprite('big') !== null) {
+  throw new Error('missing cards atlas should safely return no jiang overlay sprite');
 }
 
 const layoutSeats = createSeats(DEFAULT_RULES);
@@ -1158,6 +1197,123 @@ overlayRenderer.drawCard(
 if (overlayCalls.length !== 0) {
   throw new Error('plain card rendering should not request an appearance overlay');
 }
+const jiangOverlayCalls = [];
+const jiangRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite(card, size) {
+    if (size === 'small') return makeSprite(`base:${size}:${card.key}`, `base:${size}:${card.key}`, 88, 108);
+    if (size === 'mini') return makeSprite(`base:${size}:${card.key}`, `base:${size}:${card.key}`, 38, 42);
+    return makeSprite(`base:${size}:${card.key}`, `base:${size}:${card.key}`, 88, 307);
+  },
+  getCardBackSprite() { return makeSprite('card-back', 'card-back', 88, 108); },
+  getAppearanceOverlaySprite(type) {
+    if (type === 'play') return makeSprite('ui_left_play_panel_da', 'overlay:play', 123, 343);
+    return null;
+  },
+  getJiangOverlaySprite(size) {
+    jiangOverlayCalls.push(size);
+    if (size === 'big') return makeSprite('icon_jiang_big', 'jiang:big', 83, 302);
+    if (size === 'small') return makeSprite('icon_jiang_small', 'jiang:small', 87, 108);
+    if (size === 'mini') {
+      const sprite = makeSprite('icon_jian_mini_hr', 'jiang:mini', 38, 35);
+      sprite.rotateCcw = true;
+      return sprite;
+    }
+    return null;
+  },
+});
+jiangRenderer.currentJiangPhraseId = renderDeck[0].phraseId;
+function findDrawByImage(ctx, imageId) {
+  return ctx.calls.find((call) => call[0] === 'drawImage' && call[1][0] && call[1][0].id === imageId);
+}
+function assertJiangOverlayDraw(size, card, width, height, expectedImageId, expectedWidth, expectedHeight) {
+  const ctx = createFakeRenderContext();
+  jiangOverlayCalls.length = 0;
+  jiangRenderer.drawCard(ctx, card, 10, 20, width, height, true, false, size);
+  const jiangDraw = findDrawByImage(ctx, expectedImageId);
+  if (!jiangDraw) throw new Error(`${size} jiang card should draw its jiang overlay`);
+  const [, , , , , dx, dy, dw, dh] = jiangDraw[1];
+  if (size === 'mini') {
+    const expectedX = 10 + (width - expectedWidth) / 2;
+    const expectedY = 20 + (height - expectedHeight) / 2;
+    const translate = ctx.calls.find((call) => call[0] === 'translate' && Math.abs(call[1][0] - expectedX) < 0.001);
+    if (
+      !translate
+      || Math.abs(translate[1][1] - (expectedY + expectedHeight)) > 0.001
+      || Math.abs(dw - expectedHeight) > 0.001
+      || Math.abs(dh - expectedWidth) > 0.001
+      || dx !== 0
+      || dy !== 0
+    ) {
+      throw new Error(`${size} jiang overlay should keep its rotated atlas source-size ratio against the card face`);
+    }
+  } else if (
+    Math.abs(dw - expectedWidth) > 0.001
+    || Math.abs(dh - expectedHeight) > 0.001
+    || Math.abs(dx - (10 + (width - expectedWidth) / 2)) > 0.001
+    || Math.abs(dy - (20 + (height - expectedHeight) / 2)) > 0.001
+  ) {
+    throw new Error(`${size} jiang overlay should keep its atlas source-size ratio against the card face`);
+  }
+  if (jiangOverlayCalls.join(',') !== size) {
+    throw new Error(`${size} jiang card should request only the matching overlay size`);
+  }
+}
+const jiangCard = { ...renderDeck.find((card) => card.phraseId === renderDeck[0].phraseId) };
+const nonJiangCard = { ...renderDeck.find((card) => card.phraseId !== renderDeck[0].phraseId) };
+assertJiangOverlayDraw('big', jiangCard, 88, 307, 'jiang:big', 83, 302);
+assertJiangOverlayDraw('small', jiangCard, 88, 108, 'jiang:small', 87, 108);
+assertJiangOverlayDraw('mini', jiangCard, 16, 20, 'jiang:mini', 16 * (35 / 38), 20 * (38 / 42));
+const miniRotateCtx = createFakeRenderContext();
+jiangRenderer.drawCard(miniRotateCtx, jiangCard, 10, 20, 16, 20, true, false, 'mini');
+if (!miniRotateCtx.calls.find((call) => call[0] === 'rotate' && Math.abs(call[1][0] + Math.PI / 2) < 0.001)) {
+  throw new Error('mini jiang overlay should be drawn with left rotation');
+}
+const plainJiangCtx = createFakeRenderContext();
+jiangOverlayCalls.length = 0;
+jiangRenderer.drawCard(plainJiangCtx, nonJiangCard, 10, 20, 88, 307, true, false, 'big');
+if (findDrawByImage(plainJiangCtx, 'jiang:big') || jiangOverlayCalls.length) {
+  throw new Error('non-jiang cards should not request or draw a jiang overlay');
+}
+jiangRenderer.currentJiangPhraseId = null;
+jiangRenderer.drawCard(createFakeRenderContext(), jiangCard, 10, 20, 88, 307, true, false, 'big');
+if (jiangOverlayCalls.length) {
+  throw new Error('cards should not request jiang overlays before jiang phrase is known');
+}
+jiangRenderer.currentJiangPhraseId = renderDeck[0].phraseId;
+jiangOverlayCalls.length = 0;
+jiangRenderer.drawCard(createFakeRenderContext(), jiangCard, 10, 20, 88, 108, false, false, 'small');
+if (jiangOverlayCalls.length) {
+  throw new Error('card backs should not request jiang overlays');
+}
+const combinedOverlayCtx = createFakeRenderContext();
+jiangRenderer.drawCard(
+  combinedOverlayCtx,
+  jiangCard,
+  10,
+  20,
+  88,
+  307,
+  true,
+  false,
+  'big',
+  { appearanceOverlay: 'play', border: false }
+);
+const combinedOrder = combinedOverlayCtx.calls
+  .filter((call) => call[0] === 'drawImage')
+  .map((call) => call[1][0] && call[1][0].id);
+if (combinedOrder.join(',') !== `base:big:${jiangCard.key},overlay:play,jiang:big`) {
+  throw new Error('jiang appearance cards should draw base, appearance overlay, then jiang overlay');
+}
+const missingJiangRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+  getAppearanceOverlaySprite() { return null; },
+  getJiangOverlaySprite() { return null; },
+});
+missingJiangRenderer.currentJiangPhraseId = jiangCard.phraseId;
+missingJiangRenderer.drawCard(createFakeRenderContext(), jiangCard, 0, 0, 88, 307, true, false, 'big');
 const claimState = {
   ...pendingDiscardState,
   recentDiscard: null,
