@@ -70,6 +70,11 @@ export const ACTION_ATLAS_FRAME_CONFIG = {
   pass: { originalIndex: 58, rotateCcw: false },
 };
 
+export const APPEARANCE_OVERLAY_FRAME_CONFIG = {
+  play: 'ui_left_play_panel_da',
+  move: 'ui_left_move_panel_ban',
+};
+
 export const CARD_ATLAS_LABEL_KEYS = {
   上: 'shang',
   大: 'da',
@@ -394,6 +399,12 @@ export default class AssetLoader {
     return this.getAtlasSprite(match.name, 'actions', {
       rotateCcw: config.rotateCcw,
     });
+  }
+
+  getAppearanceOverlaySprite(type) {
+    const frameName = APPEARANCE_OVERLAY_FRAME_CONFIG[type];
+    if (!frameName) return null;
+    return this.getAtlasSprite(frameName, 'cards');
   }
 
   getCardFrame(card, size = 'big') {

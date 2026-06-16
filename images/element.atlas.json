@@ -1795,6 +1795,31 @@
         "originalIndex": 91
       }
     },
+
+    "icon_jian_mini": {
+      "frame": {
+        "x": 1239,
+        "y": 465,
+        "w": 38,
+        "h": 35
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 38,
+        "h": 35
+      },
+      "sourceSize": {
+        "w": 38,
+        "h": 35
+      },
+      "label": "将小标识",
+      "category": "icon",
+      "confidence": "medium",
+      "originalIndex": 27
+    },
     "ui_left_empty_yellow_panel": {
       "frame": {
         "x": 127,
@@ -1963,30 +1988,7 @@
       "confidence": "medium",
       "originalIndex": 26
     },
-    "icon_kan_small": {
-      "frame": {
-        "x": 1239,
-        "y": 465,
-        "w": 38,
-        "h": 35
-      },
-      "rotated": false,
-      "trimmed": false,
-      "spriteSourceSize": {
-        "x": 0,
-        "y": 0,
-        "w": 38,
-        "h": 35
-      },
-      "sourceSize": {
-        "w": 38,
-        "h": 35
-      },
-      "label": "砍小标识",
-      "category": "icon",
-      "confidence": "medium",
-      "originalIndex": 27
-    },
+
     "tile_back_green_small": {
       "frame": {
         "x": 1150,

@@ -15,6 +15,7 @@ import {
 } from './animation/targets';
 
 const BIG_CARD_ASPECT_RATIO = 88 / 307;
+const BIG_CARD_SOURCE_SIZE = { width: 88, height: 307 };
 const CHI_COMBO_DURATION_MS = 900;
 const CHI_COMBO_FALLBACK_DURATION_MS = 650;
 const GLOW_STROKE = '#2ee8ff';
@@ -601,8 +602,9 @@ export default class TableRenderer {
       )).length,
     });
     this.drawCard(ctx, state.recentDiscard.card, position.x, position.y, cardWidth, cardHeight, true, false, 'big', {
-      glow: true,
       shadow: true,
+      border: false,
+      appearanceOverlay: 'play',
     });
   }
 
@@ -625,8 +627,9 @@ export default class TableRenderer {
       )).length,
     });
     this.drawCard(ctx, state.drawnCard, position.x, position.y, cardWidth, cardHeight, true, false, 'big', {
-      glow: true,
       shadow: true,
+      border: false,
+      appearanceOverlay: 'move',
     });
   }
 
@@ -656,6 +659,7 @@ export default class TableRenderer {
       if (visual.kind === 'card' && visual.card) {
         const size = visualCardSize(layout, visual);
         const base = this.animationCardSize(layout);
+        const appearanceOverlay = this.appearanceOverlayForStage(visual.stage);
         this.drawCard(
           ctx,
           visual.card,
@@ -666,7 +670,13 @@ export default class TableRenderer {
           true,
           false,
           'big',
-          { glow: true, shadow: true, alpha: visual.alpha }
+          {
+            glow: !appearanceOverlay,
+            shadow: true,
+            alpha: visual.alpha,
+            border: appearanceOverlay ? false : undefined,
+            appearanceOverlay,
+          }
         );
         return;
       }
@@ -916,6 +926,51 @@ export default class TableRenderer {
     ctx.restore();
   }
 
+  spriteSourceSize(sprite, fallback = null) {
+    const frame = sprite && sprite.frame && sprite.frame.frame;
+    if (!frame) return fallback;
+    return sprite.rotateCw || sprite.rotateCcw
+      ? { width: frame.h, height: frame.w }
+      : { width: frame.w, height: frame.h };
+  }
+
+  appearanceOverlayBounds(sprite, baseSprite, x, y, width, height) {
+    const overlaySize = this.spriteSourceSize(sprite);
+    const baseSize = this.spriteSourceSize(baseSprite, BIG_CARD_SOURCE_SIZE);
+    if (
+      !overlaySize
+      || !baseSize
+      || !baseSize.width
+      || !baseSize.height
+    ) return { x, y, width, height };
+    const overlayWidth = width * (overlaySize.width / baseSize.width);
+    const overlayHeight = height * (overlaySize.height / baseSize.height);
+    return {
+      x: x + (width - overlayWidth) / 2,
+      y: y + (height - overlayHeight) / 2,
+      width: overlayWidth,
+      height: overlayHeight,
+    };
+  }
+
+  drawAppearanceOverlay(ctx, overlayType, x, y, width, height, options = {}, baseSprite = null) {
+    if (!overlayType || !this.assets.getAppearanceOverlaySprite) return false;
+    const sprite = this.assets.getAppearanceOverlaySprite(overlayType);
+    if (!sprite) return false;
+    const bounds = this.appearanceOverlayBounds(sprite, baseSprite, x, y, width, height);
+    this.drawAtlasSprite(ctx, sprite, bounds.x, bounds.y, bounds.width, bounds.height, false, {
+      border: false,
+      alpha: options.alpha,
+    });
+    return true;
+  }
+
+  appearanceOverlayForStage(stage) {
+    if (stage === 'discard') return 'play';
+    if (stage === 'draw') return 'move';
+    return null;
+  }
+
   drawCard(ctx, card, x, y, width, height, front = true, selected = false, size = 'big', options = {}) {
     if (!front) {
       this.drawCardBack(ctx, x, y, width, height, size, options);
@@ -925,6 +980,7 @@ export default class TableRenderer {
     const sprite = this.assets.getCardSprite(card, size);
     if (sprite) {
       this.drawAtlasSprite(ctx, sprite, x, y, width, height, selected, options);
+      this.drawAppearanceOverlay(ctx, options.appearanceOverlay, x, y, width, height, options, sprite);
       return;
     }
 
@@ -939,9 +995,11 @@ export default class TableRenderer {
     ctx.fillStyle = selected ? '#fff1b8' : '#fffaf0';
     roundRect(ctx, x, y, width, height, 5);
     ctx.fill();
-    ctx.strokeStyle = selected ? '#f79009' : '#8a5a16';
-    ctx.lineWidth = selected ? 2 : 1;
-    ctx.stroke();
+    if (options.border !== false) {
+      ctx.strokeStyle = selected ? '#f79009' : '#8a5a16';
+      ctx.lineWidth = selected ? 2 : 1;
+      ctx.stroke();
+    }
     ctx.fillStyle = card.color || '#202020';
     ctx.font = `${Math.max(18, Math.floor(height * 0.44))}px serif`;
     ctx.textAlign = 'center';
@@ -956,6 +1014,7 @@ export default class TableRenderer {
       ctx.stroke();
     }
     ctx.restore();
+    this.drawAppearanceOverlay(ctx, options.appearanceOverlay, x, y, width, height, options);
   }
 
   drawCardBack(ctx, x, y, width, height, size = 'big', options = {}) {

@@ -52,6 +52,7 @@ const { default: TableRenderer } = await import(pathToFileURL(join(tempDir, 'ren
 const {
   default: AssetLoader,
   ACTION_ATLAS_FRAME_CONFIG,
+  APPEARANCE_OVERLAY_FRAME_CONFIG,
   ASSET_MANIFEST,
   buildAtlasOriginalIndexMap,
   buildCardAtlasFrameMap,
@@ -368,6 +369,42 @@ const missingActionLoader = new AssetLoader({
 });
 if (missingActionLoader.getActionSprite('chi') !== null) {
   throw new Error('missing action atlas should safely return no sprite');
+}
+
+const cardAtlas = JSON.parse(await readFile(join(root, ASSET_MANIFEST.atlases.cards.path), 'utf8'));
+const overlayLoader = new AssetLoader({
+  ...ASSET_MANIFEST,
+  atlases: {
+    ...ASSET_MANIFEST.atlases,
+    cards: {
+      ...ASSET_MANIFEST.atlases.cards,
+      data: cardAtlas,
+    },
+  },
+});
+overlayLoader.setAtlas('cards', cardAtlas);
+overlayLoader.images.cardFront = { id: 'card-front-image' };
+overlayLoader.status.cardFront = 'ready';
+if (
+  APPEARANCE_OVERLAY_FRAME_CONFIG.play !== 'ui_left_play_panel_da'
+  || APPEARANCE_OVERLAY_FRAME_CONFIG.move !== 'ui_left_move_panel_ban'
+) {
+  throw new Error('appearance overlay frame config should map play/move to the requested atlas frames');
+}
+const playOverlay = overlayLoader.getAppearanceOverlaySprite('play');
+const moveOverlay = overlayLoader.getAppearanceOverlaySprite('move');
+if (!playOverlay || playOverlay.name !== 'ui_left_play_panel_da') {
+  throw new Error('play appearance overlay should resolve ui_left_play_panel_da from the cards atlas');
+}
+if (!moveOverlay || moveOverlay.name !== 'ui_left_move_panel_ban') {
+  throw new Error('move appearance overlay should resolve ui_left_move_panel_ban from the cards atlas');
+}
+if (overlayLoader.getAppearanceOverlaySprite('unknown') !== null) {
+  throw new Error('unknown appearance overlay types should safely return no sprite');
+}
+const missingOverlayLoader = new AssetLoader({ images: {}, atlases: {}, audio: {} });
+if (missingOverlayLoader.getAppearanceOverlaySprite('play') !== null) {
+  throw new Error('missing cards atlas should safely return no appearance overlay sprite');
 }
 
 const layoutSeats = createSeats(DEFAULT_RULES);
@@ -967,6 +1004,76 @@ directionRenderer.drawClaimedColumns(
 if (miniPositions.map((item) => `${item.x}:${item.y}`).join(',') !== '100:20,100:40,100:60,116:20,116:40,116:60') {
   throw new Error('claimed melds should render each meld as one left-to-right vertical column with no gap');
 }
+
+function makeSprite(name, imageId = name, width = 10, height = 20) {
+  return {
+    image: { id: imageId },
+    name,
+    frame: { frame: { x: 1, y: 2, w: width, h: height } },
+  };
+}
+
+const overlayCalls = [];
+const overlayRenderer = new TableRenderer({
+  getImage() { return null; },
+  getCardSprite(card) { return makeSprite(`base:${card.key}`, `base:${card.key}`, 88, 307); },
+  getCardBackSprite() { return null; },
+  getAppearanceOverlaySprite(type) {
+    overlayCalls.push(type);
+    if (type === 'play') return makeSprite('ui_left_play_panel_da', 'overlay:play', 123, 343);
+    if (type === 'move') return makeSprite('ui_left_move_panel_ban', 'overlay:move', 117, 337);
+    return null;
+  },
+});
+overlayRenderer.animationManager = {
+  getVisualState() {
+    return [
+      { kind: 'card', card: { id: 'overlay-discard', key: 'da' }, stage: 'discard', x: 10, y: 20, scale: 1, alpha: 1 },
+      { kind: 'card', card: { id: 'overlay-draw', key: 'ren' }, stage: 'draw', x: 80, y: 20, scale: 1, alpha: 1 },
+      { kind: 'card', card: { id: 'overlay-meld', key: 'shang' }, stage: 'peng', x: 150, y: 20, scale: 1, alpha: 1 },
+    ];
+  },
+};
+overlayRenderer.drawManagedAnimations(createFakeRenderContext(), {
+  height: 390,
+  cardWidth: 42,
+});
+if (overlayCalls.join(',') !== 'play,move') {
+  throw new Error('managed draw/discard appearance cards should request play/move overlays, while meld cards should not');
+}
+function assertOverlayDrawBounds(overlayType, imageId, expectedWidth, expectedHeight) {
+  const ctx = createFakeRenderContext();
+  overlayCalls.length = 0;
+  overlayRenderer.drawCard(
+    ctx,
+    { id: `sizing-${overlayType}`, key: 'da' },
+    10,
+    20,
+    88,
+    307,
+    true,
+    false,
+    'big',
+    { appearanceOverlay: overlayType, border: false }
+  );
+  const overlayDraw = ctx.calls.find((call) => call[0] === 'drawImage' && call[1][0] && call[1][0].id === imageId);
+  if (!overlayDraw) throw new Error(`${overlayType} appearance overlay should draw its atlas image`);
+  const [, , , , , dx, dy, dw, dh] = overlayDraw[1];
+  if (
+    Math.abs(dw - expectedWidth) > 0.001
+    || Math.abs(dh - expectedHeight) > 0.001
+    || Math.abs(dx - (10 + (88 - expectedWidth) / 2)) > 0.001
+    || Math.abs(dy - (20 + (307 - expectedHeight) / 2)) > 0.001
+  ) {
+    throw new Error(`${overlayType} appearance overlay should keep its atlas source-size ratio against the card face`);
+  }
+  if (ctx.calls.some((call) => call[0] === 'stroke')) {
+    throw new Error(`${overlayType} appearance card should not draw the default card border`);
+  }
+}
+assertOverlayDrawBounds('play', 'overlay:play', 123, 343);
+assertOverlayDrawBounds('move', 'overlay:move', 117, 337);
+
 const discardResolutionLayout = new TableLayout(667, 375).build(layoutState);
 const animationSize = directionRenderer.animationCardSize(discardResolutionLayout);
 if (Math.abs((animationSize.width / animationSize.height) - (88 / 307)) > 0.01) {
@@ -1007,13 +1114,49 @@ const fallbackRenderer = new TableRenderer({
   getImage() { return null; },
   getCardSprite() { return null; },
   getCardBackSprite() { return null; },
+  getAppearanceOverlaySprite() { return null; },
 });
-fallbackRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size) => {
-  fallbackDraws.push({ card, x, y, size });
+fallbackRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size, options = {}) => {
+  fallbackDraws.push({ card, x, y, size, options });
 };
 fallbackRenderer.drawHeldDiscardFallback({}, pendingDiscardState, discardResolutionLayout);
 if (fallbackDraws.length !== 1 || fallbackDraws[0].card.id !== pendingDiscardCard.id || fallbackDraws[0].size !== 'big') {
   throw new Error('pending human response should draw a fallback big discard if animation state is momentarily absent');
+}
+if (fallbackDraws[0].options.appearanceOverlay !== 'play') {
+  throw new Error('pending discard fallback should request the play appearance overlay');
+}
+const pendingDrawCard = renderDeck[30];
+fallbackRenderer.drawHeldDrawFallback({}, {
+  ...layoutState,
+  currentSeat: 2,
+  drawnCard: pendingDrawCard,
+  appearingCard: { card: pendingDrawCard, source: 'draw', sourceSeat: 2 },
+  pendingActions: [],
+  playerActions: [{ type: 'peng', seat: 0, card: pendingDrawCard }],
+  phase: PHASES.HUMAN_RESPONSE,
+}, discardResolutionLayout);
+if (
+  fallbackDraws.length !== 2
+  || fallbackDraws[1].card.id !== pendingDrawCard.id
+  || fallbackDraws[1].options.appearanceOverlay !== 'move'
+) {
+  throw new Error('pending draw fallback should request the move appearance overlay');
+}
+overlayCalls.length = 0;
+overlayRenderer.drawCard(
+  createFakeRenderContext(),
+  { id: 'plain-card', key: 'da' },
+  0,
+  0,
+  40,
+  140,
+  true,
+  false,
+  'small'
+);
+if (overlayCalls.length !== 0) {
+  throw new Error('plain card rendering should not request an appearance overlay');
 }
 const claimState = {
   ...pendingDiscardState,
@@ -1485,11 +1628,21 @@ if (onlineRenderer.animationController.onlinePlayback) {
   throw new Error('renderer should release a completed online event before the next event');
 }
 let localPreviewCompleted = 0;
+onlineRenderer.lastState = {
+  seats: [{
+    hand: [
+      { id: 'online-local-peng-a', key: onlineIncoming.key },
+      { id: 'online-local-peng-b', key: onlineIncoming.key },
+    ],
+    melds: [],
+  }],
+};
 onlineRenderer.animationController.playLocalActionPreview({
   type: 'peng',
   seat: 0,
   sourceSeat: 1,
   card: onlineIncoming,
+  keys: [onlineIncoming.key, onlineIncoming.key],
 });
 if (!onlineRenderer.animationController.localActionPreview || !onlineRenderer.animationManager.getVisualState().length) {
   throw new Error('local action preview should begin immediately before the network response arrives');
