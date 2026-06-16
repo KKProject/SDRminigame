@@ -121,10 +121,11 @@ The system SHALL evaluate Shang Da Ren actions for the current rule configuratio
 - **THEN** the system MUST allow that player to continue using later legal peng, zhao, and ta actions
 
 ### Requirement: Win Detection
-The system SHALL detect winning hands using the eight-door Shang Da Ren rule. A winning hand MUST decompose into exactly 8 doors, each door MUST be one of `xxx`, `xyz`, `xxxx`, `xxxxx`, `xxxxxx`, `xx`, or `xy`, and the decomposition MUST contain exactly one `xy` door. Support-pair constraints for 4/5/6-of-a-kind doors MUST be satisfied.
+The system SHALL detect winning hands using the eight-door Shang Da Ren rule. A winning hand MUST decompose into exactly 8 doors, each door MUST be one of `xxx`, `xyz`, `xxxx`, `xxxxx`, `xxxxxx`, `xx`, or `xy`, and the decomposition MUST contain exactly one `xy` door. Support-pair constraints for 4/5/6-of-a-kind doors MUST be satisfied, and discard-history restrictions MUST be applied before exposing hu actions.
 
 #### Scenario: Eight-door win succeeds
 - **WHEN** a player's concealed cards, exposed groups, and the appearing card can be decomposed into 8 valid doors with exactly one `xy` door and all required support pairs
+- **AND** the appearing card is not blocked by discard-history restrictions
 - **THEN** the system MUST produce a win result containing winner, source, winning card, doors, support-pair summary, scoring summary, hu grade, and point-settlement summary
 
 #### Scenario: Missing xy door fails
@@ -141,6 +142,7 @@ The system SHALL detect winning hands using the eight-door Shang Da Ren rule. A 
 
 #### Scenario: Appearing card completes xy
 - **WHEN** the appearing card combines with one same-phrase hand card to form the only `xy` door in an otherwise legal 8-door decomposition
+- **AND** the appearing card is not blocked by discard-history restrictions
 - **THEN** the system MUST allow hu from any appearing-card source
 
 #### Scenario: Appearing card completes pair
@@ -149,6 +151,7 @@ The system SHALL detect winning hands using the eight-door Shang Da Ren rule. A 
 
 #### Scenario: Appearing card triggers regrouping
 - **WHEN** a player has a complete `xyz` phrase and the appearing card is another character from that phrase, allowing regrouping such as `xyz + x` into `xx + yz`
+- **AND** the appearing card is not blocked by discard-history restrictions when it participates in an `xy` or `xyz` door
 - **THEN** the system MUST allow that regrouping only if the final decomposition has exactly 8 doors and exactly one `xy`
 
 #### Scenario: Dealer listening requires kezi
@@ -237,25 +240,68 @@ The system SHALL detect mandatory chi or peng situations, declined-then-later-ch
 - **THEN** the result MUST name the current player as loser and the other three players as winners
 
 ### Requirement: Discard Restrictions
-The system SHALL reject discards from protected complete phrases, enforce phrase-count discard limits, and treat inability to make a legal discard while not winning as circle-loss.
+The system SHALL enforce phrase discard restrictions with a same-phrase reachability algorithm and treat inability to make a legal discard while not winning as circle-loss.
 
-#### Scenario: Complete phrase card is discarded
-- **WHEN** a player's hand contains a complete phrase `xyz` with exactly the three original phrase cards and the player attempts to discard `x`, `y`, or `z` from that complete phrase
+#### Scenario: Exact complete phrase card is discarded
+- **WHEN** a player's same-phrase hand cards are exactly `xyz`
+- **AND** the player attempts to discard `x`, `y`, or `z` from that phrase
 - **THEN** the system MUST prevent the discard for a human player or mark the player circle-loss if the violation is committed by automated play
 
-#### Scenario: Extra phrase card may be discarded
-- **WHEN** a player's hand contains a phrase pattern such as `xxyz`
-- **THEN** the system MUST allow the player to discard at most one extra card from that phrase without treating the original `xyz` as illegally split
+#### Scenario: Same-phrase discard preserves a reachable door
+- **WHEN** a player attempts to discard a card from phrase `x/y/z`
+- **THEN** the system MUST simulate that discard together with prior discards from the same phrase
+- **AND** the discard MUST be legal only if the remaining same-phrase hand cards can still preserve or reach at least one final door among `xyz`, `xxx`, `yyy`, or `zzz` without exceeding the phrase discard allowance
 
-#### Scenario: Four-card phrase discard limit is exceeded
-- **WHEN** a phrase has 4 cards in the player's hand before discard tracking for that phrase and the player attempts to discard more than 1 card from that phrase
-- **THEN** the system MUST mark the player circle-loss
+#### Scenario: Xxyz only discards the extra key
+- **WHEN** a player's same-phrase structure is `xxyz`
+- **THEN** the system MUST allow discarding `x`
+- **AND** the system MUST reject discarding `y` or `z`
 
-#### Scenario: Five-card phrase discard limit is exceeded
-- **WHEN** a phrase has 5 cards in the player's hand before discard tracking for that phrase and the player attempts to discard more than 2 cards from that phrase
-- **THEN** the system MUST mark the player circle-loss
+#### Scenario: Xxxyz supports sequence or triplet remainder
+- **WHEN** a player's same-phrase structure is `xxxyz`
+- **THEN** the system MUST allow discard paths that eventually discard `xx` and preserve `xyz`
+- **AND** the system MUST allow discard paths that eventually discard `yz` and preserve `xxx`
+- **AND** the system MUST reject any discard that can no longer reach either preserved door
+
+#### Scenario: Xxyyz may discard z and then stop
+- **WHEN** a player's same-phrase structure is `xxyyz`
+- **THEN** the system MUST allow discard paths that eventually discard `xy` and preserve `xyz`
+- **AND** the system MUST allow discarding `z` only if no further discard from that phrase is allowed afterward
+- **AND** the system MUST reject follow-up same-phrase discards after `z` because no preserved door remains reachable
+
+#### Scenario: Zzzxxy supports both target doors
+- **WHEN** a player's same-phrase structure is `zzzxxy`
+- **THEN** the system MUST allow discard paths that eventually discard `xzz` and preserve `xyz`
+- **AND** the system MUST allow discard paths that eventually discard `xxy` and preserve `zzz`
+- **AND** the system MUST reject any discard path that cannot still reach one of those preserved doors
 
 #### Scenario: No legal discard exists
 - **WHEN** a player is required to discard, cannot legally discard any hand card, and does not have a legal hu
 - **THEN** the system MUST end the round as circle-loss for that player
+
+### Requirement: Discarded Key Response Restrictions
+The system SHALL prevent a player from eating back a character key that the same player has previously discarded in the current round, including chi actions and chi-style hu decompositions.
+
+#### Scenario: Previously discarded key cannot be chi
+- **WHEN** a player has previously discarded key `x`
+- **AND** another player discards an appearing card with key `x`
+- **AND** the first player otherwise has the hand cards needed to chi that appearing card
+- **THEN** the system MUST NOT offer or allow a chi action for that player with key `x`
+
+#### Scenario: Discard history survives claimed discards
+- **WHEN** a player discards key `x`
+- **AND** that discarded card is later removed from the discard pile because another player claims it
+- **THEN** the system MUST still treat key `x` as previously discarded by the original player for future chi and chi-style hu restrictions
+
+#### Scenario: Previously discarded key cannot produce chi-style hu
+- **WHEN** a player has previously discarded key `x`
+- **AND** another player discards an appearing card with key `x`
+- **AND** every winning decomposition for the first player requires that appearing card to participate in an `xy` or `xyz` door
+- **THEN** the system MUST NOT offer or allow hu for that player with that appearing card
+
+#### Scenario: Non-chi hu remains available
+- **WHEN** a player has previously discarded key `x`
+- **AND** another player discards an appearing card with key `x`
+- **AND** the player has a winning decomposition that uses the appearing card only in an `xx`, `xxx`, `xxxx`, `xxxxx`, or `xxxxxx` same-key door
+- **THEN** the system MUST allow hu if all other win requirements are satisfied
 
