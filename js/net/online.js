@@ -12,12 +12,6 @@ function animationActionType(type) {
   return type;
 }
 
-function appearanceTrace(source, payload = {}) {
-  if (typeof console !== 'undefined' && console.warn) {
-    console.warn('[appearance-trace]', source, payload);
-  }
-}
-
 export function localActionIdentity(action = {}) {
   const type = animationActionType(action.type);
   const cardId = action.card && action.card.id ? action.card.id : (action.cardId || '');
@@ -354,23 +348,6 @@ export default class OnlineController {
       local.pendingActions = [];
       local.playerActions = [];
     }
-    appearanceTrace('online:snapshot', {
-      version: res.version,
-      rawWaiting: Boolean(res.animation && res.animation.waiting),
-      hasCurrentEvent: Boolean(animation.currentEvent),
-      animationWaiting: this.animationWaiting,
-      selfAcked: Boolean(animation.selfAcked),
-      eventSeq: animation.currentEvent && animation.currentEvent.eventSeq,
-      eventType: animation.currentEvent && animation.currentEvent.type,
-      eventSeat: animation.currentEvent && animation.currentEvent.seat,
-      eventCardId: animation.currentEvent && animation.currentEvent.card && animation.currentEvent.card.id,
-      phase: local.phase,
-      currentSeat: local.currentSeat,
-      recentDiscardId: local.recentDiscard && local.recentDiscard.card && local.recentDiscard.card.id,
-      drawnCardId: local.drawnCard && local.drawnCard.id,
-      pendingActionCount: (local.pendingActions || []).length,
-      playerActionCount: (local.playerActions || []).length,
-    });
     this.databus.setRoundState(local);
     this.consumeAnimationState(animation);
     this.setStatus('');
@@ -380,12 +357,6 @@ export default class OnlineController {
   consumeAnimationState(animation = {}) {
     const event = rotatePublicEvent(animation.currentEvent, this.mySeat);
     if (!event) {
-      appearanceTrace('online:consume-empty', {
-        waiting: Boolean(animation.waiting),
-        isAnimating: this.isAnimating,
-        currentEventSeq: this.currentEvent && this.currentEvent.eventSeq,
-        currentEventType: this.currentEvent && this.currentEvent.type,
-      });
       if (this.isAnimating && this.currentEvent) return;
       if (this.animator.releaseOnlineEvent) this.animator.releaseOnlineEvent();
       this.currentEvent = null;
@@ -393,18 +364,6 @@ export default class OnlineController {
       return;
     }
     this.currentEvent = event;
-    appearanceTrace('online:consume-event', {
-      eventSeq: event.eventSeq,
-      type: event.type,
-      seat: event.seat,
-      actingSeat: event.actingSeat,
-      cardId: event.card && event.card.id,
-      resolution: event.appearanceResolution || '',
-      selfAcked: Boolean(animation.selfAcked),
-      isAnimating: this.isAnimating,
-      lastPlayedEventSeq: this.lastPlayedEventSeq,
-      lastAckedEventSeq: this.lastAckedEventSeq,
-    });
     if (animation.selfAcked) {
       this.lastAckedEventSeq = Math.max(this.lastAckedEventSeq, event.eventSeq);
       this.lastPlayedEventSeq = Math.max(this.lastPlayedEventSeq, event.eventSeq);

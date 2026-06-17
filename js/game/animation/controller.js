@@ -4,12 +4,6 @@ import { eventPlan } from './presets';
 const MELD_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta'];
 const RESPONSE_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'];
 
-function appearanceTrace(source, payload = {}) {
-  if (typeof console !== 'undefined' && console.warn) {
-    console.warn('[appearance-trace]', source, payload);
-  }
-}
-
 function isResponseActionForCard(action, cardId) {
   return action
     && RESPONSE_EVENT_TYPES.indexOf(action.type) >= 0
@@ -171,25 +165,6 @@ export default class TableAnimationController {
       releasedStateAppearance = renderer.stateAnimationController.releaseActiveCard(event.card.id);
       renderer.stateAnimationController.lastSignature = `${event.type}:${event.seat}:${event.card.id}`;
     }
-    if (event.type === 'draw' || event.type === 'discard' || isAwaitResponseAppearance) {
-      appearanceTrace('online:start', {
-        eventSeq: event.eventSeq,
-        type: event.type,
-        seat: event.seat,
-        cardId: event.card && event.card.id,
-        resolution: event.appearanceResolution || '',
-        inferredResolution: event.inferredAppearanceResolution || '',
-        releasedStateAppearance,
-        heldCardId: this.heldAppearance && this.heldAppearance.card && this.heldAppearance.card.id,
-        stateActiveId: renderer.stateAnimationController && renderer.stateAnimationController.active
-          ? renderer.stateAnimationController.active.id
-          : null,
-        sameCardVisualCount: event.card
-          ? this.manager.getVisualState().filter((visual) => visual.kind === 'card' && visual.card && visual.card.id === event.card.id).length
-          : 0,
-      });
-    }
-
     // 如果当前事件有卡牌，并且上一张打出的牌（lastDiscardEvent）就是这张牌，
     // 那么让动画从“上一张牌停留的位置”开始飞，而不是从手牌区开始飞。
     const held = renderer.lastDiscardEvent;
@@ -225,21 +200,6 @@ export default class TableAnimationController {
     const plan = eventPlan(event, context);
     return this.manager.play(plan, () => {
       if (!this.onlinePlayback || this.onlinePlayback.eventSeq !== event.eventSeq) return;
-      if (event.type === 'draw' || event.type === 'discard') {
-        appearanceTrace('online:complete', {
-          eventSeq: event.eventSeq,
-          type: event.type,
-          seat: event.seat,
-          cardId: event.card && event.card.id,
-          resolution: event.appearanceResolution || '',
-          inferredResolution: event.inferredAppearanceResolution || '',
-          willHold: Boolean(
-            (event.type === 'draw' || event.type === 'discard')
-            && event.appearanceResolution === 'await-response'
-            && event.card
-          ),
-        });
-      }
       if (
         (event.type === 'draw' || event.type === 'discard')
         && event.appearanceResolution === 'await-response'
@@ -269,12 +229,6 @@ export default class TableAnimationController {
   releaseOnlineEvent(eventSeq) {
     if (!this.onlinePlayback) return;
     if (typeof eventSeq === 'number' && this.onlinePlayback.eventSeq !== eventSeq) return;
-    appearanceTrace('online:release', {
-      eventSeq: this.onlinePlayback.eventSeq,
-      type: this.onlinePlayback.event && this.onlinePlayback.event.type,
-      cardId: this.onlinePlayback.event && this.onlinePlayback.event.card && this.onlinePlayback.event.card.id,
-      heldCardId: this.heldAppearance && this.heldAppearance.card && this.heldAppearance.card.id,
-    });
     this.manager.release(`online:${this.onlinePlayback.eventSeq}`);
     this.onlinePlayback = null;
   }
@@ -284,26 +238,10 @@ export default class TableAnimationController {
     const heldId = `held:${card.id}`;
     this.manager.transferVisuals(planId, heldId);
     this.heldAppearance = { id: heldId, card, position, event };
-    appearanceTrace('held:create', {
-      fromPlanId: planId,
-      heldId,
-      cardId: card.id,
-      eventSeq: event && event.eventSeq,
-      type: event && event.type,
-      seat: event && event.seat,
-      x: Math.round(position.x),
-      y: Math.round(position.y),
-    });
   }
 
   releaseHeldAppearance() {
     if (!this.heldAppearance) return;
-    appearanceTrace('held:release', {
-      heldId: this.heldAppearance.id,
-      cardId: this.heldAppearance.card && this.heldAppearance.card.id,
-      eventSeq: this.heldAppearance.event && this.heldAppearance.event.eventSeq,
-      type: this.heldAppearance.event && this.heldAppearance.event.type,
-    });
     this.manager.release(this.heldAppearance.id);
     this.heldAppearance = null;
   }

@@ -1,1 +1,0 @@
-export const SCREEN_WIDTH = 375; export const SCREEN_HEIGHT = 667; export const DEVICE_PIXEL_RATIO = 2; export const RENDER_PIXEL_RATIO = 2; export const BACKING_STORE_WIDTH = 750; export const BACKING_STORE_HEIGHT = 1334; export const SAFE_AREA_INSETS = { left: 0, top: 0, right: 0, bottom: 0 }; export const SAFE_AREA_BOUNDS = { x: 0, y: 0, width: 375, height: 667 };

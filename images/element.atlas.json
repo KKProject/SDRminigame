@@ -1820,29 +1820,53 @@
       "confidence": "medium",
       "originalIndex": 27
     },
-    "icon_jian_mini": {
+    "icon_jiang_big": {
       "frame": {
-        "x": 1239,
-        "y": 465,
-        "w": 38,
-        "h": 35
+        "x": 276,
+        "y": 684,
+        "w": 83,
+        "h": 302
       },
       "rotated": false,
       "trimmed": false,
       "spriteSourceSize": {
         "x": 0,
         "y": 0,
-        "w": 38,
-        "h": 35
+        "w": 83,
+        "h": 302
       },
       "sourceSize": {
-        "w": 38,
-        "h": 35
+        "w": 83,
+        "h": 302
       },
-      "label": "将小标识",
-      "category": "icon",
-      "confidence": "medium",
-      "originalIndex": 27
+      "label": "底部将区域",
+      "category": "ui",
+      "confidence": "high",
+      "originalIndex": 52
+    },
+    "icon_jiang_small": {
+      "frame": {
+        "x": 1148,
+        "y": 422,
+        "w": 87,
+        "h": 108
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 87,
+        "h": 108
+      },
+      "sourceSize": {
+        "w": 87,
+        "h": 108
+      },
+      "label": "右侧将区域",
+      "category": "ui",
+      "confidence": "high",
+      "originalIndex": 24
     },
     "ui_left_empty_yellow_panel": {
       "frame": {
@@ -1940,54 +1964,6 @@
       "confidence": "high",
       "originalIndex": 19
     },
-    "ui_right_jiang_panel": {
-      "frame": {
-        "x": 1148,
-        "y": 422,
-        "w": 87,
-        "h": 108
-      },
-      "rotated": false,
-      "trimmed": false,
-      "spriteSourceSize": {
-        "x": 0,
-        "y": 0,
-        "w": 87,
-        "h": 108
-      },
-      "sourceSize": {
-        "w": 87,
-        "h": 108
-      },
-      "label": "右侧将区域",
-      "category": "ui",
-      "confidence": "high",
-      "originalIndex": 24
-    },
-    "icon_jiang_small": {
-      "frame": {
-        "x": 1148,
-        "y": 422,
-        "w": 87,
-        "h": 108
-      },
-      "rotated": false,
-      "trimmed": false,
-      "spriteSourceSize": {
-        "x": 0,
-        "y": 0,
-        "w": 87,
-        "h": 108
-      },
-      "sourceSize": {
-        "w": 87,
-        "h": 108
-      },
-      "label": "右侧将区域",
-      "category": "ui",
-      "confidence": "high",
-      "originalIndex": 24
-    },
     "icon_pu_small": {
       "frame": {
         "x": 1239,
@@ -2012,7 +1988,7 @@
       "confidence": "medium",
       "originalIndex": 26
     },
-
+    
     "tile_back_green_small": {
       "frame": {
         "x": 1150,
@@ -2133,54 +2109,7 @@
       "confidence": "high",
       "originalIndex": 51
     },
-    "ui_bottom_jiang_panel": {
-      "frame": {
-        "x": 276,
-        "y": 684,
-        "w": 83,
-        "h": 302
-      },
-      "rotated": false,
-      "trimmed": false,
-      "spriteSourceSize": {
-        "x": 0,
-        "y": 0,
-        "w": 83,
-        "h": 302
-      },
-      "sourceSize": {
-        "w": 83,
-        "h": 302
-      },
-      "label": "底部将区域",
-      "category": "ui",
-      "confidence": "high",
-      "originalIndex": 52
-    },
-    "icon_jiang_big": {
-      "frame": {
-        "x": 276,
-        "y": 684,
-        "w": 83,
-        "h": 302
-      },
-      "rotated": false,
-      "trimmed": false,
-      "spriteSourceSize": {
-        "x": 0,
-        "y": 0,
-        "w": 83,
-        "h": 302
-      },
-      "sourceSize": {
-        "w": 83,
-        "h": 302
-      },
-      "label": "底部将区域",
-      "category": "ui",
-      "confidence": "high",
-      "originalIndex": 52
-    },
+    
     "icon_jiang_bottom_small": {
       "frame": {
         "x": 276,
