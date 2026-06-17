@@ -27,7 +27,7 @@
     "useCompilerPlugins": false
   },
   "compileType": "game",
-  "libVersion": "latest",
+  "libVersion": "3.15.2",
   "appid": "wx487628e952ff200d",
   "projectname": "quickstart",
   "cloudfunctionRoot": "cloudfunctions/",
@@ -53,56 +53,56 @@
   "packOptions": {
     "ignore": [
       {
-        "type": "folder",
-        "value": ".git"
+        "value": ".git",
+        "type": "folder"
       },
       {
-        "type": "folder",
-        "value": ".cursor"
+        "value": ".cursor",
+        "type": "folder"
       },
       {
-        "type": "folder",
-        "value": ".codex"
+        "value": ".codex",
+        "type": "folder"
       },
       {
-        "type": "folder",
-        "value": ".tmp-debug-layout"
+        "value": ".tmp-debug-layout",
+        "type": "folder"
       },
       {
-        "type": "folder",
-        "value": ".tmp-huapai-checks"
+        "value": ".tmp-huapai-checks",
+        "type": "folder"
       },
       {
-        "type": "folder",
-        "value": ".tmp-online-checks"
+        "value": ".tmp-online-checks",
+        "type": "folder"
       },
       {
-        "type": "folder",
-        "value": ".tmp-animation-checks"
+        "value": ".tmp-animation-checks",
+        "type": "folder"
       },
       {
-        "type": "folder",
-        "value": "openspec"
+        "value": "openspec",
+        "type": "folder"
       },
       {
-        "type": "folder",
-        "value": "scripts"
+        "value": "scripts",
+        "type": "folder"
       },
       {
-        "type": "folder",
-        "value": "cloudfunctions"
+        "value": "cloudfunctions",
+        "type": "folder"
       },
       {
-        "type": "file",
-        "value": ".DS_Store"
+        "value": ".DS_Store",
+        "type": "file"
       },
       {
-        "type": "file",
-        "value": "README.md"
+        "value": "README.md",
+        "type": "file"
       },
       {
-        "type": "file",
-        "value": ".eslintrc.js"
+        "value": ".eslintrc.js",
+        "type": "file"
       }
     ],
     "include": []
