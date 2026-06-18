@@ -71,13 +71,17 @@ async function loadRenderRuntime(windowInfo, options = {}) {
     setTransform: [],
     scale: [],
   };
-  const context = {};
-  if (options.withoutSetTransform) {
-    context.scale = (...args) => calls.scale.push(args);
-  } else {
-    context.setTransform = (...args) => calls.setTransform.push(args);
-    context.scale = (...args) => calls.scale.push(args);
+  function createContext(id = 'ctx') {
+    const context = { id };
+    if (options.withoutSetTransform) {
+      context.scale = (...args) => calls.scale.push([id, ...args]);
+    } else {
+      context.setTransform = (...args) => calls.setTransform.push([id, ...args]);
+      context.scale = (...args) => calls.scale.push([id, ...args]);
+    }
+    return context;
   }
+  let context = createContext('ctx-1');
   const canvas = {
     width: 0,
     height: 0,
@@ -99,27 +103,61 @@ async function loadRenderRuntime(windowInfo, options = {}) {
 
   const url = `${pathToFileURL(join(tempDir, 'render-runtime.mjs')).href}?case=${encodeURIComponent(JSON.stringify(windowInfo))}&fallback=${Boolean(options.withoutSetTransform)}`;
   const module = await import(url);
-  return { module, canvas, calls };
+  return {
+    module,
+    canvas,
+    calls,
+    replaceContext(id) {
+      context = createContext(id);
+      return context;
+    },
+  };
 }
 
-let renderCase = await loadRenderRuntime({ windowWidth: 320, windowHeight: 568, pixelRatio: 1 });
+let renderCase = await loadRenderRuntime({ windowWidth: 200, windowHeight: 320, pixelRatio: 1 });
 if (
   renderCase.module.SCREEN_WIDTH !== 320
-  || renderCase.module.SCREEN_HEIGHT !== 568
+  || renderCase.module.SCREEN_HEIGHT !== 200
   || renderCase.module.RENDER_PIXEL_RATIO !== 1
   || renderCase.canvas.width !== 320
-  || renderCase.canvas.height !== 568
+  || renderCase.canvas.height !== 200
 ) {
-  throw new Error('DPR 1 render setup should keep logical and backing sizes equal');
-}
-if (renderCase.calls.setTransform.length !== 1 || renderCase.calls.setTransform[0].join(',') !== '1,0,0,1,0,0') {
-  throw new Error('DPR 1 render setup should apply one identity transform');
+  throw new Error('small portrait setup should normalize backing size but remain below stable layout limits');
 }
 if (renderCase.module.getRenderMetrics() !== null) {
-  throw new Error('portrait startup metrics must not create a stable interactive layout');
+  throw new Error('too-small normalized startup metrics must not create a stable interactive layout');
+}
+const unstableRestoreResult = renderCase.module.restoreRenderContext();
+if (unstableRestoreResult.status !== 'no-stable-metrics' || renderCase.calls.setTransform.length !== 1) {
+  throw new Error('foreground restore without stable landscape metrics must not reapply transient startup metrics');
+}
+
+renderCase = await loadRenderRuntime({ windowWidth: 320, windowHeight: 568, pixelRatio: 1 });
+if (
+  renderCase.module.SCREEN_WIDTH !== 568
+  || renderCase.module.SCREEN_HEIGHT !== 320
+  || renderCase.module.RENDER_PIXEL_RATIO !== 1
+  || renderCase.canvas.width !== 568
+  || renderCase.canvas.height !== 320
+) {
+  throw new Error('DPR 1 portrait startup should normalize to landscape logical size');
+}
+if (renderCase.calls.setTransform.length !== 1 || renderCase.calls.setTransform[0].join(',') !== 'ctx-1,1,0,0,1,0,0') {
+  throw new Error('DPR 1 render setup should apply one identity transform');
+}
+if (
+  !renderCase.module.getRenderMetrics()
+  || renderCase.module.getRenderMetrics().width !== 568
+  || renderCase.module.getRenderMetrics().height !== 320
+) {
+  throw new Error('portrait startup metrics should create a stable normalized landscape layout');
 }
 let metricsNotificationCount = 0;
-renderCase.module.subscribeRenderMetrics(() => { metricsNotificationCount += 1; });
+let lastMetricsDetail = null;
+renderCase.module.subscribeRenderMetrics((metrics, detail) => {
+  metricsNotificationCount += 1;
+  lastMetricsDetail = detail || null;
+});
 const recoveredLandscape = {
   windowWidth: 844,
   windowHeight: 390,
@@ -144,9 +182,63 @@ renderCase.module.renderMetricsManager.consider(recoveredLandscape);
 if (renderCase.calls.setTransform.length !== recoveredTransformCount || metricsNotificationCount !== 1) {
   throw new Error('duplicate stable metrics should not reset canvas or notify consumers');
 }
-renderCase.module.renderMetricsManager.consider({ windowWidth: 390, windowHeight: 844, pixelRatio: 3 });
-if (renderCase.module.getRenderMetrics().width !== 844 || renderCase.calls.setTransform.length !== recoveredTransformCount) {
-  throw new Error('invalid transitional metrics must not replace the last stable landscape metrics');
+renderCase.canvas.width = 0;
+renderCase.canvas.height = 0;
+const restoreResult = renderCase.module.restoreRenderContext();
+if (
+  restoreResult.status !== 'restored'
+  || renderCase.canvas.width !== 1688
+  || renderCase.canvas.height !== 780
+  || renderCase.calls.setTransform.length !== recoveredTransformCount + 1
+  || metricsNotificationCount !== 1
+) {
+  throw new Error('foreground restore should reapply canvas/context without notifying layout consumers');
+}
+renderCase.module.renderMetricsManager.consider(recoveredLandscape);
+if (renderCase.calls.setTransform.length !== recoveredTransformCount + 1 || metricsNotificationCount !== 1) {
+  throw new Error('ordinary duplicate metrics must remain idempotent after foreground restore');
+}
+const transientPortrait = renderCase.module.renderMetricsManager.consider({ windowWidth: 390, windowHeight: 844, pixelRatio: 3 });
+if (
+  transientPortrait.status !== 'transient-orientation'
+  || renderCase.module.getRenderMetrics().width !== 844
+  || renderCase.calls.setTransform.length !== recoveredTransformCount + 2
+) {
+  throw new Error('portrait transition matching stable landscape should restore context without replacing metrics');
+}
+const recoveredDuplicate = renderCase.module.renderMetricsManager.consider(recoveredLandscape);
+if (
+  recoveredDuplicate.status !== 'recovered-duplicate'
+  || renderCase.module.getRenderMetrics().width !== 844
+  || renderCase.calls.setTransform.length !== recoveredTransformCount + 3
+  || metricsNotificationCount !== 2
+  || !lastMetricsDetail
+  || lastMetricsDetail.forceLayout !== true
+) {
+  throw new Error('same landscape metrics after an invalid transition should force a stable layout refresh');
+}
+renderCase.canvas.width = 390;
+renderCase.canvas.height = 844;
+const repeatedRestoreResult = renderCase.module.restoreRenderContext();
+if (
+  repeatedRestoreResult.status !== 'restored'
+  || renderCase.canvas.width !== 1688
+  || renderCase.canvas.height !== 780
+  || renderCase.calls.setTransform.length !== recoveredTransformCount + 4
+  || metricsNotificationCount !== 2
+) {
+  throw new Error('foreground restore window should recover canvas/context after a delayed portrait transition');
+}
+const replacementContext = renderCase.replaceContext('ctx-after-share');
+const replacedContextRestore = renderCase.module.restoreRenderContext();
+if (
+  replacedContextRestore.status !== 'restored'
+  || renderCase.module.ctx !== replacementContext
+  || renderCase.calls.setTransform.length !== recoveredTransformCount + 5
+  || renderCase.calls.setTransform.at(-1).join(',') !== 'ctx-after-share,2,0,0,2,0,0'
+  || metricsNotificationCount !== 2
+) {
+  throw new Error('foreground restore should reacquire a replaced 2d context after sharing');
 }
 const safeAreaUpdate = {
   ...recoveredLandscape,
@@ -156,22 +248,22 @@ renderCase.module.renderMetricsManager.consider(safeAreaUpdate);
 renderCase.module.renderMetricsManager.consider(safeAreaUpdate);
 if (
   renderCase.module.getRenderMetrics().safeAreaInsets.left !== 59
-  || metricsNotificationCount !== 2
+  || metricsNotificationCount !== 3
 ) {
   throw new Error('confirmed safe-area changes should produce one new stable metrics notification');
 }
 
 renderCase = await loadRenderRuntime({ windowWidth: 375, windowHeight: 667, pixelRatio: 2 });
 if (
-  renderCase.module.SCREEN_WIDTH !== 375
-  || renderCase.module.SCREEN_HEIGHT !== 667
+  renderCase.module.SCREEN_WIDTH !== 667
+  || renderCase.module.SCREEN_HEIGHT !== 375
   || renderCase.module.RENDER_PIXEL_RATIO !== 2
-  || renderCase.canvas.width !== 750
-  || renderCase.canvas.height !== 1334
+  || renderCase.canvas.width !== 1334
+  || renderCase.canvas.height !== 750
 ) {
-  throw new Error('DPR 2 render setup should use high-DPI backing store with logical exports');
+  throw new Error('DPR 2 portrait startup should normalize to high-DPI landscape backing store');
 }
-if (renderCase.calls.setTransform.length !== 1 || renderCase.calls.setTransform[0].join(',') !== '2,0,0,2,0,0') {
+if (renderCase.calls.setTransform.length !== 1 || renderCase.calls.setTransform[0].join(',') !== 'ctx-1,2,0,0,2,0,0') {
   throw new Error('DPR 2 render setup should apply one scaled transform');
 }
 
@@ -217,20 +309,22 @@ renderCase = await loadRenderRuntime({ windowWidth: 390, windowHeight: 844, pixe
 if (
   renderCase.module.DEVICE_PIXEL_RATIO !== 3
   || renderCase.module.RENDER_PIXEL_RATIO !== 2
-  || renderCase.canvas.width !== 780
-  || renderCase.canvas.height !== 1688
+  || renderCase.module.SCREEN_WIDTH !== 844
+  || renderCase.module.SCREEN_HEIGHT !== 390
+  || renderCase.canvas.width !== 1688
+  || renderCase.canvas.height !== 780
 ) {
-  throw new Error('high-DPR render setup should clamp backing store scale');
+  throw new Error('high-DPR portrait setup should normalize landscape size and clamp backing store scale');
 }
 
 renderCase = await loadRenderRuntime({ screenWidth: 300, screenHeight: 500 }, { withoutSetTransform: true });
 if (
-  renderCase.module.SCREEN_WIDTH !== 300
-  || renderCase.module.SCREEN_HEIGHT !== 500
+  renderCase.module.SCREEN_WIDTH !== 500
+  || renderCase.module.SCREEN_HEIGHT !== 300
   || renderCase.module.RENDER_PIXEL_RATIO !== 1
   || renderCase.calls.scale.length !== 1
 ) {
-  throw new Error('render setup should fall back safely when pixel ratio or setTransform are unavailable');
+  throw new Error('render setup should normalize fallback screen size when pixel ratio or setTransform are unavailable');
 }
 
 if (ASSET_MANIFEST.images.table !== 'images/background.jpg') {
@@ -1636,6 +1730,7 @@ if (
 ) {
   throw new Error('viewport changes should preserve hand columns while rebuilding background and hit regions');
 }
+const stableLayoutForPreview = renderer.lastLayout;
 renderer.animationManager.play({
   id: 'duplicate-viewport-animation',
   visuals: [],
@@ -1648,19 +1743,31 @@ if (renderer.setViewport({
 }) || !renderer.animationManager.isPlaying('duplicate-viewport-animation')) {
   throw new Error('duplicate viewport notifications must not cancel current animations');
 }
+renderer.lastLayout = { stale: true };
+renderer.buttonPanelSignature = 'stale-buttons';
+if (!renderer.setViewport({
+  width: 844,
+  height: 390,
+  safeAreaInsets: { left: 47, top: 0, right: 0, bottom: 21 },
+}, { forceLayout: true })
+  || renderer.lastLayout !== null
+  || renderer.buttonPanelSignature
+  || !renderer.animationManager.isPlaying('duplicate-viewport-animation')) {
+  throw new Error('forced stable viewport refresh should clear layout caches without cancelling current animations');
+}
 
 const onlineRenderer = new TableRenderer({
   getImage() { return null; },
   getCardSprite() { return null; },
   getCardBackSprite() { return null; },
 });
-onlineRenderer.lastLayout = renderer.lastLayout;
+onlineRenderer.lastLayout = stableLayoutForPreview;
 const fullPreviewRenderer = new TableRenderer({
   getImage() { return null; },
   getCardSprite() { return null; },
   getCardBackSprite() { return null; },
 });
-fullPreviewRenderer.lastLayout = renderer.lastLayout;
+fullPreviewRenderer.lastLayout = stableLayoutForPreview;
 const localChiCards = [
   { id: 'local-chi-x', key: 'x', phraseId: 'preview' },
   { id: 'local-chi-y', key: 'y', phraseId: 'preview' },
@@ -1716,7 +1823,7 @@ if (fullLocalPreviewComplete !== 1 || fullLocalAuthorityComplete !== 1) {
     getCardSprite() { return null; },
     getCardBackSprite() { return null; },
   });
-  previewRenderer.lastLayout = renderer.lastLayout;
+  previewRenderer.lastLayout = stableLayoutForPreview;
   const hand = Array.from({ length: testCase.handCount }).map((_, index) => ({
     id: `${testCase.type}-hand-${index}`,
     key: 'same',

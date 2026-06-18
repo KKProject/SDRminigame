@@ -52,15 +52,21 @@ function clamp(value, min, max) {
 }
 
 export function createRenderMetrics(windowInfo = {}, maxPixelRatio = MAX_RENDER_PIXEL_RATIO) {
-  const width = fallbackNumber(windowInfo.windowWidth, fallbackNumber(windowInfo.screenWidth, 375));
-  const height = fallbackNumber(windowInfo.windowHeight, fallbackNumber(windowInfo.screenHeight, 667));
+  const rawWidth = fallbackNumber(windowInfo.windowWidth, fallbackNumber(windowInfo.screenWidth, 375));
+  const rawHeight = fallbackNumber(windowInfo.windowHeight, fallbackNumber(windowInfo.screenHeight, 667));
+  const orientationNormalized = rawWidth < rawHeight;
+  const width = orientationNormalized ? rawHeight : rawWidth;
+  const height = orientationNormalized ? rawWidth : rawHeight;
   const devicePixelRatio = fallbackNumber(windowInfo.pixelRatio, fallbackNumber(windowInfo.devicePixelRatio, 1));
   const renderPixelRatio = clampRenderPixelRatio(devicePixelRatio, maxPixelRatio);
-  const safeArea = createSafeAreaMetrics(windowInfo, width, height);
+  const safeArea = createSafeAreaMetrics(orientationNormalized ? {} : windowInfo, width, height);
 
   return {
     width,
     height,
+    rawWidth,
+    rawHeight,
+    orientationNormalized,
     devicePixelRatio,
     renderPixelRatio,
     backingStoreWidth: Math.round(width * renderPixelRatio),
@@ -160,6 +166,12 @@ function syncLegacyExports(metrics) {
   SAFE_AREA_BOUNDS = metrics.safeAreaBounds;
 }
 
+function syncRenderTarget(targetCanvas, targetContext) {
+  canvas = targetCanvas;
+  ctx = targetContext;
+  if (targetCanvas) GameGlobal.canvas = targetCanvas;
+}
+
 export class RenderMetricsManager {
   constructor(options = {}) {
     this.runtime = options.runtime || null;
@@ -172,6 +184,7 @@ export class RenderMetricsManager {
     this.candidateCount = 0;
     this.listeners = new Set();
     this.appliedSignature = options.appliedSignature || '';
+    this.pendingStableRefresh = false;
   }
 
   get() {
@@ -188,18 +201,64 @@ export class RenderMetricsManager {
     return this.consider(readWindowInfo(this.runtime));
   }
 
+  resolveRenderTarget() {
+    const globalCanvas = typeof GameGlobal !== 'undefined' && GameGlobal.canvas ? GameGlobal.canvas : this.canvas;
+    if (globalCanvas) this.canvas = globalCanvas;
+    if (this.canvas && this.canvas.getContext) {
+      const nextContext = this.canvas.getContext('2d');
+      if (nextContext) this.context = nextContext;
+    }
+    syncRenderTarget(this.canvas, this.context);
+    return { canvas: this.canvas, context: this.context };
+  }
+
+  restoreStableContext() {
+    if (!this.stableMetrics || !this.stableSignature) {
+      return { status: 'no-stable-metrics', metrics: null };
+    }
+    this.resolveRenderTarget();
+    applyCanvasMetrics(this.canvas, this.stableMetrics);
+    applyContextScale(this.context, this.stableMetrics.renderPixelRatio);
+    this.appliedSignature = this.stableSignature;
+    return { status: 'restored', metrics: this.stableMetrics };
+  }
+
   consider(windowInfo) {
     const metrics = createRenderMetrics(windowInfo);
     if (!isValidLandscapeMetrics(metrics)) {
       this.candidateSignature = '';
       this.candidateCount = 0;
+      if (this.stableMetrics) this.pendingStableRefresh = true;
       return { status: 'invalid', metrics };
+    }
+
+    if (
+      metrics.orientationNormalized
+      && this.stableMetrics
+      && metrics.width === this.stableMetrics.width
+      && metrics.height === this.stableMetrics.height
+      && metrics.devicePixelRatio === this.stableMetrics.devicePixelRatio
+    ) {
+      this.candidateSignature = '';
+      this.candidateCount = 0;
+      this.pendingStableRefresh = true;
+      this.restoreStableContext();
+      return { status: 'transient-orientation', metrics: this.stableMetrics };
     }
 
     const signature = renderMetricsSignature(metrics);
     if (signature === this.stableSignature) {
       this.candidateSignature = '';
       this.candidateCount = 0;
+      if (this.pendingStableRefresh) {
+        this.pendingStableRefresh = false;
+        this.restoreStableContext();
+        this.listeners.forEach((listener) => listener(this.stableMetrics, {
+          forceLayout: true,
+          reason: 'stable-after-invalid',
+        }));
+        return { status: 'recovered-duplicate', metrics: this.stableMetrics };
+      }
       return { status: 'duplicate', metrics: this.stableMetrics };
     }
 
@@ -219,6 +278,7 @@ export class RenderMetricsManager {
   commit(metrics, signature = renderMetricsSignature(metrics)) {
     if (signature === this.stableSignature) return this.stableMetrics;
 
+    this.resolveRenderTarget();
     if (signature !== this.appliedSignature) {
       applyCanvasMetrics(this.canvas, metrics);
       applyContextScale(this.context, metrics.renderPixelRatio);
@@ -229,16 +289,17 @@ export class RenderMetricsManager {
     this.stableSignature = signature;
     this.candidateSignature = '';
     this.candidateCount = 0;
+    this.pendingStableRefresh = false;
     syncLegacyExports(metrics);
-    this.listeners.forEach((listener) => listener(metrics));
+    this.listeners.forEach((listener) => listener(metrics, { forceLayout: false, reason: 'committed' }));
     return metrics;
   }
 }
 
 GameGlobal.canvas = wx.createCanvas();
 
-export const canvas = GameGlobal.canvas;
-export const ctx = canvas.getContext('2d');
+export let canvas = GameGlobal.canvas;
+export let ctx = canvas.getContext('2d');
 
 const initialWindowInfo = readWindowInfo(wx);
 const initialMetrics = createRenderMetrics(initialWindowInfo);
@@ -267,4 +328,8 @@ export function subscribeRenderMetrics(listener) {
 
 export function refreshRenderMetrics() {
   return renderMetricsManager.refresh();
+}
+
+export function restoreRenderContext() {
+  return renderMetricsManager.restoreStableContext();
 }

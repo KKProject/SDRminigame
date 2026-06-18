@@ -95,7 +95,7 @@ export default class TableRenderer {
     this.currentJiangPhraseId = null;
   }
 
-  setViewport(metrics) {
+  setViewport(metrics, options = {}) {
     if (!metrics) return false;
     const insets = metrics.safeAreaInsets || {};
     const signature = [
@@ -106,7 +106,13 @@ export default class TableRenderer {
       insets.right || 0,
       insets.bottom || 0,
     ].join(':');
-    if (signature === this.viewportSignature) return false;
+    if (signature === this.viewportSignature) {
+      if (!options.forceLayout) return false;
+      this.lastLayout = null;
+      this.buttonPanelSignature = '';
+      this.buttonPress = null;
+      return true;
+    }
 
     this.animationController.prepareForLayoutChange();
     this.stateAnimationController.handleLayoutChange();

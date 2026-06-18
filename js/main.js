@@ -2,6 +2,7 @@ import {
   ctx,
   getRenderMetrics,
   refreshRenderMetrics,
+  restoreRenderContext,
   subscribeRenderMetrics,
 } from './render';
 import AssetLoader from './game/assets';
@@ -26,11 +27,13 @@ export default class Main {
     this.assets.loadImages();
     this.menu = new StartMenu(this.handleModeSelect.bind(this));
     this.metricsRetryRemaining = 120;
+    this.contextRestoreRetryRemaining = 0;
     this.boundMetricsChange = this.handleMetricsChange.bind(this);
     this.unsubscribeMetrics = subscribeRenderMetrics(this.boundMetricsChange);
     this.boundWindowResize = this.handleWindowResize.bind(this);
+    this.boundAppShow = this.handleAppShow.bind(this);
     if (wx.onWindowResize) wx.onWindowResize(this.boundWindowResize);
-    if (wx.onShow) wx.onShow(this.boundWindowResize);
+    if (wx.onShow) wx.onShow(this.boundAppShow);
     const metrics = getRenderMetrics();
     if (metrics) this.handleMetricsChange(metrics);
     cancelAnimationFrame(this.aniId);
@@ -42,10 +45,17 @@ export default class Main {
     refreshRenderMetrics();
   }
 
-  handleMetricsChange(metrics) {
+  handleAppShow() {
+    restoreRenderContext();
+    this.contextRestoreRetryRemaining = 120;
+    this.metricsRetryRemaining = 120;
+    refreshRenderMetrics();
+  }
+
+  handleMetricsChange(metrics, detail = {}) {
     if (!metrics) return;
     this.metricsRetryRemaining = 0;
-    this.renderer.setViewport(metrics);
+    this.renderer.setViewport(metrics, { forceLayout: Boolean(detail.forceLayout) });
     this.menu.handleMetricsChange();
     if (!this.mode && !this.menu.active) this.menu.show();
   }
@@ -90,6 +100,10 @@ export default class Main {
   }
 
   loop(time) {
+    if (this.contextRestoreRetryRemaining > 0) {
+      this.contextRestoreRetryRemaining -= 1;
+      restoreRenderContext();
+    }
     if (this.metricsRetryRemaining > 0) {
       this.metricsRetryRemaining -= 1;
       refreshRenderMetrics();

@@ -517,12 +517,18 @@ The system SHALL configure the WeChat minigame to run in landscape orientation f
 - **AND** 客户端 MUST NOT 重复播放已经完成的动画
 
 ### Requirement: 运行时屏幕指标稳定与重布局
-系统 SHALL 使用最新稳定的横屏窗口宽高、渲染像素比和安全区作为菜单、牌桌布局、绘制和触摸命中的统一逻辑指标。系统 MUST NOT 使用启动期间无效、未稳定或属于纵屏过渡状态的指标创建正式交互布局。
+系统 SHALL 使用最新稳定的横屏窗口宽高、渲染像素比和安全区作为菜单、牌桌布局、绘制和触摸命中的统一逻辑指标。系统 MUST 将运行时报告的竖屏窗口宽高归一化为横屏逻辑宽高，并 MUST NOT 使用竖屏来源的安全区创建正式横屏内容区域。系统 MUST NOT 使用启动期间无效、未稳定或过小的指标创建正式交互布局。系统 SHALL 在小程序从后台、退出状态或微信分享面板恢复到前台时，在短暂恢复窗口内持续重新解析当前 Canvas/2D context，并重新应用当前稳定指标对应的 Canvas backing store 与 2D context 逻辑缩放，即使窗口指标签名未发生变化。
 
 #### Scenario: 启动首帧返回异常尺寸
-- **WHEN** 微信运行时在横屏游戏启动首帧返回无效尺寸、过小尺寸或宽度不大于高度的过渡尺寸
+- **WHEN** 微信运行时在横屏游戏启动首帧返回无效尺寸或归一化后仍过小的尺寸
 - **THEN** 系统 MUST NOT 使用该候选指标创建正式菜单、牌桌元素或触摸命中区域
 - **AND** 系统 MUST 在后续帧或窗口变化通知后重新读取窗口指标
+
+#### Scenario: 竖屏尺寸归一为横屏逻辑布局
+- **WHEN** 微信运行时报告宽度小于高度的窗口尺寸
+- **THEN** 系统 MUST 使用较大值作为逻辑宽度，较小值作为逻辑高度
+- **AND** 菜单、牌桌布局、Canvas backing store 和触摸命中区域 MUST 按归一化后的横屏逻辑尺寸创建
+- **AND** 系统 MUST NOT 将该竖屏来源的安全区作为正式横屏安全区提交
 
 #### Scenario: 横屏尺寸稳定后创建布局
 - **WHEN** 系统确认一组有效横屏窗口指标已经稳定
@@ -535,13 +541,31 @@ The system SHALL configure the WeChat minigame to run in landscape orientation f
 - **AND** 系统 MUST 重新计算菜单、牌桌元素和触摸命中区域
 - **AND** 背景 MUST 继续覆盖更新后的完整 Canvas
 
+#### Scenario: 前台恢复时相同指标恢复渲染上下文
+- **WHEN** 小程序从后台或退出状态恢复到前台，且微信运行时报告的有效横屏指标与当前稳定指标相同
+- **THEN** 系统 MUST 重新解析当前 Canvas/2D context 并应用当前稳定指标对应的 Canvas backing store 和 2D context 逻辑缩放
+- **AND** 系统 MUST 保留当前稳定菜单、牌桌布局和触摸命中区域
+- **AND** 背景 MUST 在后续渲染帧继续覆盖完整 Canvas
+
+#### Scenario: 分享返回经历竖屏过渡
+- **WHEN** 玩家唤起微信分享房间后返回小游戏，运行时在短时间内经历横屏、微信竖屏界面和横屏恢复
+- **THEN** 系统 MUST 在前台恢复窗口内持续重新应用最后稳定横屏 Canvas backing store 和 2D context 逻辑缩放
+- **AND** 竖屏来源的窗口指标 MUST 归一化为横屏逻辑尺寸，并 MUST NOT 覆盖最后稳定横屏安全区
+- **AND** 最终横屏恢复后，即使横屏指标签名与过渡前相同，系统 MUST 重新刷新菜单、牌桌布局缓存和触摸命中区域
+- **AND** 菜单、牌桌布局和触摸命中区域 MUST 继续使用稳定横屏指标
+
+#### Scenario: 前台恢复后发现真实尺寸变化
+- **WHEN** 小程序恢复到前台后，微信运行时随后报告与当前稳定指标不同的有效横屏宽高、像素比或安全区
+- **THEN** 系统 MUST 沿用稳定确认流程提交新指标
+- **AND** 系统 MUST 按新稳定指标重新计算菜单、牌桌元素和触摸命中区域
+
 #### Scenario: 异常候选不覆盖稳定布局
 - **WHEN** 已存在稳定横屏布局后运行时短暂返回无效或纵屏过渡指标
 - **THEN** 系统 MUST 保留当前稳定布局
 - **AND** 异常候选 MUST NOT 导致元素挤在一起、Canvas 重置或触摸区域错位
 
-#### Scenario: 重复相同指标通知
-- **WHEN** 系统重复收到与当前稳定指标相同的窗口信息
+#### Scenario: 普通重复相同指标通知
+- **WHEN** 系统通过普通窗口变化通知或帧轮询重复收到与当前稳定指标相同的窗口信息
 - **THEN** 系统 MUST 幂等忽略重复通知
 - **AND** 系统 MUST NOT 重复重置 Canvas、布局或原生授权按钮
 
@@ -554,6 +578,17 @@ The system SHALL configure the WeChat minigame to run in landscape orientation f
 - **WHEN** 运行布局与渲染自检脚本
 - **THEN** 检查 MUST 模拟异常启动尺寸随后恢复为稳定横屏尺寸
 - **AND** 检查 MUST 断言正式布局只使用稳定尺寸且重复通知不会重复重建
+
+#### Scenario: 自动检查覆盖前台恢复相同指标
+- **WHEN** 运行布局与渲染自检脚本
+- **THEN** 检查 MUST 模拟前台恢复时窗口指标签名保持不变但 Canvas 或 2D context 需要重新应用
+- **AND** 检查 MUST 断言系统重新解析当前 2D context，并恢复 Canvas backing store 与 2D context 逻辑缩放，同时不重建布局或原生授权按钮
+
+#### Scenario: 自动检查覆盖分享返回竖屏过渡
+- **WHEN** 运行布局与渲染自检脚本
+- **THEN** 检查 MUST 模拟稳定横屏指标已存在后，分享返回期间 Canvas 或窗口候选短暂变为竖屏
+- **AND** 检查 MUST 断言系统将竖屏窗口候选归一为横屏逻辑尺寸，并在恢复窗口内重新应用最后稳定横屏 Canvas backing store 与 2D context 逻辑缩放
+- **AND** 检查 MUST 断言同一横屏指标在竖屏过渡后返回时触发一次布局缓存和命中区域刷新
 
 ### Requirement: 全局将牌覆盖显示
 系统 SHALL 在本局将牌句子确定后，为所有正面可见且属于该将牌句子的牌面叠加将牌图片覆盖。大牌 MUST 使用 `icon_jiang_big`，小牌 MUST 使用 `icon_jiang_small`，mini 牌 MUST 使用 `icon_jian_mini_hr`。

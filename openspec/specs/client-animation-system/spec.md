@@ -274,7 +274,7 @@ TBD - created by archiving change refactor-tween-animation-system. Update Purpos
 - **AND** 客户端 MUST 暂不暴露 `pendingActions` 或 `playerActions` 给渲染层
 
 ### Requirement: 布局尺寸变化时动画安全恢复
-客户端动画系统 SHALL 在稳定屏幕指标变化时停止使用旧布局坐标，并 MUST 清理或恢复所有依赖旧动画目标的临时视觉状态。
+客户端动画系统 SHALL 在稳定屏幕指标变化时停止使用旧布局坐标，并 MUST 清理或恢复所有依赖旧动画目标的临时视觉状态。客户端动画系统 MUST NOT 将前台恢复时的相同稳定指标渲染上下文重应用视为布局尺寸变化。
 
 #### Scenario: 活动动画期间稳定尺寸变化
 - **WHEN** 抓牌、出牌、归位或凑牌动画播放期间稳定屏幕指标发生变化
@@ -290,6 +290,11 @@ TBD - created by archiving change refactor-tween-animation-system. Update Purpos
 - **WHEN** 客户端收到与当前稳定指标相同的重复窗口通知
 - **THEN** 动画管理器 MUST NOT 取消或重启动当前动画
 - **AND** 动画完成通知与音效 MUST NOT 因重复通知再次触发
+
+#### Scenario: 前台恢复相同指标不取消动画
+- **WHEN** 小程序恢复到前台并重新应用与当前稳定指标相同的 Canvas backing store 和 2D context 逻辑缩放
+- **THEN** 动画管理器 MUST NOT 将该恢复动作视为稳定尺寸变化
+- **AND** 当前动画、音效状态和完成通知 MUST NOT 因该恢复动作重复、取消或重启
 
 ### Requirement: 出现牌来源覆盖图
 客户端动画系统 SHALL 在出现牌牌面上按来源叠加对应 atlas 覆盖图。打出来的出现牌 MUST 使用 `ui_left_play_panel_da`，从牌堆摸出来的出现牌 MUST 使用 `ui_left_move_panel_ban`。
