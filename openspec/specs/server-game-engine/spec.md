@@ -4,7 +4,7 @@
 TBD - created by archiving change add-wechat-online-battle. Update Purpose after archive.
 ## Requirements
 ### Requirement: 服务端权威牌局状态机
-系统 SHALL 在服务端（微信云开发云函数）运行花牌牌局状态机，作为牌局状态的唯一权威来源。服务端 MUST 负责开牌、洗牌、发牌、将牌、阶段推进（接庄、出牌、响应、结算）与回合切换；客户端 MUST NOT 在本地推进或改变权威牌局状态。
+系统 SHALL 在服务端运行花牌牌局状态机，作为牌局状态的唯一权威来源。服务端状态机 MUST 可被 WebSocket 常驻服务和现有云函数入口复用；服务端 MUST 负责开牌、洗牌、发牌、将牌、阶段推进（接庄、出牌、响应、结算）与回合切换；客户端 MUST NOT 在本地推进或改变权威牌局状态。
 
 #### Scenario: 服务端开局
 - **WHEN** 一张牌桌满足开局条件
@@ -20,6 +20,11 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **WHEN** 客户端尝试本地修改手牌、阶段或分数
 - **THEN** 此类本地修改 MUST NOT 影响服务端权威状态
 - **AND** 后续服务端下发的状态 MUST 覆盖客户端本地的任何临时改动
+
+#### Scenario: 多入口复用同一裁决
+- **WHEN** 相同的房间状态和操作意图分别从 WebSocket 入口和云函数兜底入口进入服务端
+- **THEN** 服务端 MUST 使用同一套权威状态机和规则裁决逻辑处理
+- **AND** 两个入口 MUST 生成一致的权威状态、版本号和公开事件语义
 
 ### Requirement: 服务端规则校验与裁决
 系统 SHALL 在服务端复用并执行既有花牌规则（合法出牌、吃/碰/招/踏、胡牌判定、接庄限制、支招对子义务、庄家刻子要求、吃锁等）与计分逻辑。服务端 MUST 对每个玩家操作意图按其身份与当前权威状态进行合法性校验；非法操作 MUST 被拒绝且不改变牌局状态。
@@ -44,12 +49,17 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **THEN** 服务端的规则判定与计分结果 MUST 与既有花牌规则结果一致
 
 ### Requirement: 并发与一致性保护
-系统 SHALL 防止对同一牌桌的并发操作破坏权威状态一致性。服务端 MUST 通过版本号或等价机制识别基于过期状态的操作并拒绝之，保证操作按权威顺序应用。
+系统 SHALL 防止对同一牌桌的并发操作破坏权威状态一致性。服务端 MUST 通过版本号或等价机制识别基于过期状态的操作并拒绝之，保证操作按权威顺序应用。该一致性保护 MUST 同时适用于 WebSocket 操作、云函数兜底操作和动画回执。
 
 #### Scenario: 过期操作被拒绝
 - **WHEN** 玩家基于已被更新的旧状态提交操作
 - **THEN** 服务端 MUST 检测到版本过期并拒绝该操作
 - **AND** 服务端 MUST 提示客户端以最新状态重试
+
+#### Scenario: 不同入口并发操作
+- **WHEN** 同一房间同时收到 socket 操作和云函数兜底操作
+- **THEN** 服务端 MUST 只按权威顺序应用合法操作
+- **AND** 基于过期版本的后到操作 MUST 被拒绝或要求客户端恢复最新状态
 
 ### Requirement: 服务端公开操作事件
 服务端权威牌局状态机 SHALL 为每一次对牌桌玩家可见的状态推进生成公开操作事件。每个事件 MUST 包含房间内单调递增的事件序号、事件类型、对应状态版本、行动席位和完成该动画所需的公开信息；事件 MUST NOT 包含任何尚未公开的其他玩家手牌信息。抓牌和出牌事件 MUST 包含公开的 `appearanceResolution` 动画分支；凑牌事件 MUST 包含稳定的 meld id 和最终公开牌组。

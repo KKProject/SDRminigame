@@ -814,9 +814,11 @@ export default class TableRenderer {
     const result = state.result || {};
     ctx.fillStyle = '#fff7dc';
     ctx.font = '24px Arial';
-    const title = result.type === 'win'
+    const title = state.tableFinished
+      ? '牌桌结算'
+      : (result.type === 'win'
       ? '本局胡牌'
-      : (result.type === 'circle-loss' ? '进圈' : (result.type === 'draw-round' ? '流局' : '荒庄'));
+      : (result.type === 'circle-loss' ? '进圈' : (result.type === 'draw-round' ? '流局' : '荒庄')));
     ctx.fillText(title, area.x + 24, area.y + 44);
     ctx.font = '16px Arial';
     if (result.type === 'win') {
@@ -840,6 +842,12 @@ export default class TableRenderer {
       ctx.fillText(result.summary || '流局，重新开局', area.x + 24, area.y + 86);
     } else {
       ctx.fillText('牌堆摸完，无人胡牌', area.x + 24, area.y + 86);
+    }
+    if (state.tableFinished) {
+      const maxRounds = state.tableSettings && state.tableSettings.maxRounds;
+      ctx.fillStyle = '#ffd666';
+      ctx.font = '16px Arial';
+      ctx.fillText(`已完成${maxRounds || state.round || ''}局，牌桌已结束`, area.x + 24, area.y + area.height - 24);
     }
   }
 

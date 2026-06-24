@@ -1,0 +1,14 @@
+{
+  "name": "huapai-socket-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "上大人花牌常驻 WebSocket 同步服务",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node ../../scripts/run-socket-checks.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

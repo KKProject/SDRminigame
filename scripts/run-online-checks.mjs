@@ -10,12 +10,14 @@ await rm(tempDir, { recursive: true, force: true });
 await mkdir(tempDir, { recursive: true });
 
 await writeFile(join(tempDir, 'cloud.mjs'), await readFile(join(root, 'js/net/cloud.js'), 'utf8'));
+await writeFile(join(tempDir, 'socket.mjs'), await readFile(join(root, 'js/net/socket.js'), 'utf8'));
 await writeFile(join(tempDir, 'profile.mjs'), await readFile(join(root, 'js/net/profile.js'), 'utf8'));
 await writeFile(
   join(tempDir, 'online.mjs'),
   (await readFile(join(root, 'js/net/online.js'), 'utf8'))
     .replace("from '../game/rules'", "from './rules-stub.mjs'")
     .replace("from './cloud'", "from './cloud.mjs'")
+    .replace("from './socket'", "from './socket.mjs'")
 );
 await writeFile(join(tempDir, 'rules-stub.mjs'), 'export const DEFAULT_RULES = { seatCount: 4 };');
 
@@ -36,6 +38,31 @@ globalThis.wx = {
 const cloud = await import(pathToFileURL(join(tempDir, 'cloud.mjs')));
 const online = await import(pathToFileURL(join(tempDir, 'online.mjs')));
 const profile = await import(pathToFileURL(join(tempDir, 'profile.mjs')));
+
+if (online.inviteRoomIdFromOptions({ query: { roomId: '123456' } }) !== '123456') {
+  throw new Error('share query parser should read roomId from launch options');
+}
+if (online.inviteRoomIdFromOptions({ query: { scene: encodeURIComponent('roomId=654321&source=friendInvite') } }) !== '654321') {
+  throw new Error('share query parser should read encoded scene roomId');
+}
+let foregroundInvite = '';
+const inviteRuntime = {
+  onShow(callback) { this.callback = callback; },
+  offShow(callback) { if (this.callback === callback) this.callback = null; },
+  getLaunchOptionsSync() { return { query: { roomId: '111222' } }; },
+};
+const unregisterInvite = online.registerInviteRoomListener((roomId) => { foregroundInvite = roomId; }, inviteRuntime);
+if (online.readLaunchInviteRoomId(inviteRuntime) !== '111222') {
+  throw new Error('cold launch invite reader should read roomId');
+}
+inviteRuntime.callback({ query: { roomId: '333444' } });
+if (foregroundInvite !== '333444') {
+  throw new Error('foreground invite listener should read a new roomId');
+}
+unregisterInvite();
+if (inviteRuntime.callback) {
+  throw new Error('foreground invite listener should unregister cleanly');
+}
 
 const localIdentity = online.localActionIdentity({ type: 'chi', seat: 0, card: { id: 'incoming-chi', key: 'zi' } });
 if (
@@ -84,6 +111,9 @@ if (online.onlineErrorMessage({ code: 'LOGIN_STORAGE_ERROR' }) !== '登录数据
 }
 if (online.onlineErrorMessage({ code: 'FUNCTION_NOT_FOUND' }) !== '登录云函数未部署，请先上传并部署云函数') {
   throw new Error('missing login cloud function should display an actionable message');
+}
+if (online.onlineErrorMessage({ code: 'ACTIVE_ROOM_FAILED' }) !== '检查已有房间失败，请重试') {
+  throw new Error('active room lookup failures should display an actionable lobby message');
 }
 if (cloud.cloudErrorCode({ errCode: -501005 }) !== 'CLOUD_ENV_INVALID') {
   throw new Error('invalid cloud environment errors should be normalized');
@@ -178,6 +208,255 @@ if (unauthorizedProfile !== null) {
   throw new Error('unauthorized WeChat profile lookup should wait for the native authorization button');
 }
 
+globalThis.wx.login = (options) => options.success({ code: 'lobby-login-code' });
+globalThis.wx.getStorageSync = () => null;
+globalThis.wx.setStorageSync = () => {};
+globalThis.wx.removeStorageSync = () => {};
+const lobbyDatabus = { selectedCardId: null, setRoundState(state) { Object.assign(this, state); } };
+const lobbyRenderer = { releaseOnlineEvent() {} };
+const lobbyMusic = {};
+const lobbyPublic = {
+  seats: [
+    { id: 0, nickName: '大厅玩家', handCount: 1, melds: [], discards: [] },
+    { id: 1, nickName: '电脑1', handCount: 0, melds: [], discards: [] },
+    { id: 2, nickName: '电脑2', handCount: 0, melds: [], discards: [] },
+    { id: 3, nickName: '电脑3', handCount: 0, melds: [], discards: [] },
+  ],
+  phase: 'human-discard',
+  currentSeat: 0,
+  dealerSeat: 0,
+  nextDealerSeat: 0,
+  pendingActions: [],
+  playerActions: [],
+  round: 1,
+};
+const lobbyPrivate = { hand: [{ id: 'lobby-card', key: 'shang' }] };
+let lobbyCalls = [];
+let activeRoomResult = { ok: true, hasRoom: false };
+let waitingRoomState = null;
+let sharedPayload = null;
+globalThis.wx.cloud.callFunction = (options) => {
+  lobbyCalls.push(options);
+  if (options.name === 'login') {
+    options.success({
+      result: {
+        ok: true,
+        openid: 'lobby-openid',
+        user: { nickName: '大厅玩家', avatarUrl: 'avatar.png' },
+        socket: { url: 'ws://unit-test', token: 'socket-token', expiresAt: Date.now() + 60000 },
+      },
+    });
+    return;
+  }
+  const action = options.data && options.data.action;
+  if (action === 'activeRoom') {
+    options.success({ result: activeRoomResult });
+    return;
+  }
+  if (action === 'createRoom') {
+    waitingRoomState = {
+      roomId: '123456',
+      status: 'waiting',
+      hostOpenid: 'lobby-openid',
+      settings: { maxRounds: options.data.maxRounds },
+      players: [
+        { seat: 0, openid: 'lobby-openid', nickName: '大厅玩家', ready: false, online: true, isHost: true },
+      ],
+      humanCount: 1,
+      minHumansToStart: 2,
+      canStart: false,
+      readyToStart: false,
+      yourSeat: 0,
+      isHost: true,
+    };
+    options.success({ result: { ok: true, roomId: '123456', seat: 0, settings: { maxRounds: options.data.maxRounds }, room: waitingRoomState } });
+    return;
+  }
+  if (action === 'roomInfo') {
+    options.success({ result: { ok: true, roomId: options.data.roomId, seat: 0, room: waitingRoomState } });
+    return;
+  }
+  if (action === 'setReady') {
+    waitingRoomState = {
+      ...waitingRoomState,
+      players: waitingRoomState.players.map((player) => (player.seat === 0 ? { ...player, ready: true } : player)),
+      canStart: waitingRoomState.players.length >= 2,
+      readyToStart: waitingRoomState.players.length >= 2,
+    };
+    options.success({ result: { ok: true, roomId: options.data.roomId, seat: 0, room: waitingRoomState } });
+    return;
+  }
+  if (action === 'joinRoom') {
+    waitingRoomState = {
+      roomId: options.data.roomId,
+      status: 'waiting',
+      hostOpenid: 'host-openid',
+      settings: { maxRounds: 2 },
+      players: [
+        { seat: 0, openid: 'host-openid', nickName: '房主', ready: true, online: true, isHost: true },
+        { seat: 1, openid: 'lobby-openid', nickName: '大厅玩家', ready: false, online: true, isHost: false },
+      ],
+      humanCount: 2,
+      minHumansToStart: 2,
+      canStart: false,
+      readyToStart: true,
+      yourSeat: 1,
+      isHost: false,
+    };
+    options.success({ result: { ok: true, roomId: options.data.roomId, seat: 1, room: waitingRoomState } });
+    return;
+  }
+  if (action === 'startRound') {
+    options.success({ result: { ok: true, roomId: options.data.roomId, version: 1 } });
+    return;
+  }
+  if (action === 'pull') {
+    options.success({
+      result: {
+        ok: true,
+        roomId: options.data.roomId,
+        version: 1,
+        yourSeat: 0,
+        status: 'playing',
+        public: lobbyPublic,
+        private: lobbyPrivate,
+        animation: { waiting: false, currentEvent: null, selfAcked: false },
+      },
+    });
+    return;
+  }
+  options.success({ result: { ok: true } });
+};
+globalThis.wx.shareAppMessage = (payload) => { sharedPayload = payload; };
+
+const idleLobby = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+const idleLobbyStates = [];
+idleLobby.onLobby = (state) => { idleLobbyStates.push(state); };
+const idleLobbyResult = await idleLobby.startLobby({ nickName: '授权大厅' });
+if (
+  idleLobbyResult.entered
+  || idleLobby.lobbyProfile.nickName !== '大厅玩家'
+  || idleLobbyStates.map((item) => item.state).join(',') !== `${online.LOBBY_STATES.CHECKING_ROOM},${online.LOBBY_STATES.IDLE}`
+  || lobbyCalls.some((call) => call.data && call.data.action === 'createRoom')
+) {
+  throw new Error('online lobby should show profile, query active room, and wait for explicit room creation when no room exists');
+}
+
+const createdLobby = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+createdLobby.lobbyProfile = { nickName: '大厅玩家', avatarUrl: 'avatar.png' };
+let lobbySocketSubscribes = [];
+function attachLobbySocket(controller, seat = 0) {
+  controller.socketAuth = { url: 'ws://unit-test', token: 'socket-token', expiresAt: Date.now() + 60000 };
+  controller.socket = {
+    isReady() { return true; },
+    connect() { return Promise.resolve(true); },
+    subscribe(roomId, version, eventSeq) {
+      lobbySocketSubscribes.push({ roomId, version, eventSeq });
+      return Promise.resolve({
+        ok: true,
+        roomId,
+        version: 1,
+        yourSeat: seat,
+        status: 'playing',
+        public: lobbyPublic,
+        private: lobbyPrivate,
+        animation: { waiting: false, currentEvent: null, selfAcked: false },
+      });
+    },
+    request() { return Promise.resolve({ ok: true }); },
+    heartbeat() { return Promise.resolve({ ok: true }); },
+    close() {},
+  };
+}
+attachLobbySocket(createdLobby, 0);
+lobbyCalls = [];
+const createdLobbyResult = await createdLobby.createLobbyRoom(4);
+if (
+  createdLobbyResult.entered
+  || !createdLobbyResult.waiting
+  || createdLobby.waitingRoom.roomId !== '123456'
+  || createdLobby.waitingRoom.settings.maxRounds !== 4
+  || !lobbyCalls.find((call) => call.data && call.data.action === 'createRoom' && call.data.maxRounds === 4)
+  || lobbyCalls.find((call) => call.data && call.data.action === 'startRound')
+) {
+  throw new Error('lobby room creation should submit selected maxRounds and enter the waiting room without auto-starting');
+}
+if (!createdLobby.shareWaitingRoom() || !sharedPayload || sharedPayload.query !== 'roomId=123456&source=friendInvite') {
+  throw new Error('waiting room invite should call shareAppMessage with roomId query');
+}
+await createdLobby.setReady(true);
+if (!createdLobby.waitingRoom.players[0].ready || !lobbyCalls.find((call) => call.data && call.data.action === 'setReady')) {
+  throw new Error('waiting room ready button should set ready and refresh the public room state');
+}
+waitingRoomState = {
+  ...waitingRoomState,
+  players: [
+    { seat: 0, openid: 'lobby-openid', nickName: '大厅玩家', ready: true, online: true, isHost: true },
+    { seat: 1, openid: 'friend-openid', nickName: '好友', ready: false, online: true, isHost: false },
+  ],
+  humanCount: 2,
+  canStart: true,
+  readyToStart: true,
+};
+if (
+  !(await createdLobby.startWaitingRoom())
+  || lobbyCalls.find((call) => call.data && call.data.action === 'pull' && call.data.roomId === '123456')
+  || !lobbySocketSubscribes.find((call) => call.roomId === '123456')
+) {
+  throw new Error('host start from waiting room should start the round and enter the online table through socket');
+}
+createdLobby.destroy();
+
+activeRoomResult = { ok: true, hasRoom: false };
+lobbyCalls = [];
+const inviteLobby = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+attachLobbySocket(inviteLobby, 1);
+const inviteStates = [];
+inviteLobby.onLobby = (state) => { inviteStates.push(state.state); };
+const inviteResult = await inviteLobby.startLobby({ nickName: '授权大厅' }, { inviteRoomId: '555666' });
+if (
+  inviteResult.entered
+  || !inviteResult.waiting
+  || inviteLobby.waitingRoom.roomId !== '555666'
+  || inviteStates.join(',') !== `${online.LOBBY_STATES.CHECKING_ROOM},${online.LOBBY_STATES.JOINING_INVITE}`
+  || !lobbyCalls.find((call) => call.data && call.data.action === 'joinRoom' && call.data.roomId === '555666')
+) {
+  throw new Error('pending invite room should join after login and show the waiting room');
+}
+let inviteAutoEntered = null;
+inviteLobby.onEnterTable = (result) => { inviteAutoEntered = result; };
+waitingRoomState = { ...waitingRoomState, status: 'playing' };
+if (
+  !(await inviteLobby.refreshWaitingRoom())
+  || !inviteAutoEntered
+  || inviteAutoEntered.roomId !== '555666'
+  || !inviteLobby.active
+  || lobbyCalls.find((call) => call.data && call.data.action === 'pull' && call.data.roomId === '555666')
+  || !lobbySocketSubscribes.find((call) => call.roomId === '555666')
+) {
+  throw new Error('guest waiting room refresh should enter the online table through socket after the host starts');
+}
+inviteLobby.destroy();
+
+activeRoomResult = { ok: true, hasRoom: true, roomId: 'active-room', seat: 0, status: 'playing', version: 3, settings: { maxRounds: 6 } };
+lobbyCalls = [];
+const reconnectLobby = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+attachLobbySocket(reconnectLobby, 0);
+const reconnectStates = [];
+reconnectLobby.onLobby = (state) => { reconnectStates.push(state.state); };
+const reconnectResult = await reconnectLobby.startLobby({ nickName: '授权大厅' });
+if (
+  !reconnectResult.entered
+  || reconnectResult.roomId !== 'active-room'
+  || reconnectStates.join(',') !== `${online.LOBBY_STATES.CHECKING_ROOM},${online.LOBBY_STATES.RECONNECTING}`
+  || lobbyCalls.find((call) => call.data && call.data.action === 'pull' && call.data.roomId === 'active-room')
+  || !lobbySocketSubscribes.find((call) => call.roomId === 'active-room')
+) {
+  throw new Error('online lobby should show reconnecting state and restore an existing active room through socket');
+}
+reconnectLobby.destroy();
+activeRoomResult = { ok: true, hasRoom: false };
+
 let animationPlayCount = 0;
 let animationAckCount = 0;
 let completeAnimation = null;
@@ -247,6 +526,28 @@ const onlineMusic = {
 const onlineController = new online.default(onlineDatabus, onlineRenderer, onlineMusic);
 onlineController.roomId = 'animation-room';
 onlineController.mySeat = 0;
+let fakeSocketReady = true;
+let fakeSocketFailAck = false;
+let fakeSocketRejectOp = false;
+onlineController.socket = {
+  isReady() { return fakeSocketReady; },
+  request(type) {
+    if (type === 'ackAnimation') {
+      animationAckCount += 1;
+      return fakeSocketFailAck
+        ? Promise.reject(new Error('SOCKET_ACK_FAILED'))
+        : Promise.resolve({ ok: true, version: onlineController.version });
+    }
+    if (type === 'op') {
+      return fakeSocketRejectOp
+        ? Promise.resolve({ ok: false, error: 'ACTION_REJECTED', reason: '动作已失效' })
+        : Promise.resolve({ ok: true, version: onlineController.version });
+    }
+    return Promise.resolve({ ok: true });
+  },
+  heartbeat() { return Promise.resolve({ ok: true }); },
+  close() {},
+};
 const directSnapshot = {
   ok: true,
   version: 3,
@@ -281,6 +582,25 @@ if (
   || cardSoundEvents.join(',') !== 'discarded-card'
 ) {
   throw new Error('direct operation snapshot should remove the discarded hand card and start its animation and card voice immediately');
+}
+const tableResultSnapshot = {
+  ok: true,
+  version: 4,
+  yourSeat: 0,
+  status: 'tableResult',
+  settings: { maxRounds: 2 },
+  public: Object.assign({}, directSnapshot.public, {
+    phase: 'result',
+    round: 2,
+    result: { type: 'draw-round', summary: '测试结算' },
+  }),
+  private: { hand: [] },
+  animation: { waiting: false, selfAcked: false, currentEvent: null },
+};
+onlineController.isAnimating = false;
+onlineController.currentEvent = null;
+if (!onlineController.applyServerSnapshot(tableResultSnapshot) || !onlineDatabus.tableFinished || onlineDatabus.tableSettings.maxRounds !== 2) {
+  throw new Error('tableResult snapshots should mark the local table as finished and keep maxRounds settings');
 }
 onlineController.lastPlayedEventSeq = 0;
 onlineController.lastAckedEventSeq = 0;
@@ -524,9 +844,7 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 if (localPreviewCancelCount !== 3) {
   throw new Error('an already completed local animation should acknowledge immediately after authoritative confirmation');
 }
-globalThis.wx.cloud.callFunction = (options) => {
-  options.success({ result: { ok: false, error: 'ACTION_REJECTED', reason: '动作已失效' } });
-};
+fakeSocketRejectOp = true;
 onlineController.animationWaiting = false;
 onlineController.isAnimating = false;
 onlineController.startLocalActionPreview({ type: 'peng', seat: 0, card: { id: 'rejected-peng' } });
@@ -534,16 +852,38 @@ await onlineController.sendOp({ kind: 'response', ref: { index: 0, type: 'peng' 
 if (onlineController.pendingLocalAction || onlineController.localActionPreviewType || localPreviewCancelCount !== 4) {
   throw new Error('rejected local actions should cancel their optimistic animation and pending ownership');
 }
-globalThis.wx.cloud.callFunction = (options) => {
-  options.fail({ errMsg: 'temporary network failure' });
-};
+fakeSocketRejectOp = false;
+fakeSocketFailAck = true;
 onlineController.lastAckedEventSeq = 5;
 await onlineController.sendAnimationAck(6);
 if (!onlineController.ackRetryTimer) {
-  throw new Error('failed animation acknowledgements should schedule an idempotent retry');
+  throw new Error('failed socket animation acknowledgements should schedule an idempotent retry');
 }
 clearTimeout(onlineController.ackRetryTimer);
 onlineController.ackRetryTimer = null;
+fakeSocketFailAck = false;
+
+let realtimeFallbackCalled = false;
+globalThis.wx.cloud.callFunction = () => { realtimeFallbackCalled = true; };
+fakeSocketReady = false;
+onlineController.animationWaiting = false;
+onlineController.isAnimating = false;
+await onlineController.sendOp({ kind: 'discard', cardId: 'missing-socket-card' });
+if (realtimeFallbackCalled || onlineDatabus.feedback !== '连接已断开，等待重连') {
+  throw new Error('socket disconnect should block realtime operation without cloud fallback');
+}
+if (onlineController.reconnectTimer) {
+  clearTimeout(onlineController.reconnectTimer);
+  onlineController.reconnectTimer = null;
+}
+onlineController.lastAckedEventSeq = 6;
+await onlineController.sendAnimationAck(7);
+if (realtimeFallbackCalled || !onlineController.ackRetryTimer) {
+  throw new Error('socket disconnect should retry animation ack without cloud fallback');
+}
+clearTimeout(onlineController.ackRetryTimer);
+onlineController.ackRetryTimer = null;
+fakeSocketReady = true;
 
 const require = createRequire(import.meta.url);
 const loginFunction = require(join(root, 'cloudfunctions/login/index.js'));
@@ -557,6 +897,300 @@ if (loginFunction.isCollectionMissingError({ errCode: -502003 })) {
 const roomDocument = roomFunction.documentData({ _id: 'room-id', status: 'waiting' });
 if ('_id' in roomDocument || roomDocument.status !== 'waiting') {
   throw new Error('doc(id).set data must omit the immutable _id field');
+}
+function createRoomDb(initialRooms = {}) {
+  const documents = { rooms: { ...initialRooms }, roomStates: {}, matchQueue: {} };
+  const matches = (room, query) => Object.entries(query).every(([key, value]) => {
+    if (key === 'playerOpenids') return Array.isArray(room.playerOpenids) && room.playerOpenids.indexOf(value) >= 0;
+    if (key === 'players.openid') return (room.players || []).some((player) => player.openid === value);
+    return room[key] === value;
+  });
+  return {
+    documents,
+    collection(name) {
+      return {
+        where(query) {
+          const chain = {
+            _query: query,
+            orderBy() { return chain; },
+            limit() { return chain; },
+            async get() {
+              return { data: Object.values(documents[name] || {}).filter((room) => matches(room, query)) };
+            },
+          };
+          return chain;
+        },
+        doc(id) {
+          return {
+            async get() {
+              if (!documents[name][id]) throw new Error('not found');
+              return { data: documents[name][id] };
+            },
+            async update({ data }) { Object.assign(documents[name][id], data); },
+            async set({ data }) { documents[name][id] = { ...data, _id: id }; },
+          };
+        },
+      };
+    },
+  };
+}
+const activeRoomDb = createRoomDb({
+  'closed-room': {
+    _id: 'closed-room',
+    status: 'closed',
+    version: 9,
+    updatedAt: 9,
+    players: [{ seat: 0, openid: 'active-player' }],
+    playerOpenids: ['active-player'],
+    settings: { maxRounds: 6 },
+  },
+  'active-room': {
+    _id: 'active-room',
+    status: 'playing',
+    version: 3,
+    updatedAt: 3,
+    players: [{ seat: 2, openid: 'active-player' }],
+    playerOpenids: ['active-player'],
+    settings: { maxRounds: 4 },
+  },
+});
+const activeRoomLookup = await roomFunction.activeRoom({}, { db: activeRoomDb, OPENID: 'active-player' });
+if (
+  !activeRoomLookup.ok
+  || !activeRoomLookup.hasRoom
+  || activeRoomLookup.roomId !== 'active-room'
+  || activeRoomLookup.seat !== 2
+  || activeRoomLookup.settings.maxRounds !== 4
+) {
+  throw new Error('activeRoom should return the current player unfinished room and normalized settings');
+}
+const missingActiveRoom = await roomFunction.activeRoom({}, { db: activeRoomDb, OPENID: 'missing-player' });
+if (!missingActiveRoom.ok || missingActiveRoom.hasRoom) {
+  throw new Error('activeRoom should not return a room for players without unfinished rooms');
+}
+const createRoomDbInstance = createRoomDb();
+const createdConfiguredRoom = await roomFunction.createRoom({
+  profile: { nickName: '建房玩家' },
+  maxRounds: 4,
+}, { db: createRoomDbInstance, OPENID: 'creator-openid' });
+if (
+  !createdConfiguredRoom.ok
+  || createdConfiguredRoom.settings.maxRounds !== 4
+  || !createRoomDbInstance.documents.rooms[createdConfiguredRoom.roomId].playerOpenids.includes('creator-openid')
+) {
+  throw new Error('createRoom should save maxRounds settings and queryable playerOpenids');
+}
+const createdDefaultRoom = await roomFunction.createRoom({
+  profile: { nickName: '非法局数玩家' },
+  maxRounds: 99,
+}, { db: createRoomDb(), OPENID: 'invalid-rounds-openid' });
+if (!createdDefaultRoom.ok || createdDefaultRoom.settings.maxRounds !== 2) {
+  throw new Error('createRoom should normalize unsupported maxRounds to the default test option');
+}
+const duplicateRoomDb = createRoomDb({
+  'duplicate-room': {
+    _id: 'duplicate-room',
+    status: 'playing',
+    version: 1,
+    updatedAt: 1,
+    players: [{ seat: 0, openid: 'duplicate-openid' }],
+    playerOpenids: ['duplicate-openid'],
+    settings: { maxRounds: 6 },
+  },
+});
+const duplicateCreate = await roomFunction.createRoom({
+  profile: { nickName: '重复建房' },
+  maxRounds: 2,
+}, { db: duplicateRoomDb, OPENID: 'duplicate-openid' });
+if (!duplicateCreate.alreadyInRoom || duplicateCreate.roomId !== 'duplicate-room' || Object.keys(duplicateRoomDb.documents.rooms).length !== 1) {
+  throw new Error('createRoom should return the existing active room instead of creating a duplicate room');
+}
+const friendRoomDb = createRoomDb();
+const hostRoom = await roomFunction.createRoom({
+  profile: { nickName: '房主' },
+  maxRounds: 2,
+}, { db: friendRoomDb, OPENID: 'host-openid' });
+if (
+  !hostRoom.ok
+  || !hostRoom.room
+  || hostRoom.room.status !== 'waiting'
+  || hostRoom.room.players[0].ready
+  || hostRoom.room.players[0].online !== true
+  || typeof hostRoom.room.players[0].lastSeenAt !== 'number'
+) {
+  throw new Error('createRoom should return a waiting room snapshot with ready/online player state');
+}
+const roomInfo = await roomFunction.roomInfo({
+  roomId: hostRoom.roomId,
+}, { db: friendRoomDb, OPENID: 'host-openid' });
+if (!roomInfo.ok || roomInfo.room.roomId !== hostRoom.roomId || roomInfo.room.players.some((player) => 'hand' in player)) {
+  throw new Error('roomInfo should expose a public waiting-room snapshot without private hands');
+}
+const guestJoin = await roomFunction.joinRoom({
+  roomId: hostRoom.roomId,
+  profile: { nickName: '好友' },
+}, { db: friendRoomDb, OPENID: 'guest-openid' });
+if (!guestJoin.ok || guestJoin.seat !== 1 || guestJoin.room.players.length !== 2 || guestJoin.room.players[1].ready) {
+  throw new Error('joinRoom should add a shared-room guest to the next free seat and return a waiting snapshot');
+}
+const duplicateJoin = await roomFunction.joinRoom({
+  roomId: hostRoom.roomId,
+  profile: { nickName: '好友' },
+}, { db: friendRoomDb, OPENID: 'guest-openid' });
+if (!duplicateJoin.ok || duplicateJoin.seat !== 1 || duplicateJoin.room.players.length !== 2) {
+  throw new Error('joinRoom should be idempotent for a player already in the room');
+}
+const blockedByOtherRoomDb = createRoomDb({
+  'other-room': {
+    _id: 'other-room',
+    status: 'waiting',
+    version: 0,
+    updatedAt: 9,
+    hostOpenid: 'other-player',
+    players: [{ seat: 0, openid: 'busy-openid', ready: false, online: true }],
+    playerOpenids: ['busy-openid'],
+    settings: { maxRounds: 2 },
+  },
+  'target-room': {
+    _id: 'target-room',
+    status: 'waiting',
+    version: 0,
+    updatedAt: 1,
+    hostOpenid: 'target-host',
+    players: [{ seat: 0, openid: 'target-host', ready: false, online: true }],
+    playerOpenids: ['target-host'],
+    settings: { maxRounds: 2 },
+  },
+});
+const blockedByOtherRoom = await roomFunction.joinRoom({
+  roomId: 'target-room',
+}, { db: blockedByOtherRoomDb, OPENID: 'busy-openid' });
+if (blockedByOtherRoom.ok || blockedByOtherRoom.error !== 'ALREADY_IN_ROOM' || blockedByOtherRoom.existing.roomId !== 'other-room') {
+  throw new Error('joinRoom should reject joining a second unfinished room and return existing room info');
+}
+const fullRoomDb = createRoomDb({
+  'full-room': {
+    _id: 'full-room',
+    status: 'waiting',
+    version: 0,
+    updatedAt: 1,
+    hostOpenid: 'full-0',
+    players: [0, 1, 2, 3].map((seat) => ({ seat, openid: `full-${seat}`, ready: false, online: true })),
+    playerOpenids: ['full-0', 'full-1', 'full-2', 'full-3'],
+    settings: { maxRounds: 2 },
+  },
+});
+const fullJoin = await roomFunction.joinRoom({
+  roomId: 'full-room',
+}, { db: fullRoomDb, OPENID: 'late-openid' });
+if (fullJoin.ok || fullJoin.error !== 'ROOM_FULL') {
+  throw new Error('joinRoom should reject full waiting rooms');
+}
+const startedJoin = await roomFunction.joinRoom({
+  roomId: 'active-room',
+}, { db: activeRoomDb, OPENID: 'late-openid' });
+if (startedJoin.ok || startedJoin.error !== 'ROOM_ALREADY_STARTED') {
+  throw new Error('joinRoom should reject rooms that have already started');
+}
+const singleHumanDb = createRoomDb();
+const singleHumanRoom = await roomFunction.createRoom({
+  profile: { nickName: '单人房主' },
+  maxRounds: 2,
+}, { db: singleHumanDb, OPENID: 'single-host' });
+const oneHumanStart = await roomFunction.startRound({
+  roomId: singleHumanRoom.roomId,
+}, { db: singleHumanDb, OPENID: 'single-host' });
+if (oneHumanStart.ok || oneHumanStart.error !== 'WAITING_FOR_PLAYERS') {
+  throw new Error('startRound should reject a waiting room before at least two human players join');
+}
+const hostReady = await roomFunction.setReady({
+  roomId: hostRoom.roomId,
+}, { db: friendRoomDb, OPENID: 'host-openid' });
+const hostReadyAgain = await roomFunction.setReady({
+  roomId: hostRoom.roomId,
+}, { db: friendRoomDb, OPENID: 'host-openid' });
+if (!hostReady.ok || !hostReadyAgain.ok || !hostReadyAgain.room.players.find((player) => player.openid === 'host-openid').ready) {
+  throw new Error('setReady should idempotently mark a waiting-room player ready');
+}
+const readyStart = await roomFunction.startRound({
+  roomId: hostRoom.roomId,
+}, { db: friendRoomDb, OPENID: 'host-openid' });
+if (
+  !readyStart.ok
+  || friendRoomDb.documents.rooms[hostRoom.roomId].status !== 'playing'
+  || !friendRoomDb.documents.roomStates[hostRoom.roomId]
+  || friendRoomDb.documents.rooms[hostRoom.roomId].state.seats.length !== 4
+) {
+  throw new Error('startRound should allow a ready host with two humans and fill empty seats with AI');
+}
+const hostOffline = await roomFunction.setPlayerConnection({
+  roomId: hostRoom.roomId,
+  online: false,
+}, { db: friendRoomDb, OPENID: 'host-openid' });
+if (
+  !hostOffline.ok
+  || friendRoomDb.documents.rooms[hostRoom.roomId].players.find((player) => player.openid === 'host-openid').online !== false
+  || friendRoomDb.documents.roomStates[hostRoom.roomId].public.seats[0].online !== false
+) {
+  throw new Error('setPlayerConnection should mark disconnected socket players offline in public state');
+}
+const hostOnline = await roomFunction.setPlayerConnection({
+  roomId: hostRoom.roomId,
+  online: true,
+}, { db: friendRoomDb, OPENID: 'host-openid' });
+if (
+  !hostOnline.ok
+  || friendRoomDb.documents.rooms[hostRoom.roomId].players.find((player) => player.openid === 'host-openid').online === false
+  || friendRoomDb.documents.roomStates[hostRoom.roomId].public.seats[0].online === false
+) {
+  throw new Error('setPlayerConnection should mark reconnected socket players online in public state');
+}
+const unreadyRoomDb = createRoomDb({
+  'unready-room': {
+    _id: 'unready-room',
+    status: 'waiting',
+    version: 0,
+    updatedAt: 1,
+    hostOpenid: 'unready-host',
+    players: [
+      { seat: 0, openid: 'unready-host', ready: false, online: true },
+      { seat: 1, openid: 'unready-guest', ready: true, online: true },
+    ],
+    playerOpenids: ['unready-host', 'unready-guest'],
+    settings: { maxRounds: 2 },
+  },
+});
+const unreadyStart = await roomFunction.startRound({
+  roomId: 'unready-room',
+}, { db: unreadyRoomDb, OPENID: 'unready-host' });
+if (unreadyStart.ok || unreadyStart.error !== 'HOST_NOT_READY') {
+  throw new Error('startRound should reject waiting rooms when the host is not ready');
+}
+const maxRoundDb = createRoomDb({
+  'max-round-room': {
+    _id: 'max-round-room',
+    status: 'finished',
+    version: 2,
+    updatedAt: 2,
+    hostOpenid: 'max-round-openid',
+    players: [{ seat: 0, openid: 'max-round-openid' }],
+    playerOpenids: ['max-round-openid'],
+    settings: { maxRounds: 2 },
+    state: {
+      phase: 'result',
+      round: 2,
+      seats: [],
+      eventSeq: 0,
+      publicEvent: null,
+      pendingContinuation: null,
+    },
+  },
+});
+const blockedNextRound = await roomFunction.startRound({
+  roomId: 'max-round-room',
+}, { db: maxRoundDb, OPENID: 'max-round-openid' });
+if (blockedNextRound.ok || blockedNextRound.error !== 'TABLE_FINISHED' || maxRoundDb.documents.rooms['max-round-room'].status !== 'tableResult') {
+  throw new Error('startRound should be blocked once a room reaches settings.maxRounds');
 }
 
 const { HuapaiEngine } = require(join(root, 'cloudfunctions/game/core/engine.js'));
@@ -713,11 +1347,18 @@ if (!/playOnlineEvent\(event, onComplete\)/.test(animationControllerSource)) {
   throw new Error('animation controller should expose an explicit online event animation API');
 }
 const rendererSource = await readFile(join(root, 'js/game/renderer.js'), 'utf8');
+const layoutSource = await readFile(join(root, 'js/game/layout.js'), 'utf8');
 if (/eventSeq|playOnlineEvent/.test(rendererSource)) {
   throw new Error('renderer should not manage online event sequence or animation lifecycle');
 }
 if (!/state\.animationWaiting/.test(rendererSource)) {
   throw new Error('renderer should block state compensation while an online authoritative animation is waiting');
+}
+if (!/state\.phase === 'result' && !state\.tableFinished/.test(layoutSource)) {
+  throw new Error('final table settlement should not expose the restart action hit region');
+}
+if (!/state\.tableFinished[\s\S]*?牌桌结算/.test(rendererSource)) {
+  throw new Error('final table settlement should render an explicit table result title');
 }
 
 await rm(tempDir, { recursive: true, force: true });

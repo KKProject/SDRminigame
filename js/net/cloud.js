@@ -7,6 +7,7 @@ export const CLOUD_ENV = 'cloud1-d2gorzc71e74a3175';
 const CALL_TIMEOUT_MS = 15000;
 
 let initialized = false;
+let latestSocketAuth = null;
 
 export function isCloudSupported() {
   return typeof wx !== 'undefined' && typeof wx.cloud !== 'undefined';
@@ -71,6 +72,32 @@ export function callFunction(name, data = {}) {
   });
 }
 
+export function getSocketAuth() {
+  return latestSocketAuth;
+}
+
+export function clearSocketAuth() {
+  latestSocketAuth = null;
+}
+
+export function refreshSocketToken(profile = {}) {
+  return login(profile).then((res) => {
+    if (!res || !res.ok || !res.socket || !res.socket.token) {
+      const error = new Error('SOCKET_TOKEN_UNAVAILABLE');
+      error.code = 'SOCKET_TOKEN_UNAVAILABLE';
+      throw error;
+    }
+    return res.socket;
+  });
+}
+
+function normalizeSocketAuth(socket = {}) {
+  if (!socket || !socket.token) return null;
+  const normalized = Object.assign({}, socket);
+  if (normalized.service && !normalized.env) normalized.env = CLOUD_ENV;
+  return normalized;
+}
+
 /**
  * 登录：先 wx.login 触发会话，再调用 login 云函数换取服务端身份。
  * profile 可选，拿到微信资料后一并写入。
@@ -84,7 +111,11 @@ export function login(profile = {}) {
       callFunction('login', Object.assign({}, profile, {
         profile,
         code: loginResult.code || '',
-      })).then(resolve).catch(reject);
+      })).then((res) => {
+        latestSocketAuth = res && res.socket ? normalizeSocketAuth(res.socket) : null;
+        if (res && res.socket) res.socket = latestSocketAuth;
+        resolve(res);
+      }).catch(reject);
     };
     if (typeof wx.login === 'function') {
       wx.login({

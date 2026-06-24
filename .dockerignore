@@ -1,0 +1,8 @@
+.git
+.DS_Store
+.tmp-*
+node_modules
+cloudfunctions/login/node_modules
+cloudfunctions/game/node_modules
+miniprogram_npm
+npm-debug.log

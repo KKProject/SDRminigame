@@ -1,10 +1,33 @@
 const cloud = require('wx-server-sdk');
+const { issueSocketToken } = require('./socket-token');
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
 const db = cloud.database();
 const USERS = 'users';
 const REQUIRED_COLLECTIONS = ['users', 'rooms', 'matchQueue', 'roomStates'];
+
+function socketEndpoint() {
+  if (socketService()) return '';
+  return process.env.SOCKET_URL || process.env.WEBSOCKET_URL || '';
+}
+
+function socketService() {
+  return process.env.SOCKET_SERVICE || process.env.WEBSOCKET_SERVICE || '';
+}
+
+function socketEnv() {
+  return process.env.SOCKET_ENV
+    || process.env.TCB_ENV
+    || process.env.CLOUD_ENV
+    || process.env.WX_CLOUD_ENV
+    || '';
+}
+
+function socketPath() {
+  const path = process.env.SOCKET_PATH || process.env.WEBSOCKET_PATH || '/';
+  return path.charAt(0) === '/' ? path : `/${path}`;
+}
 
 function isCollectionMissingError(err) {
   const code = err && (err.errCode || err.code);
@@ -89,11 +112,20 @@ exports.main = async (event) => {
     }
 
     const fresh = await userRef.get();
+    const socketToken = issueSocketToken(OPENID);
     return {
       ok: true,
       openid: OPENID,
       user: fresh.data,
       receivedProfile: profile,
+      socket: {
+        url: socketEndpoint(),
+        env: socketEnv(),
+        service: socketService(),
+        path: socketPath(),
+        token: socketToken.token,
+        expiresAt: socketToken.expiresAt,
+      },
     };
   } catch (err) {
     return {
@@ -106,3 +138,8 @@ exports.main = async (event) => {
 
 exports.ensureCollections = ensureCollections;
 exports.isCollectionMissingError = isCollectionMissingError;
+exports.issueSocketToken = issueSocketToken;
+exports.socketEndpoint = socketEndpoint;
+exports.socketEnv = socketEnv;
+exports.socketService = socketService;
+exports.socketPath = socketPath;

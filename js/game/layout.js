@@ -689,7 +689,7 @@ export default class TableLayout {
       return button;
     });
 
-    if (state.phase === 'result') {
+    if (state.phase === 'result' && !state.tableFinished) {
       actionButtons.push(rect(contentBounds.x + contentBounds.width / 2 - 52, contentBounds.y + contentBounds.height / 2 + (isLandscape ? 58 : 76), 104, 40, {
         type: 'restart',
         action: { type: 'restart', label: '再来一局' },

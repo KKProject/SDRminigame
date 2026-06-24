@@ -26,6 +26,9 @@ export default class DataBus {
   result = null;
   muted = false;
   round = 0;
+  tableStatus = '';
+  tableSettings = {};
+  tableFinished = false;
 
   constructor() {
     if (instance) return instance;
@@ -61,6 +64,9 @@ export default class DataBus {
       result: null,
       muted: this.muted,
       round: this.round,
+      tableStatus: '',
+      tableSettings: {},
+      tableFinished: false,
     });
   }
 }

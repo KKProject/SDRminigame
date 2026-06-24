@@ -35,12 +35,16 @@ const room = require('./room');
  *   quickMatch    快速匹配入队/撮合
  *   cancelMatch   取消匹配
  *   matchStatus   查询匹配状态
+ *   activeRoom    查询当前玩家未结束牌桌
  *   createRoom    创建好友房
  *   joinRoom      加入好友房
+ *   roomInfo      查询等待房间公开状态
+ *   setReady      设置等待房间准备状态
  *   startRound    房主开局
  *   op            提交游戏操作（出牌/响应/接庄）
  *   pull          拉取全量状态（断线重连）
  *   heartbeat     心跳 + 掉线检测
+ *   setConnection socket 服务标记玩家在线/离线
  *   ackAnimation  当前公开动作动画完成回执
  */
 const handlers = {
@@ -66,22 +70,58 @@ const handlers = {
   quickMatch: room.quickMatch,
   cancelMatch: room.cancelMatch,
   matchStatus: room.matchStatus,
+  activeRoom: room.activeRoom,
   createRoom: room.createRoom,
   joinRoom: room.joinRoom,
+  roomInfo: room.roomInfo,
+  setReady: room.setReady,
   startRound: room.startRound,
   op: room.op,
   pull: room.pull,
   heartbeat: room.heartbeat,
+  setConnection: room.setPlayerConnection,
   ackAnimation: room.ackAnimation,
 };
+
+function normalizeHttpEvent(rawEvent = {}) {
+  if (rawEvent && typeof rawEvent.body === 'string') {
+    try {
+      return JSON.parse(rawEvent.body || '{}');
+    } catch (err) {
+      return {};
+    }
+  }
+  return rawEvent || {};
+}
+
+function headerValue(headers = {}, name) {
+  const target = String(name || '').toLowerCase();
+  const key = Object.keys(headers || {}).find((item) => item.toLowerCase() === target);
+  return key ? headers[key] : '';
+}
+
+function socketProxySecret() {
+  return process.env.SOCKET_PROXY_SECRET || process.env.SOCKET_TOKEN_SECRET || '';
+}
+
+function socketProxyOpenid(rawEvent = {}, event = {}) {
+  const secret = socketProxySecret();
+  if (!secret) return '';
+  const provided = event.socketProxySecret || headerValue(rawEvent.headers, 'x-socket-proxy-secret');
+  if (provided !== secret) return '';
+  return String(event.socketOpenid || event.openid || '').trim();
+}
 
 /**
  * 云函数主入口。
  * @param {object} event - 客户端传入参数，必须含 action 字段
  * @returns {Promise<object>} 可 JSON 序列化的响应
  */
-exports.main = async (event = {}) => {
-  const { OPENID } = cloud.getWXContext();
+exports.main = async (rawEvent = {}) => {
+  const event = normalizeHttpEvent(rawEvent);
+  const proxyOpenid = socketProxyOpenid(rawEvent, event);
+  const { OPENID: wxOpenid } = cloud.getWXContext();
+  const OPENID = proxyOpenid || wxOpenid;
   if (!OPENID) {
     return { ok: false, error: 'NO_OPENID' };
   }
@@ -107,3 +147,7 @@ exports.main = async (event = {}) => {
     return { ok: false, error: 'HANDLER_ERROR', message: err && err.message };
   }
 };
+
+exports.handlers = handlers;
+exports.normalizeHttpEvent = normalizeHttpEvent;
+exports.socketProxyOpenid = socketProxyOpenid;

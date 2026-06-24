@@ -1,15 +1,94 @@
 import { DEFAULT_RULES } from '../game/rules';
 import { ensureCloudInit, callFunction, cloudErrorCode, login } from './cloud';
+import OnlineSocketTransport, { isWxCloudRunUrl } from './socket';
 
 const SEAT_COUNT = DEFAULT_RULES.seatCount;
 const ROOM_SESSION_KEY = 'huapai-online-room';
 const RECONNECT_DELAY_MS = 1500;
 const HEARTBEAT_INTERVAL_MS = 20000;
+const WAITING_REFRESH_INTERVAL_MS = 2000;
+export const LOBBY_STATES = {
+  CHECKING_ROOM: 'checking-room',
+  RECONNECTING: 'reconnecting',
+  JOINING_INVITE: 'joining-invite',
+  IDLE: 'idle',
+  CREATING: 'creating',
+  ERROR: 'error',
+};
+
+function lobbyProfile(loginRes = {}, fallback = {}) {
+  const user = loginRes.user || {};
+  return {
+    nickName: user.nickName || fallback.nickName || '玩家',
+    avatarUrl: user.avatarUrl || fallback.avatarUrl || '',
+    openid: loginRes.openid || user.openid || '',
+  };
+}
 
 function animationActionType(type) {
   if (type === 'acceptTakeover') return 'accept-takeover';
   if (type === 'declineTakeover') return 'decline-takeover';
   return type;
+}
+
+function normalizeInviteRoomId(value) {
+  const roomId = String(value || '').trim();
+  return /^\d{6}$/.test(roomId) ? roomId : '';
+}
+
+function roomIdFromScene(scene) {
+  if (!scene) return '';
+  const decoded = decodeURIComponent(String(scene));
+  const params = decoded.split('&').reduce((acc, part) => {
+    const [key, value = ''] = part.split('=');
+    if (key) acc[key] = value;
+    return acc;
+  }, {});
+  return normalizeInviteRoomId(params.roomId || params.r || decoded);
+}
+
+export function inviteRoomIdFromOptions(options = {}) {
+  const query = options.query || {};
+  return normalizeInviteRoomId(query.roomId)
+    || roomIdFromScene(query.scene)
+    || normalizeInviteRoomId(options.roomId);
+}
+
+export function readLaunchInviteRoomId(runtime = wx) {
+  try {
+    return runtime && runtime.getLaunchOptionsSync
+      ? inviteRoomIdFromOptions(runtime.getLaunchOptionsSync() || {})
+      : '';
+  } catch (err) {
+    return '';
+  }
+}
+
+export function registerInviteRoomListener(onInvite, runtime = wx) {
+  if (!runtime || !runtime.onShow || typeof onInvite !== 'function') return () => {};
+  const listener = (options = {}) => {
+    const roomId = inviteRoomIdFromOptions(options);
+    if (roomId) onInvite(roomId);
+  };
+  runtime.onShow(listener);
+  return () => {
+    if (runtime.offShow) runtime.offShow(listener);
+  };
+}
+
+export function shareRoomInvite(roomId, runtime = wx) {
+  const normalized = normalizeInviteRoomId(roomId);
+  if (!normalized) return false;
+  const payload = {
+    title: '来和我打一桌上大人',
+    query: `roomId=${normalized}&source=friendInvite`,
+  };
+  if (runtime && runtime.shareAppMessage) {
+    runtime.shareAppMessage(payload);
+    return payload;
+  }
+  if (runtime && runtime.showShareMenu) runtime.showShareMenu({ withShareTicket: true });
+  return payload;
 }
 
 export function localActionIdentity(action = {}) {
@@ -98,10 +177,73 @@ export function onlineErrorMessage(err) {
     NO_OPENID: '未获取到微信身份，请确认小游戏 AppID 与云环境一致',
     LOGIN_STORAGE_ERROR: '登录数据库初始化失败，请检查云数据库权限',
     LOGIN_FAILED: '登录失败，请重试',
+    ACTIVE_ROOM_FAILED: '检查已有房间失败，请重试',
+    RECONNECT_FAILED: '进入房间失败，请重试',
     CREATE_ROOM_FAILED: '创建牌桌失败，请检查 rooms 数据库集合',
     START_FAILED: '牌桌开局失败，请重试',
+    TABLE_FINISHED: '牌桌已结束',
+    JOIN_ROOM_FAILED: '加入房间失败，请重试',
+    ROOM_NOT_FOUND: '房间不存在或已失效',
+    ROOM_FULL: '房间已满',
+    ROOM_ALREADY_STARTED: '房间已经开局，无法加入',
+    ROOM_ALREADY_PLAYING: '牌桌正在进行中',
+    ROOM_ENDED: '房间已经结束',
+    ROOM_NOT_JOINABLE: '房间当前不可加入',
+    ALREADY_IN_ROOM: '你已有未结束牌桌，正在进入原牌桌',
+    NOT_IN_ROOM: '当前微信账号不在这张牌桌中',
+    WAITING_FOR_PLAYERS: '至少需要 2 名真人玩家才能开局',
+    HOST_NOT_READY: '房主准备后才能开局',
+    SOCKET_ENDPOINT_MISSING: 'WebSocket 入口未配置，请设置登录云函数 SOCKET_SERVICE',
+    SOCKET_URL_MISSING: 'WebSocket 入口未配置，请设置登录云函数 SOCKET_SERVICE',
+    SOCKET_SERVICE_MISSING: '微信云托管 WebSocket 需要配置登录云函数 SOCKET_SERVICE，不能直接填写云托管默认域名',
+    SOCKET_ENV_MISSING: 'WebSocket 云环境未配置，请设置登录云函数 SOCKET_ENV 或客户端云环境',
+    SOCKET_TOKEN_MISSING: 'WebSocket 鉴权缺失，请检查登录云函数 token 配置',
+    SOCKET_UNSUPPORTED: '当前环境不支持 WebSocket，请使用微信开发者工具或真机',
+    SOCKET_ABNORMAL_CLOSE: 'WebSocket 异常断开，请检查 socket 服务日志',
+    SOCKET_CONNECT_FAILED: 'WebSocket 连接失败，请检查服务和域名配置',
   };
   return messages[code] || `进入在线对战失败：${code}`;
+}
+
+function socketAuthSummary(auth = {}) {
+  const url = String((auth && auth.url) || '');
+  const env = String((auth && auth.env) || '');
+  const service = String((auth && auth.service) || '');
+  const path = String((auth && auth.path) || '');
+  let host = '';
+  try {
+    host = url.replace(/^wss?:\/\//, '').split('/')[0].split('?')[0];
+  } catch (err) {
+    host = '';
+  }
+  return {
+    hasUrl: Boolean(url),
+    hasEnv: Boolean(env),
+    hasService: Boolean(service),
+    hasToken: Boolean(auth && auth.token),
+    host,
+    env,
+    service,
+    path,
+  };
+}
+
+function missingSocketAuthCode(auth = {}) {
+  if (!auth || (!auth.url && !auth.service)) return 'SOCKET_ENDPOINT_MISSING';
+  if (!auth.token) return 'SOCKET_TOKEN_MISSING';
+  if (auth.service && !auth.env) return 'SOCKET_ENV_MISSING';
+  if (!auth.service && isWxCloudRunUrl(auth.url)) return 'SOCKET_SERVICE_MISSING';
+  return '';
+}
+
+function socketWaitingMessage(code) {
+  if (code === 'SOCKET_ENDPOINT_MISSING' || code === 'SOCKET_URL_MISSING') return 'WebSocket 未配置，等待重连…';
+  if (code === 'SOCKET_SERVICE_MISSING') return 'WebSocket 云托管服务名未配置，等待重连…';
+  if (code === 'SOCKET_ENV_MISSING') return 'WebSocket 云环境未配置，等待重连…';
+  if (code === 'SOCKET_TOKEN_MISSING') return 'WebSocket 鉴权缺失，等待重连…';
+  if (code === 'SOCKET_UNSUPPORTED') return '当前环境不支持 WebSocket，等待重连…';
+  if (code === 'SOCKET_ABNORMAL_CLOSE') return 'WebSocket 异常断开，等待重连…';
+  return '连接已断开，等待重连…';
 }
 
 function opErrorMessage(res = {}) {
@@ -228,42 +370,337 @@ export default class OnlineController {
     this.ackingEventSeq = 0;
     this.localActionPreviewType = null;
     this.pendingLocalAction = null;
+    this.lobbyState = null;
+    this.lobbyProfile = null;
+    this.lobbyError = '';
+    this.onLobby = null;
+    this.onWaitingRoom = null;
+    this.onEnterTable = null;
+    this.waitingRoom = null;
+    this.waitingError = '';
+    this.waitingRefreshTimer = null;
+    this.socketAuth = null;
+    this.socket = new OnlineSocketTransport();
+    this.socket.onSnapshot = (snapshot) => this.applySocketSnapshot(snapshot);
+    this.socket.onDisconnect = (err) => this.handleSocketDisconnect(err);
+    this.lastServerEventSeq = 0;
+    this.socketReconnecting = false;
+    this.lastSocketErrorCode = '';
   }
 
   setStatus(text) {
     if (typeof this.onStatus === 'function') this.onStatus(text);
   }
 
+  setLobbyState(state, detail = {}) {
+    this.lobbyState = state;
+    if (detail.error) this.lobbyError = detail.error;
+    else if (state !== LOBBY_STATES.ERROR) this.lobbyError = '';
+    if (typeof this.onLobby === 'function') {
+      this.onLobby(Object.assign({
+        state,
+        profile: this.lobbyProfile,
+        error: this.lobbyError,
+      }, detail));
+    }
+  }
+
+  setWaitingRoomState(room, detail = {}) {
+    if (room) this.waitingRoom = room;
+    if (detail.error) this.waitingError = detail.error;
+    else this.waitingError = '';
+    if (typeof this.onWaitingRoom === 'function') {
+      this.onWaitingRoom(Object.assign({
+        room: this.waitingRoom,
+        profile: this.lobbyProfile,
+        error: this.waitingError,
+      }, detail));
+    }
+  }
+
+  notifyEnterTable(result = {}) {
+    if (typeof this.onEnterTable === 'function') {
+      this.onEnterTable(Object.assign({
+        roomId: this.roomId,
+        seat: this.mySeat,
+      }, result));
+    }
+  }
+
+  async loginForLobby(profile = {}) {
+    if (!ensureCloudInit()) throw new Error('CLOUD_UNSUPPORTED');
+    this.setStatus('登录中…');
+    const loginRes = await login(profile);
+    if (!loginRes || !loginRes.ok) {
+      const error = new Error((loginRes && loginRes.error) || 'LOGIN_FAILED');
+      error.code = (loginRes && loginRes.error) || 'LOGIN_FAILED';
+      error.detail = loginRes && loginRes.message;
+      throw error;
+    }
+    this.lobbyProfile = lobbyProfile(loginRes, profile);
+    this.socketAuth = loginRes.socket || null;
+    console.info('[online] profile synced', {
+      nickName: this.lobbyProfile.nickName,
+      hasAvatar: Boolean(this.lobbyProfile.avatarUrl),
+      receivedProfile: loginRes.receivedProfile || {},
+      socket: socketAuthSummary(this.socketAuth),
+    });
+    return this.lobbyProfile;
+  }
+
+  async enterExistingRoom(roomInfo = {}) {
+    if (!roomInfo.roomId) throw new Error('ROOM_NOT_FOUND');
+    if (roomInfo.status === 'waiting' || roomInfo.room) {
+      return this.enterWaitingRoom(roomInfo);
+    }
+    this.roomId = roomInfo.roomId;
+    this.mySeat = typeof roomInfo.seat === 'number' ? roomInfo.seat : 0;
+    saveRoomSession(this.roomId, this.mySeat);
+    if (!(await this.reconnectSocketNow())) {
+      clearRoomSession();
+      this.roomId = null;
+      const code = this.lastSocketErrorCode || 'RECONNECT_FAILED';
+      const error = new Error(code);
+      error.code = code;
+      throw error;
+    }
+    this.active = true;
+    this.stopWaitingRefresh();
+    this.bindNetworkEvents();
+    return { roomId: this.roomId, seat: this.mySeat, reconnected: true };
+  }
+
+  async startLobby(profile = {}, options = {}) {
+    if (this.starting) throw new Error('ONLINE_STARTING');
+    this.starting = true;
+    try {
+      await this.loginForLobby(profile);
+      const inviteRoomId = normalizeInviteRoomId(options.inviteRoomId);
+      this.setLobbyState(LOBBY_STATES.CHECKING_ROOM);
+      this.setStatus('检查牌桌…');
+      const active = await callFunction('game', { action: 'activeRoom' });
+      if (!active || !active.ok) {
+        const error = new Error((active && active.error) || 'ACTIVE_ROOM_FAILED');
+        error.code = (active && active.error) || 'ACTIVE_ROOM_FAILED';
+        throw error;
+      }
+      if (active.hasRoom) {
+        this.setLobbyState(LOBBY_STATES.RECONNECTING, { room: active });
+        this.setStatus('正在进入房间…');
+        const entered = await this.enterExistingRoom(active);
+        this.setStatus('');
+        return Object.assign({ entered: entered.entered !== false }, entered);
+      }
+      if (inviteRoomId) {
+        this.setLobbyState(LOBBY_STATES.JOINING_INVITE, { roomId: inviteRoomId });
+        this.setStatus('正在加入邀请房间…');
+        const joined = await this.joinInviteRoom(inviteRoomId);
+        this.setStatus('');
+        return joined;
+      }
+      clearRoomSession();
+      this.setLobbyState(LOBBY_STATES.IDLE);
+      this.setStatus('');
+      return { entered: false, profile: this.lobbyProfile };
+    } catch (err) {
+      if (this.lobbyProfile) this.setLobbyState(LOBBY_STATES.ERROR, { error: onlineErrorMessage(err) });
+      throw err;
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  async createLobbyRoom(maxRounds = 2) {
+    if (this.starting) throw new Error('ONLINE_STARTING');
+    this.starting = true;
+    try {
+      if (!ensureCloudInit()) throw new Error('CLOUD_UNSUPPORTED');
+      this.setLobbyState(LOBBY_STATES.CREATING, { maxRounds });
+      this.setStatus('创建牌桌…');
+      const created = await callFunction('game', {
+        action: 'createRoom',
+        profile: this.lobbyProfile || {},
+        maxRounds,
+      });
+      if (!created || !created.ok) {
+        const error = new Error((created && created.error) || 'CREATE_ROOM_FAILED');
+        error.code = (created && created.error) || 'CREATE_ROOM_FAILED';
+        throw error;
+      }
+      if (created.alreadyInRoom) {
+        this.setStatus('正在进入房间…');
+        const entered = await this.enterExistingRoom(created);
+        this.setStatus('');
+        return Object.assign({ entered: entered.entered !== false }, entered);
+      }
+      const waiting = await this.enterWaitingRoom(created);
+      this.setStatus('');
+      return waiting;
+    } catch (err) {
+      this.setLobbyState(LOBBY_STATES.ERROR, { error: onlineErrorMessage(err) });
+      throw err;
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  async enterWaitingRoom(info = {}) {
+    const room = info.room || null;
+    const roomId = info.roomId || (room && room.roomId);
+    if (!roomId) throw new Error('ROOM_NOT_FOUND');
+    this.roomId = roomId;
+    this.mySeat = typeof info.seat === 'number'
+      ? info.seat
+      : (room && typeof room.yourSeat === 'number' ? room.yourSeat : this.mySeat);
+    saveRoomSession(this.roomId, this.mySeat);
+    this.active = false;
+    this.closeWatcher();
+    if (wx.offTouchStart) wx.offTouchStart(this.boundTouch);
+    const snapshot = room || (await this.fetchWaitingRoom());
+    this.setWaitingRoomState(snapshot || {
+      roomId,
+      status: 'waiting',
+      settings: info.settings || {},
+      players: info.players || [],
+      canStart: false,
+      yourSeat: this.mySeat,
+    });
+    this.startWaitingRefresh();
+    return { entered: false, waiting: true, roomId: this.roomId, seat: this.mySeat, room: this.waitingRoom };
+  }
+
+  async fetchWaitingRoom() {
+    if (!this.roomId) return null;
+    const res = await callFunction('game', { action: 'roomInfo', roomId: this.roomId });
+    if (!res || !res.ok) {
+      const error = new Error((res && res.error) || 'JOIN_ROOM_FAILED');
+      error.code = (res && res.error) || 'JOIN_ROOM_FAILED';
+      throw error;
+    }
+    this.mySeat = typeof res.seat === 'number' ? res.seat : this.mySeat;
+    return res.room;
+  }
+
+  async refreshWaitingRoom() {
+    if (!this.roomId || this.active) return false;
+    try {
+      const room = await this.fetchWaitingRoom();
+      if (room && room.status !== 'waiting') {
+        this.stopWaitingRefresh();
+        const entered = await this.enterExistingRoom({ roomId: this.roomId, seat: this.mySeat, status: room.status });
+        this.setStatus('');
+        if (entered && entered.entered !== false) {
+          this.notifyEnterTable(Object.assign({ entered: true }, entered));
+          return true;
+        }
+        return false;
+      }
+      this.setWaitingRoomState(room);
+      return true;
+    } catch (err) {
+      this.setWaitingRoomState(this.waitingRoom, { error: onlineErrorMessage(err) });
+      return false;
+    }
+  }
+
+  startWaitingRefresh() {
+    this.stopWaitingRefresh();
+    this.waitingRefreshTimer = setInterval(() => {
+      this.refreshWaitingRoom();
+    }, WAITING_REFRESH_INTERVAL_MS);
+  }
+
+  stopWaitingRefresh() {
+    if (this.waitingRefreshTimer) clearInterval(this.waitingRefreshTimer);
+    this.waitingRefreshTimer = null;
+  }
+
+  async joinInviteRoom(roomId) {
+    const normalized = normalizeInviteRoomId(roomId);
+    if (!normalized) {
+      const error = new Error('ROOM_NOT_FOUND');
+      error.code = 'ROOM_NOT_FOUND';
+      throw error;
+    }
+    const joined = await callFunction('game', {
+      action: 'joinRoom',
+      roomId: normalized,
+      profile: this.lobbyProfile || {},
+    });
+    if (joined && joined.ok) return this.enterWaitingRoom(joined);
+    if (joined && joined.error === 'ALREADY_IN_ROOM' && joined.existing) {
+      return this.enterExistingRoom(joined.existing);
+    }
+    const error = new Error((joined && joined.error) || 'JOIN_ROOM_FAILED');
+    error.code = (joined && joined.error) || 'JOIN_ROOM_FAILED';
+    throw error;
+  }
+
+  async setReady(ready = true) {
+    if (!this.roomId) return false;
+    try {
+      const res = await this.callGame('setReady', { ready });
+      if (!res || !res.ok) {
+        const error = new Error((res && res.error) || 'SET_READY_FAILED');
+        error.code = (res && res.error) || 'SET_READY_FAILED';
+        throw error;
+      }
+      this.setWaitingRoomState(res.room);
+      return true;
+    } catch (err) {
+      this.setWaitingRoomState(this.waitingRoom, { error: onlineErrorMessage(err) });
+      return false;
+    }
+  }
+
+  async startWaitingRoom() {
+    if (!this.roomId) return false;
+    try {
+      const started = await this.callGame('startRound');
+      if (!started || !started.ok) {
+        const error = new Error((started && started.error) || 'START_FAILED');
+        error.code = (started && started.error) || 'START_FAILED';
+        if (started && started.room) this.setWaitingRoomState(started.room);
+        throw error;
+      }
+      this.stopWaitingRefresh();
+      this.active = true;
+      this.bindNetworkEvents();
+      if (!(await this.reconnectSocketNow())) {
+        const code = this.lastSocketErrorCode || 'RECONNECT_FAILED';
+        const error = new Error(code);
+        error.code = code;
+        throw error;
+      }
+      this.setStatus('');
+      return true;
+    } catch (err) {
+      this.setWaitingRoomState(this.waitingRoom, { error: onlineErrorMessage(err) });
+      return false;
+    }
+  }
+
+  shareWaitingRoom() {
+    const roomId = this.roomId || (this.waitingRoom && this.waitingRoom.roomId);
+    return shareRoomInvite(roomId);
+  }
+
   /**
-   * 单人即可验证的在线流程：登录 → 创建房间 → 开局（空座 AI）→ 订阅。
+   * 兼容旧自测入口：登录 → 创建房间 → 进入等待房间。
    */
   async startSoloOnline(profile = {}) {
     if (this.starting) throw new Error('ONLINE_STARTING');
     this.starting = true;
     try {
-      if (!ensureCloudInit()) throw new Error('CLOUD_UNSUPPORTED');
-      this.setStatus('登录中…');
-      const loginRes = await login(profile);
-      if (!loginRes || !loginRes.ok) {
-        const error = new Error((loginRes && loginRes.error) || 'LOGIN_FAILED');
-        error.code = (loginRes && loginRes.error) || 'LOGIN_FAILED';
-        error.detail = loginRes && loginRes.message;
-        throw error;
-      }
-      console.info('[online] profile synced', {
-        nickName: loginRes.user && loginRes.user.nickName,
-        hasAvatar: Boolean(loginRes.user && loginRes.user.avatarUrl),
-        receivedProfile: loginRes.receivedProfile || {},
-      });
+      await this.loginForLobby(profile);
 
       const session = readRoomSession();
       if (session && session.roomId) {
         this.setStatus('恢复牌桌…');
         this.roomId = session.roomId;
         this.mySeat = typeof session.seat === 'number' ? session.seat : 0;
-        if (await this.refresh()) {
+        if (await this.reconnectSocketNow()) {
           this.active = true;
-          this.subscribe();
           this.bindNetworkEvents();
           return { roomId: this.roomId, seat: this.mySeat, reconnected: true };
         }
@@ -281,20 +718,7 @@ export default class OnlineController {
       this.roomId = created.roomId;
       this.mySeat = created.seat;
       saveRoomSession(this.roomId, this.mySeat);
-
-      this.setStatus('开局中…');
-      const started = await callFunction('game', { action: 'startRound', roomId: this.roomId });
-      if (!started || !started.ok) {
-        const error = new Error((started && started.error) || 'START_FAILED');
-        error.code = (started && started.error) || 'START_FAILED';
-        throw error;
-      }
-
-      this.active = true;
-      this.subscribe();
-      this.bindNetworkEvents();
-      await this.refresh();
-      return { roomId: this.roomId, seat: this.mySeat };
+      return this.enterWaitingRoom(created);
     } finally {
       this.starting = false;
     }
@@ -305,18 +729,7 @@ export default class OnlineController {
   }
 
   subscribe() {
-    if (!ensureCloudInit()) return;
-    this.closeWatcher();
-    try {
-      const db = wx.cloud.database();
-      this.watcher = db.collection('roomStates').doc(this.roomId).watch({
-        onChange: () => { this.refresh(); },
-        onError: () => { this.scheduleReconnect(); },
-      });
-    } catch (err) {
-      // watch 不可用时退化为手动刷新
-      this.watcher = null;
-    }
+    this.reconnectSocketNow();
   }
 
   async refresh() {
@@ -329,6 +742,91 @@ export default class OnlineController {
     }
   }
 
+  trySocketSubscribe() {
+    if (!this.roomId) return false;
+    const missingCode = missingSocketAuthCode(this.socketAuth);
+    if (missingCode) {
+      this.lastSocketErrorCode = missingCode;
+      console.warn('[online] socket auth missing', {
+        code: missingCode,
+        auth: socketAuthSummary(this.socketAuth),
+      });
+      return false;
+    }
+    this.closeWatcher();
+    this.socket.connect(this.socketAuth)
+      .then(() => this.socket.subscribe(this.roomId, this.version, this.lastServerEventSeq))
+      .then((snapshot) => {
+        this.socketReconnecting = false;
+        this.lastSocketErrorCode = '';
+        this.applySocketSnapshot(snapshot);
+      })
+      .catch((err) => {
+        this.lastSocketErrorCode = (err && err.code) || 'SOCKET_CONNECT_FAILED';
+        console.warn('[online] socket subscribe failed', {
+          code: this.lastSocketErrorCode,
+          auth: socketAuthSummary(this.socketAuth),
+          closeCode: err && err.closeCode,
+          reason: err && err.reason,
+          message: err && (err.errMsg || err.message),
+        });
+        this.scheduleReconnect();
+      });
+    return true;
+  }
+
+  async reconnectSocketNow() {
+    if (!this.roomId) return false;
+    const missingCode = missingSocketAuthCode(this.socketAuth);
+    if (missingCode) {
+      this.socketReconnecting = true;
+      this.lastSocketErrorCode = missingCode;
+      console.warn('[online] socket auth missing', {
+        code: missingCode,
+        auth: socketAuthSummary(this.socketAuth),
+      });
+      this.setStatus(socketWaitingMessage(missingCode));
+      return false;
+    }
+    try {
+      this.closeWatcher();
+      await this.socket.connect(this.socketAuth);
+      const snapshot = await this.socket.subscribe(this.roomId, this.version, this.lastServerEventSeq);
+      this.socketReconnecting = false;
+      this.lastSocketErrorCode = '';
+      this.applySocketSnapshot(snapshot);
+      this.setStatus('');
+      return true;
+    } catch (err) {
+      this.socketReconnecting = true;
+      this.lastSocketErrorCode = (err && err.code) || 'SOCKET_CONNECT_FAILED';
+      console.warn('[online] socket reconnect failed', {
+        code: this.lastSocketErrorCode,
+        auth: socketAuthSummary(this.socketAuth),
+        closeCode: err && err.closeCode,
+        reason: err && err.reason,
+        message: err && (err.errMsg || err.message),
+      });
+      this.setStatus(socketWaitingMessage(this.lastSocketErrorCode));
+      return false;
+    }
+  }
+
+  handleSocketDisconnect(err) {
+    if (!this.active && !this.roomId) return;
+    this.socketReconnecting = true;
+    this.lastSocketErrorCode = (err && err.code) || 'SOCKET_CLOSED';
+    this.setStatus(socketWaitingMessage(this.lastSocketErrorCode));
+    this.scheduleReconnect();
+  }
+
+  applySocketSnapshot(snapshot = {}) {
+    if (!snapshot) return false;
+    if (snapshot.public) return this.applyServerSnapshot(Object.assign({ ok: true }, snapshot));
+    if (snapshot.room) this.setWaitingRoomState(snapshot.room);
+    return true;
+  }
+
   /** 立即应用一次服务端裁决附带的完整快照，避免再次 pull 时错过短暂动作事件。 */
   applyServerSnapshot(res) {
     if (!res || !res.ok || !res.public) return false;
@@ -337,11 +835,19 @@ export default class OnlineController {
     saveRoomSession(this.roomId, this.mySeat);
     this.version = res.version;
     const local = buildLocalState(res.public, res.private || { hand: [] }, this.mySeat, this.databus.selectedCardId);
+    local.tableStatus = res.status || '';
+    local.tableSettings = res.settings || {};
+    local.tableFinished = res.status === 'tableResult';
     const animation = res.animation || {
       currentEvent: res.public.publicEvent || null,
       selfAcked: false,
       waiting: Boolean(res.public.publicEvent),
     };
+    this.lastServerEventSeq = Math.max(
+      this.lastServerEventSeq,
+      typeof animation.latestEventSeq === 'number' ? animation.latestEventSeq : 0,
+      animation.currentEvent && typeof animation.currentEvent.eventSeq === 'number' ? animation.currentEvent.eventSeq : 0
+    );
     this.animationWaiting = Boolean(animation.waiting || animation.currentEvent);
     local.animationWaiting = this.animationWaiting;
     if (this.animationWaiting) {
@@ -384,6 +890,9 @@ export default class OnlineController {
         previous: this.lastPlayedEventSeq,
         current: event.eventSeq,
       });
+      this.cancelLocalActionPreview();
+      if (this.animator.releaseOnlineEvent) this.animator.releaseOnlineEvent();
+      this.isAnimating = false;
     }
     this.lastPlayedEventSeq = event.eventSeq;
     this.isAnimating = true;
@@ -485,11 +994,10 @@ export default class OnlineController {
     if (this.ackingEventSeq === eventSeq) return;
     this.ackingEventSeq = eventSeq;
     try {
-      const res = await callFunction('game', {
-        action: 'ackAnimation',
-        roomId: this.roomId,
-        eventSeq,
-      });
+      const res = this.socket.isReady()
+        ? await this.socket.request('ackAnimation', { roomId: this.roomId, eventSeq, version: this.version })
+        : null;
+      if (!res) throw new Error('SOCKET_NOT_CONNECTED');
       if (!res || !res.ok) throw new Error((res && res.error) || 'ACK_FAILED');
       this.lastAckedEventSeq = Math.max(this.lastAckedEventSeq, eventSeq);
       this.ackingEventSeq = 0;
@@ -511,9 +1019,13 @@ export default class OnlineController {
     if (!this.heartbeatTimer) {
       this.heartbeatTimer = setInterval(() => {
         if (!this.active || !this.roomId) return;
-        callFunction('game', { action: 'heartbeat', roomId: this.roomId })
+        if (!this.socket.isReady()) {
+          this.handleSocketDisconnect();
+          return;
+        }
+        this.socket.heartbeat(this.roomId)
           .then((res) => {
-            if (res && res.advanced) this.refresh();
+            if (res && res.advanced) this.reconnectSocketNow();
           })
           .catch(() => { this.scheduleReconnect(); });
       }, HEARTBEAT_INTERVAL_MS);
@@ -530,8 +1042,8 @@ export default class OnlineController {
     this.setStatus('正在恢复牌桌…');
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
-      if (await this.refresh()) this.subscribe();
-      else this.scheduleReconnect();
+      if (await this.reconnectSocketNow()) return;
+      this.scheduleReconnect();
     }, delay);
   }
 
@@ -540,6 +1052,26 @@ export default class OnlineController {
       try { this.watcher.close(); } catch (err) { /* ignore */ }
     }
     this.watcher = null;
+  }
+
+  async callGame(action, payload = {}) {
+    if (this.active && this.socket.isReady() && this.roomId) {
+      try {
+        return await this.socket.request(action, {
+          roomId: this.roomId,
+          version: this.version,
+          payload,
+        });
+      } catch (err) {
+        this.scheduleReconnect(0);
+      }
+    }
+    if (this.active) {
+      const error = new Error('SOCKET_NOT_CONNECTED');
+      error.code = 'SOCKET_NOT_CONNECTED';
+      throw error;
+    }
+    return callFunction('game', Object.assign({ action, roomId: this.roomId }, payload));
   }
 
   canRetryOp(op) {
@@ -557,7 +1089,13 @@ export default class OnlineController {
       return;
     }
     try {
-      const res = await callFunction('game', Object.assign({ action: 'op', roomId: this.roomId, version: this.version }, op));
+      if (!this.socket.isReady()) {
+        this.socketReconnecting = true;
+        this.databus.feedback = '连接已断开，等待重连';
+        this.scheduleReconnect(0);
+        return;
+      }
+      const res = await this.socket.request('op', { roomId: this.roomId, version: this.version, payload: op });
       if (!res || !res.ok) {
         if (res && res.error === 'VERSION_STALE') {
           const refreshed = await this.refresh();
@@ -585,6 +1123,11 @@ export default class OnlineController {
 
   handleTouch(event) {
     if (!this.active) return;
+    if (this.socketReconnecting || !this.socket.isReady()) {
+      this.databus.feedback = '连接已断开，等待重连';
+      this.scheduleReconnect(0);
+      return;
+    }
     if (this.animationWaiting || this.isAnimating || this.localActionPreviewType) {
       this.databus.feedback = '请等待当前动作完成';
       return;
@@ -654,15 +1197,20 @@ export default class OnlineController {
   async nextRound() {
     this.setStatus('');
     try {
-      await callFunction('game', { action: 'startRound', roomId: this.roomId });
+      const started = await this.callGame('startRound');
+      if (!started || !started.ok) {
+        this.databus.feedback = onlineErrorMessage({ code: started && started.error });
+        return;
+      }
       await this.refresh();
     } catch (err) {
-      this.databus.feedback = '开新局失败，请重试';
+      this.databus.feedback = onlineErrorMessage(err);
     }
   }
 
   destroy() {
     this.active = false;
+    this.stopWaitingRefresh();
     if (wx.offTouchStart) wx.offTouchStart(this.boundTouch);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
@@ -674,5 +1222,6 @@ export default class OnlineController {
     this.cancelLocalActionPreview();
     if (wx.offNetworkStatusChange) wx.offNetworkStatusChange(this.boundNetworkChange);
     this.closeWatcher();
+    if (this.socket) this.socket.close();
   }
 }
