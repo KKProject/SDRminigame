@@ -29,6 +29,7 @@ export default class DataBus {
   tableStatus = '';
   tableSettings = {};
   tableFinished = false;
+  tableRematch = null;
 
   constructor() {
     if (instance) return instance;
@@ -67,6 +68,7 @@ export default class DataBus {
       tableStatus: '',
       tableSettings: {},
       tableFinished: false,
+      tableRematch: null,
     });
   }
 }

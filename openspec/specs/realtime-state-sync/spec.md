@@ -68,7 +68,7 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **AND** 客户端 MUST NOT 使用 HTTPS API 或云函数兜底路径提交操作
 
 ### Requirement: 断线重连恢复
-系统 SHALL 支持玩家断线后通过 WebSocket 重连并恢复当前牌局视图。客户端重连后 MUST 重新建立 WebSocket 连接、完成鉴权、订阅原房间，并从服务端获取当前权威状态与本人手牌；服务端 MUST 在玩家掉线期间保留其牌局状态并向同桌玩家展示该玩家离线。客户端无法恢复 WebSocket 连接时 MUST 停留在等待重连状态，MUST NOT 使用 HTTPS API 或云函数快照恢复路径继续实时同步。
+系统 SHALL 支持玩家断线后通过 WebSocket 重连并恢复当前牌局视图。客户端重连后 MUST 重新建立 WebSocket 连接、完成鉴权、订阅原房间，并从服务端获取当前权威状态与本人手牌；服务端 MUST 在玩家掉线期间保留其牌局状态并向同桌玩家展示该玩家离线。客户端无法恢复 WebSocket 连接时 MUST 停留在等待重连状态，MUST NOT 使用 HTTPS API 或云函数快照恢复路径继续实时同步。若掉线期间服务端已自动推进到新的权威状态，重连玩家 MUST 直接看到最新牌局情况。
 
 #### Scenario: 重连恢复牌局
 - **WHEN** 玩家断线后重新进入同一牌局
@@ -85,8 +85,13 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **THEN** 客户端 MUST 保持等待重连状态
 - **AND** 客户端 MUST NOT 使用 HTTPS API 或云函数快照接口恢复当前牌局视图
 
+#### Scenario: 重连显示最新状态
+- **WHEN** 玩家断线期间牌局已因自动摸牌、自动出牌或其他无需手动选择的动作继续推进
+- **THEN** 重连后的客户端 MUST 显示最新权威状态和本人手牌
+- **AND** 客户端 MUST NOT 等待或补播掉线期间已不再需要本人回执的旧动画
+
 ### Requirement: 动画完成回执同步
-系统 SHALL 提供按 OPENID 鉴权且幂等的动画完成回执操作。客户端 MUST 通过 WebSocket 在动画管理器完成当前权威公开事件规定的全部必需阶段后提交对应 `eventSeq`；本地预演完成、动画开始或尚未完成的移动阶段 MUST NOT 被视为权威动画完成。服务端 MUST 同步当前必需回执名单、已回执名单和回执截止时间。`await-response` 出现牌事件在入场动画完成且等待牌已保留时即可回执；`auto-discard` 出现牌事件必须在归位和静态 mini 牌交接完成后回执；完整凑牌事件必须在牌组到达凑牌区并完成静态交接后回执。当 socket 回执失败时，客户端 MUST 等待 socket 重连后重试同一 `eventSeq`，MUST NOT 通过云函数兜底提交回执。
+系统 SHALL 提供按 OPENID 鉴权且幂等的动画完成回执操作。客户端 MUST 通过 WebSocket 在动画管理器完成当前权威公开事件规定的全部必需阶段后提交对应 `eventSeq`；本地预演完成、动画开始或尚未完成的移动阶段 MUST NOT 被视为权威动画完成。服务端 MUST 同步当前必需回执名单、已回执名单和回执截止时间，并 MUST 在玩家断线或超时后将其从当前必需回执名单移除。`await-response` 出现牌事件在入场动画完成且等待牌已保留时即可回执；`auto-discard` 出现牌事件必须在归位和静态 mini 牌交接完成后回执；完整凑牌事件必须在牌组到达凑牌区并完成静态交接后回执。当 socket 回执失败时，客户端 MUST 等待 socket 重连后重试同一 `eventSeq`，MUST NOT 通过云函数兜底提交回执。
 
 #### Scenario: 等待响应出现牌回执
 - **WHEN** 客户端完成 `await-response` 出现牌的入场动画并将其转为保留等待牌
@@ -112,6 +117,11 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **WHEN** 客户端在事件发布时已经掉线、托管或不属于当前真人牌桌玩家
 - **THEN** 服务端 MUST NOT 将该客户端加入必需回执名单
 - **AND** 该客户端 MUST NOT 阻塞牌局推进
+
+#### Scenario: 断线玩家移出回执名单
+- **WHEN** 当前公开事件等待回执期间某个必需客户端断线或超时
+- **THEN** 服务端 MUST 将该玩家从当前必需回执名单移除
+- **AND** 剩余回执条件满足后服务端 MUST 继续牌局推进
 
 #### Scenario: 旧事件回执被忽略
 - **WHEN** 客户端提交的动画回执序号早于当前待确认事件
@@ -171,4 +181,3 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **WHEN** 客户端重复收到同一权威事件或需要重试动画完成回执
 - **THEN** 客户端 MUST 保持该动作已播放状态
 - **AND** 客户端 MUST NOT 重播动画、重复音效或生成额外完成通知
-

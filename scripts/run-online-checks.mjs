@@ -1449,10 +1449,10 @@ if (/eventSeq|playOnlineEvent/.test(rendererSource)) {
 if (!/state\.animationWaiting/.test(rendererSource)) {
   throw new Error('renderer should block state compensation while an online authoritative animation is waiting');
 }
-if (!/state\.phase === 'result' && !state\.tableFinished/.test(layoutSource)) {
-  throw new Error('final table settlement should not expose the restart action hit region');
+if (!/leaveTable/.test(layoutSource) || !/requestRematch/.test(layoutSource)) {
+  throw new Error('final table settlement should expose exit and rematch action hit regions');
 }
-if (!/state\.tableFinished[\s\S]*?牌桌结算/.test(rendererSource)) {
+if (!/state\.tableFinished[\s\S]*?牌局已结束/.test(rendererSource)) {
   throw new Error('final table settlement should render an explicit table result title');
 }
 

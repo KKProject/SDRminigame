@@ -193,11 +193,16 @@ export function onlineErrorMessage(err) {
     ROOM_ALREADY_STARTED: '房间已经开局，无法加入',
     ROOM_ALREADY_PLAYING: '牌桌正在进行中',
     ROOM_ENDED: '房间已经结束',
+    ROOM_NOT_FINISHED: '牌桌尚未结束，暂时不能退出',
     ROOM_NOT_JOINABLE: '房间当前不可加入',
+    NOT_HOST: '只有房主可以发起再来一局',
     ALREADY_IN_ROOM: '你已有未结束牌桌，正在进入原牌桌',
     NOT_IN_ROOM: '当前微信账号不在这张牌桌中',
     WAITING_FOR_PLAYERS: '至少需要 2 名真人玩家才能开局',
     HOST_NOT_READY: '房主准备后才能开局',
+    SET_READY_FAILED: '准备状态更新失败，请重试',
+    LEAVE_ROOM_FAILED: '退出牌桌失败，请重试',
+    REMATCH_FAILED: '发起重开失败，请重试',
     SOCKET_ENDPOINT_MISSING: 'WebSocket 入口未配置，请设置自有 WSS 域名',
     SOCKET_URL_MISSING: 'WebSocket 入口未配置，请设置自有 WSS 域名',
     SOCKET_SERVICE_MISSING: 'WebSocket 入口未配置，请设置自有 WSS 域名',
@@ -861,6 +866,7 @@ export default class OnlineController {
     local.tableStatus = res.status || '';
     local.tableSettings = res.settings || {};
     local.tableFinished = res.status === 'tableResult';
+    local.tableRematch = res.rematch || null;
     const animation = res.animation || {
       currentEvent: res.public.publicEvent || null,
       selfAcked: false,
@@ -1206,6 +1212,14 @@ export default class OnlineController {
 
   handleActionTap(action) {
     if (!action) return;
+    if (action.type === 'leaveTable') {
+      this.leaveTable();
+      return;
+    }
+    if (action.type === 'requestRematch') {
+      this.requestRematch();
+      return;
+    }
     this.startLocalActionPreview(action);
     if (action.type === 'acceptTakeover') {
       this.sendOp({ kind: 'takeover', accept: true });
@@ -1237,6 +1251,55 @@ export default class OnlineController {
       await this.refresh();
     } catch (err) {
       this.databus.feedback = onlineErrorMessage(err);
+    }
+  }
+
+  async leaveTable() {
+    if (!this.roomId) return false;
+    try {
+      const res = await this.callGame('leaveRoom');
+      if (!res || !res.ok) {
+        this.databus.feedback = onlineErrorMessage({ code: res && res.error });
+        return false;
+      }
+      clearRoomSession();
+      this.active = false;
+      this.roomId = null;
+      this.version = -1;
+      this.lastServerEventSeq = 0;
+      this.currentEvent = null;
+      this.isAnimating = false;
+      this.animationWaiting = false;
+      this.cancelLocalActionPreview();
+      this.closeWatcher();
+      if (this.socket) this.socket.close();
+      if (wx.offTouchStart) wx.offTouchStart(this.boundTouch);
+      this.databus.reset();
+      this.setStatus('');
+      this.setLobbyState(LOBBY_STATES.IDLE, { profile: this.lobbyProfile });
+      return true;
+    } catch (err) {
+      this.databus.feedback = onlineErrorMessage(err);
+      return false;
+    }
+  }
+
+  async requestRematch() {
+    if (!this.roomId) return false;
+    try {
+      const res = await this.callGame('requestRematch');
+      if (!res || !res.ok) {
+        this.databus.feedback = onlineErrorMessage({ code: res && res.error });
+        return false;
+      }
+      if (!this.applyServerSnapshot(res)) {
+        this.databus.tableRematch = res.rematch || this.databus.tableRematch;
+        this.databus.feedback = res.rematchStarted ? '新一局开始' : '已同意，等待其他玩家';
+      }
+      return true;
+    } catch (err) {
+      this.databus.feedback = onlineErrorMessage(err);
+      return false;
     }
   }
 

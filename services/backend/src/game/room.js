@@ -36,7 +36,7 @@ const ROOM_STATES = 'roomStates';
 const QUEUE = 'matchQueue';
 const SUPPORTED_MAX_ROUNDS = [2, 4, 6];
 const DEFAULT_MAX_ROUNDS = 2;
-const CLOSED_ROOM_STATUSES = ['closed', 'tableResult'];
+const CLOSED_ROOM_STATUSES = ['closed'];
 /** 玩家超过此毫秒未心跳则视为掉线 */
 const PLAYER_TIMEOUT_MS = 60000;
 /** 单个公开动作等待客户端动画回执的最长时间 */
@@ -73,6 +73,22 @@ function activeRoomStatus(status) {
 
 function playerOpenids(players = []) {
   return players.map((player) => player.openid).filter(Boolean);
+}
+
+function buildRematchState(room, openid = null) {
+  const rematch = room && room.rematch ? room.rematch : null;
+  const players = humanPlayers(room);
+  const requiredOpenids = playerOpenids(players);
+  const agreedOpenids = rematch && Array.isArray(rematch.agreedOpenids) ? rematch.agreedOpenids : [];
+  return {
+    active: Boolean(rematch && rematch.status === 'pending'),
+    requestedBy: rematch ? (rematch.requestedBy || '') : '',
+    agreedOpenids,
+    agreedCount: agreedOpenids.filter((id) => requiredOpenids.indexOf(id) >= 0).length,
+    requiredCount: requiredOpenids.length,
+    selfAgreed: Boolean(openid && agreedOpenids.indexOf(openid) >= 0),
+    isHost: Boolean(openid && room && openid === room.hostOpenid),
+  };
 }
 
 function makeWaitingPlayer(seat, openid, profile = {}, now = Date.now()) {
@@ -156,6 +172,7 @@ function buildActiveRoomResult(room, openid) {
     settings: normalizeRoomSettings(room.settings),
   };
   if (room.status === 'waiting') result.room = buildWaitingRoomSnapshot(room, openid);
+  result.rematch = buildRematchState(room, openid);
   return result;
 }
 
@@ -367,6 +384,7 @@ async function writeRoomState(db, roomId, room, engine, version) {
       players: room.players,
       playerOpenids: playerOpenids(room.players),
       settings: normalizeRoomSettings(room.settings),
+      rematch: room.rematch || null,
       updatedAt: Date.now(),
     })),
   });
@@ -375,6 +393,7 @@ async function writeRoomState(db, roomId, room, engine, version) {
       version,
       public: publicState,
       animation,
+      rematch: buildRematchState(room),
       updatedAt: Date.now(),
     },
   });
@@ -672,7 +691,13 @@ async function startRound(event, ctx) {
         updatedAt: Date.now(),
       },
     });
-    return { ok: false, error: 'TABLE_FINISHED', status: room.status, settings: normalizeRoomSettings(room.settings) };
+    return {
+      ok: false,
+      error: 'TABLE_FINISHED',
+      status: room.status,
+      settings: normalizeRoomSettings(room.settings),
+      rematch: buildRematchState(room, OPENID),
+    };
   }
   if (room.status === 'waiting') {
     const host = (room.players || []).find((player) => player.openid === room.hostOpenid);
@@ -697,7 +722,135 @@ async function startRound(event, ctx) {
   room.status = 'playing';
   const version = (room.version || 0) + 1;
   await writeRoomState(db, roomId, room, engine, version);
-  return { ok: true, roomId, version };
+  return { ok: true, roomId, version, status: room.status, settings: normalizeRoomSettings(room.settings), rematch: buildRematchState(room, OPENID) };
+}
+
+async function leaveRoom(event, ctx) {
+  const { db, OPENID } = ctx;
+  const roomId = event.roomId;
+  const room = await getRoom(db, roomId);
+  if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
+  const seat = seatOfOpenid(room, OPENID);
+  if (seat < 0) return { ok: false, error: 'NOT_IN_ROOM' };
+  if (room.status !== 'tableResult' && room.status !== 'closed') {
+    return { ok: false, error: 'ROOM_NOT_FINISHED', status: room.status };
+  }
+
+  room.players = (room.players || []).filter((player) => player.openid !== OPENID);
+  room.playerOpenids = playerOpenids(room.players);
+  if (room.hostOpenid === OPENID) {
+    room.hostOpenid = room.players.length ? room.players[0].openid : '';
+  }
+  if (room.rematch && Array.isArray(room.rematch.agreedOpenids)) {
+    room.rematch.agreedOpenids = room.rematch.agreedOpenids.filter((id) => id !== OPENID);
+  }
+  if (!room.players.length) {
+    room.status = 'closed';
+    room.rematch = null;
+  }
+  const engine = loadEngine(room.state || null);
+  await db.collection(ROOMS).doc(roomId).set({
+    data: documentData(Object.assign({}, room, {
+      playerOpenids: playerOpenids(room.players),
+      updatedAt: Date.now(),
+    })),
+  });
+  return {
+    ok: true,
+    roomId,
+    left: true,
+    closed: room.status === 'closed',
+    status: room.status,
+    version: room.version || 0,
+    public: engine.state ? buildPublicState(engine.state) : null,
+    animation: engine.state ? animationState(room, engine, OPENID) : null,
+    rematch: buildRematchState(room, OPENID),
+  };
+}
+
+function resetRoundCounter(engine) {
+  if (engine && engine.state) {
+    engine.state.round = 0;
+    engine.state.result = null;
+    engine.state.publicEvent = null;
+    engine.state.pendingContinuation = null;
+  }
+}
+
+async function requestRematch(event, ctx) {
+  const { db, OPENID } = ctx;
+  const roomId = event.roomId;
+  const room = await getRoom(db, roomId);
+  if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
+  if (room.status !== 'tableResult') return { ok: false, error: 'ROOM_NOT_FINISHED', status: room.status };
+  const seat = seatOfOpenid(room, OPENID);
+  if (seat < 0) return { ok: false, error: 'NOT_IN_ROOM' };
+  const players = humanPlayers(room);
+  if (players.length < MIN_HUMANS) {
+    return { ok: false, error: 'WAITING_FOR_PLAYERS', rematch: buildRematchState(room, OPENID) };
+  }
+  if (!room.rematch || room.rematch.status !== 'pending') {
+    if (OPENID !== room.hostOpenid) {
+      return { ok: false, error: 'NOT_HOST', rematch: buildRematchState(room, OPENID) };
+    }
+    room.rematch = {
+      status: 'pending',
+      requestedBy: OPENID,
+      agreedOpenids: [OPENID],
+      createdAt: Date.now(),
+    };
+  } else if (room.rematch.agreedOpenids.indexOf(OPENID) < 0) {
+    room.rematch.agreedOpenids.push(OPENID);
+  }
+
+  const requiredOpenids = playerOpenids(players);
+  const agreed = new Set(room.rematch.agreedOpenids || []);
+  const allAgreed = requiredOpenids.every((id) => agreed.has(id));
+  const engine = loadEngine(room.state || null);
+  if (allAgreed) {
+    resetRoundCounter(engine);
+    room.rematch = null;
+    room.status = 'playing';
+    engine.startRound({ players: buildSeatPlayers(room) });
+    const version = (room.version || 0) + 1;
+    const publicState = await writeRoomState(db, roomId, room, engine, version);
+    return {
+      ok: true,
+      roomId,
+      version,
+      yourSeat: seat,
+      status: room.status,
+      settings: normalizeRoomSettings(room.settings),
+      public: publicState,
+      private: buildPrivateView(engine.state, seat),
+      animation: animationState(room, engine, OPENID),
+      rematch: buildRematchState(room, OPENID),
+      rematchStarted: true,
+    };
+  }
+
+  const version = (room.version || 0) + 1;
+  room.version = version;
+  await db.collection(ROOMS).doc(roomId).set({
+    data: documentData(Object.assign({}, room, {
+      playerOpenids: playerOpenids(room.players),
+      settings: normalizeRoomSettings(room.settings),
+      updatedAt: Date.now(),
+    })),
+  });
+  return {
+    ok: true,
+    roomId,
+    version,
+    yourSeat: seat,
+    status: room.status,
+    settings: normalizeRoomSettings(room.settings),
+    public: engine.state ? buildPublicState(engine.state) : null,
+    private: engine.state ? buildPrivateView(engine.state, seat) : { hand: [] },
+    animation: animationState(room, engine, OPENID),
+    rematch: buildRematchState(room, OPENID),
+    rematchStarted: false,
+  };
 }
 
 // ===================== 操作裁决 =====================
@@ -777,6 +930,7 @@ async function op(event, ctx) {
     yourSeat: seat,
     status: room.status,
     settings: normalizeRoomSettings(room.settings),
+    rematch: buildRematchState(room, OPENID),
     public: publicState,
     private: buildPrivateView(engine.state, seat),
     animation: animationState(room, engine, OPENID),
@@ -821,6 +975,7 @@ async function pull(event, ctx) {
     yourSeat: seat,
     status: room.status,
     settings: normalizeRoomSettings(room.settings),
+    rematch: buildRematchState(room, OPENID),
     public: engine.state ? buildPublicState(engine.state) : null,
     private: (engine.state && seat >= 0) ? buildPrivateView(engine.state, seat) : { hand: [] },
     animation: animationState(room, engine, OPENID),
@@ -874,6 +1029,7 @@ async function ackAnimation(event, ctx) {
     yourSeat: seatOfOpenid(room, OPENID),
     status: room.status,
     settings: normalizeRoomSettings(room.settings),
+    rematch: buildRematchState(room, OPENID),
     advanced,
     public: publicState,
     private: buildPrivateView(engine.state, seatOfOpenid(room, OPENID)),
@@ -893,28 +1049,7 @@ async function ackAnimation(event, ctx) {
 function advanceTimedOutSeat(engine, seat) {
   const state = engine.state;
   if (!state || state.currentSeat !== seat || state.phase === 'result') return false;
-  state.seats[seat].isHuman = false;
   state.seats[seat].online = false;
-  if (state.phase === 'human-discard') {
-    engine.enterDiscardPhase(seat, `${state.seats[seat].nickName}掉线，托管出牌`);
-    return true;
-  }
-  if (state.phase === 'human-response') {
-    const source = state.appearingCard
-      ? state.appearingCard.sourceSeat
-      : (state.recentDiscard ? state.recentDiscard.seat : seat);
-    engine.handleResponseWindow(state.pendingActions || [], source);
-    return true;
-  }
-  if (state.phase === 'takeover-choice') {
-    engine.submitTakeover(seat, false);
-    return true;
-  }
-  if (state.phase === 'dealer-gift') {
-    // 座位已标记为非真人，重新进入选牌阶段即走 AI 自动选牌分支
-    engine.enterDealerGiftPhase(seat, state.takeoverDealer);
-    return true;
-  }
   return false;
 }
 
@@ -930,7 +1065,7 @@ async function heartbeat(event, ctx) {
   const now = Date.now();
   const engine = loadEngine(room.state || null);
   let advanced = false;
-  const barrier = syncAnimationBarrier(room, engine, now);
+  let barrier = syncAnimationBarrier(room, engine, now);
   (room.players || []).forEach((player) => {
     if (player.openid === OPENID) {
       player.online = true;
@@ -941,11 +1076,20 @@ async function heartbeat(event, ctx) {
       player.online = false;
       if (engine.state && engine.state.seats[player.seat]) {
         engine.state.seats[player.seat].online = false;
-        engine.state.seats[player.seat].isHuman = false;
       }
       if (!barrier) advanced = advanceTimedOutSeat(engine, player.seat) || advanced;
     }
   });
+  if (barrier) {
+    barrier = syncAnimationBarrier(room, engine, now);
+    if (barrierComplete(barrier)) {
+      engine.resumePublicEvent();
+      room.animationBarrier = null;
+      advanceUnobservedEvents(room, engine);
+      barrier = null;
+      advanced = true;
+    }
+  }
   if (barrier && now >= barrier.deadlineAt) {
     animationMetrics(room).timeoutCount += 1;
     const acked = new Set(barrier.ackedOpenids || []);
@@ -954,7 +1098,6 @@ async function heartbeat(event, ctx) {
       player.online = false;
       if (engine.state && engine.state.seats[player.seat]) {
         engine.state.seats[player.seat].online = false;
-        engine.state.seats[player.seat].isHuman = false;
       }
     });
     syncAnimationBarrier(room, engine, now);
@@ -995,7 +1138,6 @@ async function setPlayerConnection(event, ctx) {
   const engine = loadEngine(room.state || null);
   if (engine.state && engine.state.seats && engine.state.seats[seat]) {
     engine.state.seats[seat].online = online;
-    if (online) engine.state.seats[seat].isHuman = true;
   }
   let advanced = false;
   const barrier = syncAnimationBarrier(room, engine, now);
@@ -1016,6 +1158,7 @@ async function setPlayerConnection(event, ctx) {
       yourSeat: seat,
       status: room.status,
       settings: normalizeRoomSettings(room.settings),
+      rematch: buildRematchState(room, OPENID),
       public: publicState,
       private: buildPrivateView(engine.state, seat),
       animation: animationState(room, engine, OPENID),
@@ -1032,6 +1175,7 @@ async function setPlayerConnection(event, ctx) {
     yourSeat: seat,
     status: room.status,
     settings: normalizeRoomSettings(room.settings),
+    rematch: buildRematchState(room, OPENID),
     room: buildWaitingRoomSnapshot(room, OPENID),
   };
 }
@@ -1049,6 +1193,8 @@ module.exports = {
   roomInfo,
   setReady,
   startRound,
+  leaveRoom,
+  requestRematch,
   op,
   pull,
   heartbeat,

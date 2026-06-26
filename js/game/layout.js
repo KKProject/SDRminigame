@@ -25,6 +25,10 @@ function rect(x, y, width, height, meta = {}) {
 }
 
 function actionButtonWidth(action, buttonHeight) {
+  if (action && (action.type === 'leaveTable' || action.type === 'requestRematch')) {
+    const labelLength = String(action.label || '').length;
+    return Math.max(88, labelLength * 18 + 22);
+  }
   if (action && action.type === 'zhao' && action.zhaoSize) {
     const labelLength = String(action.label || '').length;
     return Math.max(68, labelLength * 18 + 16);
@@ -695,11 +699,31 @@ export default class TableLayout {
       return button;
     });
 
-    if (state.phase === 'result' && !state.tableFinished) {
-      actionButtons.push(rect(contentBounds.x + contentBounds.width / 2 - 52, contentBounds.y + contentBounds.height / 2 + (isLandscape ? 58 : 76), 104, 40, {
-        type: 'restart',
-        action: { type: 'restart', label: '再来一局' },
-      }));
+    if (state.phase === 'result') {
+      if (state.tableFinished) {
+        const rematch = state.tableRematch || {};
+        const resultButtonY = contentBounds.y + contentBounds.height / 2 + (isLandscape ? 58 : 76);
+        const resultActions = [{ type: 'leaveTable', label: '退出' }];
+        if (rematch.isHost && !rematch.active) {
+          resultActions.push({ type: 'requestRematch', label: '再来一局' });
+        } else if (rematch.active && !rematch.selfAgreed) {
+          resultActions.push({ type: 'requestRematch', label: '同意重开' });
+        }
+        const resultGap = 10;
+        const resultWidths = resultActions.map((action) => actionButtonWidth(action, 40));
+        const totalWidth = resultWidths.reduce((sum, width) => sum + width, 0) + Math.max(0, resultActions.length - 1) * resultGap;
+        let x = Math.floor(contentBounds.x + (contentBounds.width - totalWidth) / 2);
+        resultActions.forEach((action, index) => {
+          const width = resultWidths[index];
+          actionButtons.push(rect(x, resultButtonY, width, 40, { type: 'action', action }));
+          x += width + resultGap;
+        });
+      } else {
+        actionButtons.push(rect(contentBounds.x + contentBounds.width / 2 - 52, contentBounds.y + contentBounds.height / 2 + (isLandscape ? 58 : 76), 104, 40, {
+          type: 'restart',
+          action: { type: 'restart', label: '再来一局' },
+        }));
+      }
     }
 
     const seatPanels = createSeatPanels(contentBounds, topBar, handY, isLandscape);

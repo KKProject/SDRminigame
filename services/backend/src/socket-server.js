@@ -59,6 +59,7 @@ function snapshotPayload(res) {
     private: res && res.private,
     room: res && res.room,
     animation: res && res.animation,
+    rematch: res && res.rematch,
   };
 }
 
@@ -139,6 +140,8 @@ function createSocketLayer({ server, config, game, registry } = {}) {
       ackAnimation: () => game.ackAnimation(connection.openid, request),
       setReady: () => game.setReady(connection.openid, request),
       startRound: () => game.startRound(connection.openid, request),
+      leaveRoom: () => game.leaveRoom(connection.openid, request),
+      requestRematch: () => game.requestRematch(connection.openid, request),
     };
     const handler = handlers[request.type];
     if (!handler) return failure('error', request, 'UNKNOWN_MESSAGE_TYPE');

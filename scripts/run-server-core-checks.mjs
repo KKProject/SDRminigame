@@ -25,6 +25,7 @@ const serverRules = require(join(root, 'services/backend/src/game/core/rules.js'
 const serverAi = require(join(root, 'services/backend/src/game/core/ai.js'));
 const serverEngine = require(join(root, 'services/backend/src/game/core/engine.js'));
 const room = require(join(root, 'services/backend/src/game/room.js'));
+const { MemoryDocumentDatabase } = require(join(root, 'services/backend/src/db.js'));
 
 const localDeck = localCards.createDeck(localRules.DEFAULT_RULES);
 const serverDeck = serverCards.createDeck(serverRules.DEFAULT_RULES);
@@ -185,8 +186,86 @@ timeoutEngine.startRound({
 });
 const timedOutSeat = timeoutEngine.state.currentSeat;
 const previousPhase = timeoutEngine.state.phase;
-if (previousPhase !== 'result' && !room.advanceTimedOutSeat(timeoutEngine, timedOutSeat)) {
-  throw new Error('timed-out active human seat should be advanced by server AI takeover');
+if (previousPhase !== 'result' && room.advanceTimedOutSeat(timeoutEngine, timedOutSeat)) {
+  throw new Error('timed-out human manual action should pause instead of being auto-selected');
+}
+if (previousPhase !== 'result' && timeoutEngine.state.currentSeat !== timedOutSeat) {
+  throw new Error('timed-out human manual action should keep the same acting seat');
+}
+
+const rematchDb = new MemoryDocumentDatabase();
+const rematchRoomId = '991122';
+const rematchEngine = new serverEngine.HuapaiEngine(serverRules.DEFAULT_RULES);
+const rematchPlayers = [
+  { seat: 0, openid: 'host-openid', nickName: '房主', avatarUrl: '', isHuman: true, online: true, ready: true },
+  { seat: 1, openid: 'guest-openid', nickName: '客人', avatarUrl: '', isHuman: true, online: true, ready: true },
+];
+rematchEngine.startRound({
+  seed: 2002,
+  players: [
+    { openid: 'host-openid', nickName: '房主', isHuman: true },
+    { openid: 'guest-openid', nickName: '客人', isHuman: true },
+    { isHuman: false },
+    { isHuman: false },
+  ],
+});
+rematchEngine.state.phase = 'result';
+rematchEngine.state.round = 2;
+rematchEngine.state.result = { type: 'draw-round', summary: '测试结束' };
+rematchEngine.state.publicEvent = null;
+rematchEngine.state.pendingContinuation = null;
+await rematchDb.collection('rooms').doc(rematchRoomId).set({
+  data: room.documentData({
+    _id: rematchRoomId,
+    status: 'tableResult',
+    seatCount: 4,
+    players: rematchPlayers,
+    playerOpenids: rematchPlayers.map((player) => player.openid),
+    settings: { maxRounds: 2 },
+    hostOpenid: 'host-openid',
+    version: 7,
+    state: rematchEngine.state,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }),
+});
+const activeTableResult = await room.activeRoom({}, { db: rematchDb, _: {}, OPENID: 'host-openid' });
+if (!activeTableResult.hasRoom || activeTableResult.status !== 'tableResult') {
+  throw new Error('tableResult rooms should remain recoverable until the player exits');
+}
+const hostRematch = await room.requestRematch({ roomId: rematchRoomId }, { db: rematchDb, OPENID: 'host-openid' });
+if (!hostRematch.ok || !hostRematch.rematch || !hostRematch.rematch.active || hostRematch.rematchStarted) {
+  throw new Error('host should be able to request rematch and wait for other humans');
+}
+const guestRematch = await room.requestRematch({ roomId: rematchRoomId }, { db: rematchDb, OPENID: 'guest-openid' });
+if (!guestRematch.ok || !guestRematch.rematchStarted || guestRematch.status !== 'playing' || guestRematch.public.round !== 1) {
+  throw new Error('all human approvals should restart the same room with round counter reset');
+}
+
+const leaveRoomId = '991123';
+const leavePlayers = [
+  { seat: 0, openid: 'leave-host-openid', nickName: '房主', avatarUrl: '', isHuman: true, online: true, ready: true },
+  { seat: 1, openid: 'leave-guest-openid', nickName: '客人', avatarUrl: '', isHuman: true, online: true, ready: true },
+];
+await rematchDb.collection('rooms').doc(leaveRoomId).set({
+  data: room.documentData({
+    _id: leaveRoomId,
+    status: 'tableResult',
+    seatCount: 4,
+    players: leavePlayers,
+    playerOpenids: leavePlayers.map((player) => player.openid),
+    settings: { maxRounds: 2 },
+    hostOpenid: 'leave-host-openid',
+    version: 3,
+    state: rematchEngine.state,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }),
+});
+const leaveResult = await room.leaveRoom({ roomId: leaveRoomId }, { db: rematchDb, OPENID: 'leave-guest-openid' });
+const guestActiveAfterLeave = await room.activeRoom({}, { db: rematchDb, _: {}, OPENID: 'leave-guest-openid' });
+if (!leaveResult.ok || guestActiveAfterLeave.hasRoom) {
+  throw new Error('leaving a final-result room should release that player from active room lookup');
 }
 
 await rm(tempDir, { recursive: true, force: true });

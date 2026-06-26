@@ -25,6 +25,8 @@ const handlers = {
   roomInfo: room.roomInfo,
   setReady: room.setReady,
   startRound: room.startRound,
+  leaveRoom: room.leaveRoom,
+  requestRematch: room.requestRematch,
   op: room.op,
   pull: room.pull,
   heartbeat: room.heartbeat,
@@ -88,6 +90,14 @@ class LocalGameService {
 
   startRound(openid, request) {
     return this.callAction('startRound', openid, { roomId: request.roomId });
+  }
+
+  leaveRoom(openid, request) {
+    return this.callAction('leaveRoom', openid, { roomId: request.roomId });
+  }
+
+  requestRematch(openid, request) {
+    return this.callAction('requestRematch', openid, { roomId: request.roomId });
   }
 }
 
