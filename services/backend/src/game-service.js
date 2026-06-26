@@ -1,8 +1,8 @@
-const room = require('../../../cloudfunctions/game/room');
-const rules = require('../../../cloudfunctions/game/core/rules');
-const cards = require('../../../cloudfunctions/game/core/cards');
-const evaluator = require('../../../cloudfunctions/game/core/evaluator');
-const ai = require('../../../cloudfunctions/game/core/ai');
+const room = require('./game/room');
+const rules = require('./game/core/rules');
+const cards = require('./game/core/cards');
+const evaluator = require('./game/core/evaluator');
+const ai = require('./game/core/ai');
 
 const handlers = {
   ping: async (event, ctx) => ({ ok: true, pong: true, openid: ctx.OPENID }),

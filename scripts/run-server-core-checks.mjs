@@ -19,12 +19,12 @@ for (const file of ['rules', 'cards', 'evaluator']) {
 const localCards = await import(pathToFileURL(join(tempDir, 'cards.mjs')));
 const localEvaluator = await import(pathToFileURL(join(tempDir, 'evaluator.mjs')));
 const localRules = await import(pathToFileURL(join(tempDir, 'rules.mjs')));
-const serverCards = require(join(root, 'cloudfunctions/game/core/cards.js'));
-const serverEvaluator = require(join(root, 'cloudfunctions/game/core/evaluator.js'));
-const serverRules = require(join(root, 'cloudfunctions/game/core/rules.js'));
-const serverAi = require(join(root, 'cloudfunctions/game/core/ai.js'));
-const serverEngine = require(join(root, 'cloudfunctions/game/core/engine.js'));
-const room = require(join(root, 'cloudfunctions/game/room.js'));
+const serverCards = require(join(root, 'services/backend/src/game/core/cards.js'));
+const serverEvaluator = require(join(root, 'services/backend/src/game/core/evaluator.js'));
+const serverRules = require(join(root, 'services/backend/src/game/core/rules.js'));
+const serverAi = require(join(root, 'services/backend/src/game/core/ai.js'));
+const serverEngine = require(join(root, 'services/backend/src/game/core/engine.js'));
+const room = require(join(root, 'services/backend/src/game/room.js'));
 
 const localDeck = localCards.createDeck(localRules.DEFAULT_RULES);
 const serverDeck = serverCards.createDeck(serverRules.DEFAULT_RULES);

@@ -24,6 +24,14 @@ function rect(x, y, width, height, meta = {}) {
   return { x, y, width, height, ...meta };
 }
 
+function actionButtonWidth(action, buttonHeight) {
+  if (action && action.type === 'zhao' && action.zhaoSize) {
+    const labelLength = String(action.label || '').length;
+    return Math.max(68, labelLength * 18 + 16);
+  }
+  return Math.round(buttonHeight * (ACTION_BUTTON_ASPECT_RATIOS[action.type] || 1));
+}
+
 function sortGroupCards(cards) {
   return cards.slice().sort((a, b) => {
     if ((a.copy || 0) !== (b.copy || 0)) return (a.copy || 0) - (b.copy || 0);
@@ -672,9 +680,7 @@ export default class TableLayout {
     const actionModal = createActionModal(contentBounds, handY, state.playerActions, state.phase === 'result', isLandscape);
     const buttonGap = isLandscape ? 8 : 6;
     const buttonHeight = ACTION_BUTTON_HEIGHT;
-    const actionButtonWidths = state.playerActions.map((action) => (
-      Math.round(buttonHeight * (ACTION_BUTTON_ASPECT_RATIOS[action.type] || 1))
-    ));
+    const actionButtonWidths = state.playerActions.map((action) => actionButtonWidth(action, buttonHeight));
     const actionGroupWidth = actionButtonWidths.reduce((total, buttonWidth) => total + buttonWidth, 0)
       + Math.max(0, state.playerActions.length - 1) * buttonGap;
     const actionStartX = Math.floor(contentBounds.x + (contentBounds.width - actionGroupWidth) / 2);

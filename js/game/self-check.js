@@ -32,6 +32,7 @@ import {
   hasTriplet,
   isLegalDiscard,
   isListening,
+  applyMeldCards,
   pointValueForGrade,
   validateSupportPairObligations,
   validateSupportPairs,
@@ -75,6 +76,14 @@ function discardFromSeat(seat, key) {
 
 function legalDiscardKeys(seat) {
   return getLegalDiscards(seat, DEFAULT_RULES).map((card) => card.key).sort().join(',');
+}
+
+function zhaoSizes(actions) {
+  return actions
+    .filter((action) => action.type === 'zhao')
+    .map((action) => action.zhaoSize)
+    .sort((a, b) => a - b)
+    .join(',');
 }
 
 function makeTestAtlas() {
@@ -341,6 +350,45 @@ export function runSelfChecks() {
   zhaoState.seats[0].hand = zhaoHand;
   actions = findSelfDrawActions(zhaoState, 0, zhaoCard, DEFAULT_RULES);
   assert(actions.find((action) => action.type === 'zhao'), 'self-draw zhao should be available');
+  assert(zhaoSizes(actions) === '4', 'xxx plus incoming x should only offer 4-card zhao');
+
+  const fourZhaoState = makeState();
+  fourZhaoState.seats[0].hand = cardsFor(['shang', 'shang', 'shang', 'shang', 'da', 'da', 'ren', 'ren']);
+  const fourZhaoCard = cardsFor(['shang'])[0];
+  const fourZhaoActions = findSelfDrawActions(fourZhaoState, 0, fourZhaoCard, DEFAULT_RULES);
+  assert(zhaoSizes(fourZhaoActions) === '4,5', 'xxxx plus incoming x should offer 4-card and 5-card zhao choices');
+
+  const fiveZhaoState = makeState();
+  fiveZhaoState.seats[0].hand = cardsFor(['shang', 'shang', 'shang', 'shang', 'shang', 'da', 'da', 'ren', 'ren', 'kong', 'kong']);
+  const fiveZhaoCard = cardsFor(['shang'])[0];
+  const fiveZhaoActions = findSelfDrawActions(fiveZhaoState, 0, fiveZhaoCard, DEFAULT_RULES);
+  assert(zhaoSizes(fiveZhaoActions) === '4,5,6', 'xxxxx plus incoming x should offer 4-card, 5-card and 6-card zhao choices');
+
+  const preserveState = makeState();
+  preserveState.seats[0].hand = cardsFor(['shang', 'shang', 'shang', 'shang', 'da', 'fu', 'fu']);
+  const preserveCard = cardsFor(['shang'])[0];
+  const preserveAction = findSelfDrawActions(preserveState, 0, preserveCard, DEFAULT_RULES)
+    .find((action) => action.type === 'zhao' && action.zhaoSize === 4);
+  const preserved = applyMeldCards(preserveState.seats[0], preserveCard, preserveAction, DEFAULT_RULES);
+  assert(
+    zhaoSizes([preserveAction]) === '4'
+      && preserved.cards.length === 4
+      && preserved.hand.filter((card) => card.key === 'shang').length === 1
+      && preserved.hand.filter((card) => card.key === 'da').length === 1,
+    'xxxxy plus incoming x should allow 4-card zhao while preserving xy in hand',
+  );
+
+  const partialSupportState = makeState();
+  partialSupportState.seats[0].hand = cardsFor(['shang', 'shang', 'shang', 'shang', 'da', 'da']);
+  const partialSupportCard = cardsFor(['shang'])[0];
+  const partialSupportActions = findSelfDrawActions(partialSupportState, 0, partialSupportCard, DEFAULT_RULES);
+  assert(
+    partialSupportActions.find((action) => action.type === 'zhao' && action.zhaoSize === 4 && !action.circleLossRisk)
+      && partialSupportActions.find((action) => action.type === 'zhao' && action.zhaoSize === 5 && action.circleLossRisk),
+    'support validation should be per zhao size',
+  );
+  assert(zhaoSizes(filterHighestPriority(partialSupportActions)) === '4', 'unsafe larger zhao should not hide a safe smaller zhao');
+
   const unsafeZhaoState = makeState();
   unsafeZhaoState.seats[0].hand = cardsFor(['shang', 'shang', 'shang']);
   const unsafeZhaoCard = cardsFor(['shang'])[0];

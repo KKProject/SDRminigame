@@ -5,7 +5,6 @@ COPY services/backend/package*.json ./
 RUN npm install --omit=dev
 
 COPY services/backend ./services/backend
-COPY cloudfunctions/game ./cloudfunctions/game
 
 WORKDIR /app/services/backend
 ENV PORT=8080

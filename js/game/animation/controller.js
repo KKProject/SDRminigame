@@ -88,6 +88,8 @@ function previewMeld(action, state) {
     key: action.card.key,
     cards,
     from: action.sourceSeat,
+    zhaoSize: action.zhaoSize,
+    handKeyCount: action.handKeyCount,
   };
 }
 

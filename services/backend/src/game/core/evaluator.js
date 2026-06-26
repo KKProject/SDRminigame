@@ -1,18 +1,37 @@
-import {
+/**
+ * 规则判定与计分核心（evaluator.js）
+ *
+ * 本模块为纯函数，无副作用，被 engine / ai / room 调用。
+ *
+ * 功能分区：
+ *   1. 发牌与接庄   dealOpeningHands, findTakeoverEligibleSeats
+ *   2. 动作枚举     findChi/Peng/Zhao/TaActions, findAppearingCardActions
+ *   3. 出牌合法性   isLegalDiscard, getLegalDiscards
+ *   4. 八门分解     decomposeDoors, buildDoorOptions（胡牌结构）
+ *   5. 计福计分     calculateHuScoring, classifyHuGrade
+ *   6. 听牌/胡牌     evaluateWin, isListening
+ *   7. 招踏对子     validateSupportPairs, validateSupportPairObligations
+ *
+ * 「门」概念：胡牌需 8 门 = 明牌 melds + 手牌暗分解。
+ * 门类型：xyz（原句吃）、xy（二字搭）、same（同字 3+）、xx（对子，作挂载）
+ */
+const {
   ACTION_LABELS,
   ACTION_PRIORITY,
   DEFAULT_RULES,
   createSymbolMap,
   getPhraseKeysForKey,
-} from './rules';
-import {
+} = require('./rules');
+const {
   countByKey,
   countByPhrase,
   createSupportPairProof,
   nextSeat,
   removeCardsByKeys,
   sortCards,
-} from './cards';
+} = require('./cards');
+
+// ===================== 手牌计数工具 =====================
 
 function cloneCounts(counts) {
   return Object.keys(counts).reduce((copy, key) => {
@@ -47,11 +66,16 @@ function findCardsByKeys(cards, keys) {
   return removeCardsByKeys(cards, keys).removed;
 }
 
-export function counterclockwiseSeat(seat, rules = DEFAULT_RULES) {
+/** 逆时针下家（发牌顺序与响应顺序共用） */
+function counterclockwiseSeat(seat, rules = DEFAULT_RULES) {
   return nextSeat(seat, rules);
 }
 
-export function dealOpeningHands(deck, dealerSeat, rules = DEFAULT_RULES) {
+/**
+ * 开局发牌：按座位逆时针轮流发至目标张数。
+ * 庄家 23 张（最后一张为将牌 jiangCard），闲家 22 张。
+ */
+function dealOpeningHands(deck, dealerSeat, rules = DEFAULT_RULES) {
   const hands = Array.from({ length: rules.seatCount }).map(() => []);
   const dealLog = [];
   let jiangCard = null;
@@ -79,11 +103,13 @@ export function dealOpeningHands(deck, dealerSeat, rules = DEFAULT_RULES) {
   };
 }
 
-export function hasTriplet(cards) {
+/** 手牌中是否存在任意 key 数量 >= 3（刻子） */
+function hasTriplet(cards) {
   return Object.keys(countByKey(cards)).some((key) => countByKey(cards)[key] >= 3);
 }
 
-export function findTakeoverEligibleSeats(seats, dealerSeat, rules = DEFAULT_RULES) {
+/** 滑庄时按座位顺序（跳过庄家）找出有刻子可接庄的座位 */
+function findTakeoverEligibleSeats(seats, dealerSeat, rules = DEFAULT_RULES) {
   const eligible = [];
   for (let offset = 1; offset < rules.seatCount; offset++) {
     const seat = (dealerSeat + offset) % rules.seatCount;
@@ -92,28 +118,32 @@ export function findTakeoverEligibleSeats(seats, dealerSeat, rules = DEFAULT_RUL
   return eligible;
 }
 
-export function phraseHasComplete(hand, phraseId, rules = DEFAULT_RULES) {
+function phraseHasComplete(hand, phraseId, rules = DEFAULT_RULES) {
   const symbols = createSymbolMap(rules);
   const phraseKeys = rules.phrases.find((phrase) => phrase.id === phraseId).keys;
   const counts = countByKey(hand);
   return phraseKeys.every((key) => counts[key] > 0 && symbols[key]);
 }
 
-export function getCompletePhraseKeys(hand, rules = DEFAULT_RULES) {
+function getCompletePhraseKeys(hand, rules = DEFAULT_RULES) {
   return rules.phrases
     .filter((phrase) => phraseHasComplete(hand, phrase.id, rules))
     .reduce((keys, phrase) => keys.concat(phrase.keys), []);
 }
 
-export function getPhraseCardCount(hand, phraseId) {
+function getPhraseCardCount(hand, phraseId) {
   return hand.filter((card) => card.phraseId === phraseId).length;
 }
 
-export function isPreviousSeat(sourceSeat, seatIndex, rules = DEFAULT_RULES) {
+/** 是否为上家（出牌吃牌规则：仅上家可吃） */
+function isPreviousSeat(sourceSeat, seatIndex, rules = DEFAULT_RULES) {
   return nextSeat(sourceSeat, rules) === seatIndex;
 }
 
-export function responseSeatOrder(sourceSeat, rules = DEFAULT_RULES, options = {}) {
+/**
+ * 响应座位轮转顺序。摸牌时可 includeSource 让摸牌者先响应（自摸/自招）。
+ */
+function responseSeatOrder(sourceSeat, rules = DEFAULT_RULES, options = {}) {
   const includeSource = Boolean(options.includeSource);
   const order = [];
   let seat = includeSource ? sourceSeat : nextSeat(sourceSeat, rules);
@@ -124,7 +154,13 @@ export function responseSeatOrder(sourceSeat, rules = DEFAULT_RULES, options = {
   return order;
 }
 
-export function findChiActions(state, seatIndex, incomingCard, sourceSeat, sourceType, rules = DEFAULT_RULES) {
+// ===================== 动作枚举（吃碰招踏胡） =====================
+
+/**
+ * 吃：用 incoming 与同句另外两字组成 xyz 门。
+ * 限制：仅上家（或摸牌自吃）；已有完整原句不能吃；特殊搭子 xxy 等可能 forced。
+ */
+function findChiActions(state, seatIndex, incomingCard, sourceSeat, sourceType, rules = DEFAULT_RULES) {
   if (rules.allowChiFromPreviousOnly) {
     const canChiSource = sourceType === 'draw'
       ? sourceSeat === seatIndex || isPreviousSeat(sourceSeat, seatIndex, rules)
@@ -160,11 +196,13 @@ export function findChiActions(state, seatIndex, incomingCard, sourceSeat, sourc
   }];
 }
 
-export function canPengWithIncoming(hand, incomingCard) {
+/** 手牌中同 key 至少 2 张时可碰 */
+function canPengWithIncoming(hand, incomingCard) {
   return (countByKey(hand)[incomingCard.key] || 0) >= 2;
 }
 
-export function findPengActions(state, seatIndex, incomingCard, sourceSeat, sourceType, rules = DEFAULT_RULES) {
+/** 碰：incoming + 手牌 2 张同 key */
+function findPengActions(state, seatIndex, incomingCard, sourceSeat, sourceType, rules = DEFAULT_RULES) {
   const seat = state.seats[seatIndex];
   if (seat.history && seat.history.chiLocked) return [];
   if (!canPengWithIncoming(seat.hand, incomingCard)) return [];
@@ -183,7 +221,11 @@ export function findPengActions(state, seatIndex, incomingCard, sourceSeat, sour
   }];
 }
 
-export function findZhaoActions(state, seatIndex, incomingCard, sourceSeat, sourceType) {
+/**
+ * 招：incoming + 手牌 3~5 张同 key（4 张起需对子挂载）。
+ * circleLossRisk：对子不足时标为进圈风险，filterHighestPriority 会过滤。
+ */
+function findZhaoActions(state, seatIndex, incomingCard, sourceSeat, sourceType) {
   const seat = state.seats[seatIndex];
   if (seat.history && seat.history.chiLocked) return [];
   const count = countByKey(seat.hand)[incomingCard.key] || 0;
@@ -224,7 +266,8 @@ export function findZhaoActions(state, seatIndex, incomingCard, sourceSeat, sour
   return actions;
 }
 
-export function findTaActions(state, seatIndex, incomingCard, sourceType) {
+/** 踏：仅摸牌时，在己方已有招/踏上追加同 key 牌（未满 6 张） */
+function findTaActions(state, seatIndex, incomingCard, sourceType) {
   if (sourceType !== 'draw') return [];
   const actions = [];
   state.seats.forEach((owner) => {
@@ -255,7 +298,7 @@ export function findTaActions(state, seatIndex, incomingCard, sourceType) {
   return actions;
 }
 
-export function findSelfDrawActions(state, seatIndex, drawnCard, rules = DEFAULT_RULES) {
+function findSelfDrawActions(state, seatIndex, drawnCard, rules = DEFAULT_RULES) {
   return []
     .concat(findTaActions(state, seatIndex, drawnCard, 'draw'))
     .concat(findZhaoActions(state, seatIndex, drawnCard, seatIndex, 'draw'))
@@ -263,7 +306,11 @@ export function findSelfDrawActions(state, seatIndex, drawnCard, rules = DEFAULT
     .concat(findChiActions(state, seatIndex, drawnCard, seatIndex, 'draw', rules));
 }
 
-export function findAppearingCardActions(state, sourceSeat, incomingCard, sourceType, rules = DEFAULT_RULES) {
+/**
+ * 汇总某张出现牌的全部可能响应（按座位顺序 + 优先级排序）。
+ * 含胡牌检测 evaluateWin。
+ */
+function findAppearingCardActions(state, sourceSeat, incomingCard, sourceType, rules = DEFAULT_RULES) {
   const actions = [];
   const order = responseSeatOrder(sourceSeat, rules, { includeSource: sourceType === 'draw' });
   order.forEach((seatIndex, responseIndex) => {
@@ -299,17 +346,23 @@ export function findAppearingCardActions(state, sourceSeat, incomingCard, source
   return actions.sort((a, b) => b.priority - a.priority || a.responseIndex - b.responseIndex || a.seat - b.seat);
 }
 
-export function findResponseActions(state, sourceSeat, incomingCard, rules = DEFAULT_RULES) {
+/** 他人出牌后的响应动作（sourceType = discard） */
+function findResponseActions(state, sourceSeat, incomingCard, rules = DEFAULT_RULES) {
   return findAppearingCardActions(state, sourceSeat, incomingCard, 'discard', rules);
 }
 
-export function highestPriorityActions(actions) {
+function highestPriorityActions(actions) {
   if (!actions.length) return [];
   const top = actions[0].priority;
   return actions.filter((action) => action.priority === top);
 }
 
-export function filterHighestPriority(actions) {
+/**
+ * 过滤出当前应展示/执行的最高优先级动作集。
+ * 特殊：招与碰/吃冲突时同座位的低优先级也保留供选择；
+ * 碰与 createsChiLock 的吃冲突时保留吃选项。
+ */
+function filterHighestPriority(actions) {
   const safeActions = actions.filter((action) => !action.circleLossRisk || action.forced);
   const sorted = safeActions.slice().sort((a, b) => b.priority - a.priority || (a.responseIndex || 0) - (b.responseIndex || 0) || a.seat - b.seat);
   const top = highestPriorityActions(sorted);
@@ -334,11 +387,15 @@ export function filterHighestPriority(actions) {
   return top.concat(chiConflictActions);
 }
 
-export function isForcedPhrasePattern(hand, incomingCard, rules = DEFAULT_RULES) {
+function isForcedPhrasePattern(hand, incomingCard, rules = DEFAULT_RULES) {
   return Boolean(getSpecialTaziRequirement(hand, incomingCard, rules));
 }
 
-export function getSpecialTaziRequirement(hand, incomingCard, rules = DEFAULT_RULES, actionType = null) {
+/**
+ * 特殊搭子（塌子）检测：手牌恰 3 张同句且形如 xxy/yyz/zzx/zzy。
+ *  incoming 为缺失字时吃/碰为 forced（必须操作，否则过则进圈）。
+ */
+function getSpecialTaziRequirement(hand, incomingCard, rules = DEFAULT_RULES, actionType = null) {
   const phraseKeys = getPhraseKeysForKey(incomingCard.key, rules);
   if (phraseKeys.length !== 3) return null;
   const phraseCards = hand.filter((card) => phraseKeys.indexOf(card.key) >= 0);
@@ -363,11 +420,13 @@ export function getSpecialTaziRequirement(hand, incomingCard, rules = DEFAULT_RU
   return null;
 }
 
-export function createChiPenaltyKey(actionOrCard) {
+/** 放弃吃后的惩罚键，格式 phraseId:key，同键再次吃会进圈 */
+function createChiPenaltyKey(actionOrCard) {
   const card = actionOrCard.card || actionOrCard;
   return `${card.phraseId}:${card.key}`;
 }
 
+/** 招/踏 N 张（N>=4）需挂载的对子数：N-3 */
 function supportPairsNeeded(size) {
   if (size < 4) return 0;
   return size - 3;
@@ -384,7 +443,8 @@ function availablePairSources(cards, excludeIds = []) {
     }));
 }
 
-export function validateSupportPairs(hand, sameKeyGroupCards, rules = DEFAULT_RULES) {
+/** 单组招/踏的对子挂载是否满足（手牌中可用对子数） */
+function validateSupportPairs(hand, sameKeyGroupCards, rules = DEFAULT_RULES) {
   const needed = supportPairsNeeded(sameKeyGroupCards.length);
   if (!needed) {
     return createSupportPairProof({
@@ -428,7 +488,11 @@ function chooseDistinctPairKeys(pairCounts, needed) {
   return results;
 }
 
-export function validateSupportPairObligations(hand, highOrderGroups = [], rules = DEFAULT_RULES) {
+/**
+ * 多组招/踏的对子义务联合校验（对子不能复用）。
+ * 回溯分配 pairKeys，失败则招踏后进圈。
+ */
+function validateSupportPairObligations(hand, highOrderGroups = [], rules = DEFAULT_RULES) {
   const obligations = highOrderGroups
     .filter((group) => group && Array.isArray(group.cards) && group.cards.length >= 4)
     .map((group) => ({
@@ -476,6 +540,7 @@ export function validateSupportPairObligations(hand, highOrderGroups = [], rules
   };
 }
 
+/** 手牌中某句是否恰有 3 张且每字 1 张（完整原句，不可打出其中任一张） */
 function phraseHasExactComplete(hand, phraseId, rules = DEFAULT_RULES) {
   const phrase = rules.phrases.find((item) => item.id === phraseId);
   if (!phrase) return false;
@@ -485,10 +550,20 @@ function phraseHasExactComplete(hand, phraseId, rules = DEFAULT_RULES) {
   return phrase.keys.every((key) => counts[key] === 1);
 }
 
-// 计算一手牌中各句「发牌那一刻」能组成的完整原句数（用于锁定下限）。
-// 原句 = 某句三字各至少一张可凑成的一组，该句原句数 = min(cx, cy, cz)。
-// 在 startRound 发牌后调用，结果写入 seat.history.lockedPhraseTriplets，之后不再变。
-export function computePhraseTripletLocks(hand, rules = DEFAULT_RULES) {
+// ===================== 出牌合法性 =====================
+
+/**
+ * 计算一手牌中各句「发牌那一刻」能组成的完整原句数（用于锁定下限）。
+ *
+ * 原句 = 某句三字（x/y/z）各至少一张可凑成的一组，
+ * 该句原句数 = min(cx, cy, cz)。仅记录 > 0 的句子。
+ *
+ * 在 startRound 发牌后调用一次，结果写入 seat.history.lockedPhraseTriplets，
+ * 之后摸牌/吃碰均不再改变此基准。
+ *
+ * @returns {{ [phraseId]: number }} 各句锁定的原句数
+ */
+function computePhraseTripletLocks(hand, rules = DEFAULT_RULES) {
   const counts = countByKey(hand);
   return rules.phrases.reduce((locks, phrase) => {
     const min = Math.min(...phrase.keys.map((key) => counts[key] || 0));
@@ -560,6 +635,11 @@ function isInitialTwoPairStop(countsBefore, countsAfter, phraseKeys, usedBefore,
   return beforeValues.join(',') === '1,2,2' && afterValues.join(',') === '0,2,2';
 }
 
+/**
+ * 判断同句出牌后是否仍保留可达门子。
+ * 常规路径要求后续能在出牌上限内留下 xyz 或 xxx/yyy/zzz；
+ * 特例允许 xxyyz 先打单张 z 后停止，后续同句牌会被本函数拒绝。
+ */
 function canDiscardPreservingPhraseDoor(seat, card, rules = DEFAULT_RULES) {
   const phraseKeys = getPhraseKeysForKey(card.key, rules);
   if (phraseKeys.length !== 3) return true;
@@ -585,7 +665,13 @@ function canDiscardPreservingPhraseDoor(seat, card, rules = DEFAULT_RULES) {
   return isInitialTwoPairStop(handCounts, afterCounts, phraseKeys, discardedTotal, usedAfter, allowance, card.key);
 }
 
-export function isLegalDiscard(seat, card, rules = DEFAULT_RULES) {
+/**
+ * 判断能否打出 card。
+ * 规则：
+ *   1. 特殊搭子凑牌后必须先打出指定剩余牌（forcedDiscardCardId）；
+ *   2. 同句出牌后必须仍保留可达门子（见 canDiscardPreservingPhraseDoor）。
+ */
+function isLegalDiscard(seat, card, rules = DEFAULT_RULES) {
   const history = seat.history || { discardPhraseCounts: {} };
   if (history.forcedDiscardCardId && card.id !== history.forcedDiscardCardId) {
     return { legal: false, reason: '特殊搭子凑牌后必须先打出剩余牌' };
@@ -596,10 +682,16 @@ export function isLegalDiscard(seat, card, rules = DEFAULT_RULES) {
   return { legal: true };
 }
 
-export function getLegalDiscards(seat, rules = DEFAULT_RULES) {
+function getLegalDiscards(seat, rules = DEFAULT_RULES) {
   return (seat.hand || []).filter((card) => isLegalDiscard(seat, card, rules).legal);
 }
 
+// ===================== 八门分解（胡牌结构） =====================
+
+/**
+ * 从当前手牌计数生成一种「门」的候选拆法（贪心取第一个可用 key）。
+ * 门类型：same(3~6同字)、xyz(原句)、xy(二字搭)、xx(对子)
+ */
 function buildDoorOptions(counts, rules) {
   const key = firstAvailableKey(counts);
   if (!key) return [];
@@ -639,6 +731,7 @@ function buildDoorOptions(counts, rules) {
   return options;
 }
 
+/** 校验暗牌分解中 xx 对子是否足够支撑 same 门的 supportNeeded */
 function validateDoorSupport(doors) {
   const pairDoors = doors.filter((door) => door.type === 'xx');
   const pairKeys = pairDoors.map((door) => door.key);
@@ -666,6 +759,10 @@ function validateDoorSupport(doors) {
   return pairDoors.length >= needed;
 }
 
+/**
+ * 回溯将手牌计数分解为 targetDoorCount 门。
+ * 胡牌条件：恰好 8 门、其中 xy 恰好 1 个、对子挂载合法。
+ */
 function decomposeDoors(counts, rules, doors = [], memo = {}) {
   const signature = `${keyCountSignature(counts)}::${doors.length}`;
   if (memo[signature]) return null;
@@ -693,6 +790,7 @@ function decomposeDoors(counts, rules, doors = [], memo = {}) {
   return null;
 }
 
+/** 将桌面明牌 melds 转为门结构，参与胡牌判定 */
 function exposedDoors(melds) {
   return melds.map((meld) => ({
     type: meld.type === 'chi' ? 'xyz' : 'same',
@@ -706,12 +804,16 @@ function exposedDoors(melds) {
   }));
 }
 
-export function hasKezi(cards, melds = []) {
+/** 手牌或明牌中是否存在刻子（3+ 同字或碰招踏） */
+function hasKezi(cards, melds = []) {
   const counts = countByKey(cards);
   if (Object.keys(counts).some((key) => counts[key] >= 3)) return true;
   return melds.some((meld) => meld.type !== 'chi' && meld.cards.length >= 3);
 }
 
+// ===================== 计福与胡牌档位 =====================
+
+/** 句首字（position=0）基福 4，其余字基福 2 */
 function cardColorBase(symbol) {
   return symbol && symbol.position === 0 ? 4 : 2;
 }
@@ -720,6 +822,7 @@ function naturalKeziBase(symbol) {
   return cardColorBase(symbol) * 2;
 }
 
+/** 将牌（jiang）所在句子的牌计福 ×4 */
 function applyJiangMultiplier(amount, symbol, jiangPhraseId) {
   const multiplier = symbol && symbol.phraseId === jiangPhraseId ? 4 : 1;
   return {
@@ -728,7 +831,7 @@ function applyJiangMultiplier(amount, symbol, jiangPhraseId) {
   };
 }
 
-export function scoreOperationMeld(meld, rules = DEFAULT_RULES, context = {}) {
+function scoreOperationMeld(meld, rules = DEFAULT_RULES, context = {}) {
   if (!meld || !Array.isArray(meld.cards) || !meld.cards.length) return null;
   if (meld.type === 'chi') {
     const symbol = meld.cards[0];
@@ -762,7 +865,7 @@ export function scoreOperationMeld(meld, rules = DEFAULT_RULES, context = {}) {
   };
 }
 
-export function calculateOperationFu(melds = [], rules = DEFAULT_RULES, context = {}) {
+function calculateOperationFu(melds = [], rules = DEFAULT_RULES, context = {}) {
   const entries = (melds || [])
     .map((meld) => scoreOperationMeld(meld, rules, context))
     .filter(Boolean);
@@ -773,6 +876,9 @@ export function calculateOperationFu(melds = [], rules = DEFAULT_RULES, context 
   };
 }
 
+/**
+ * 胡牌档位：场(44+福)、大甲(33~43)、小甲(7xyz+1xy)、屁胡。
+ */
 function classifyHuGrade(doors, totalFu) {
   if (totalFu >= 44) return '场';
   if (totalFu >= 33 && totalFu <= 43) return '大甲';
@@ -789,7 +895,7 @@ function pointValueForGrade(grade, rules = DEFAULT_RULES) {
   return base;
 }
 
-export function calculateHuScoring(doors, rules = DEFAULT_RULES, context = {}) {
+function calculateHuScoring(doors, rules = DEFAULT_RULES, context = {}) {
   const symbols = createSymbolMap(rules);
   const jiangPhraseId = context.jiangPhraseId || null;
   const entries = [];
@@ -861,9 +967,12 @@ export function calculateHuScoring(doors, rules = DEFAULT_RULES, context = {}) {
   };
 }
 
-export { classifyHuGrade, pointValueForGrade };
-
-export function evaluateWin(cards, melds = [], source = 'self', rules = DEFAULT_RULES, context = {}) {
+/**
+ * 胡牌判定：明牌 + 手牌暗分解为 8 门且结构合法则 isWin。
+ * @param {string} source - 'self' 自摸 | 'discard' 点炮
+ * @param {object} context - { jiangPhraseId } 将牌句用于计福翻倍
+ */
+function evaluateWin(cards, melds = [], source = 'self', rules = DEFAULT_RULES, context = {}) {
   const exposed = exposedDoors(melds);
   const counts = countByKey(cards);
   const doorTarget = rules.targetDoorCount - exposed.length;
@@ -893,7 +1002,11 @@ export function evaluateWin(cards, melds = [], source = 'self', rules = DEFAULT_
   };
 }
 
-export function isListening(hand, melds = [], rules = DEFAULT_RULES, options = {}) {
+/**
+ * 听牌：是否存在某张补牌使 evaluateWin 成立。
+ * options.requiresKezi：接庄听牌检查须含刻子。
+ */
+function isListening(hand, melds = [], rules = DEFAULT_RULES, options = {}) {
   const symbols = createSymbolMap(rules);
   if (options.requiresKezi && !hasKezi(hand, melds)) return false;
   return Object.keys(symbols).some((key) => {
@@ -915,7 +1028,8 @@ export function isListening(hand, melds = [], rules = DEFAULT_RULES, options = {
   });
 }
 
-export function buildCircleLossResult(loser, seats, reason, rules = DEFAULT_RULES) {
+/** 构建进圈结算结构：loser 付其余三家各 circleLossPoint 分 */
+function buildCircleLossResult(loser, seats, reason, rules = DEFAULT_RULES) {
   const point = rules.circleLossPoint || rules.basePoint || 1;
   const winners = seats.map((seat) => seat.id).filter((seat) => seat !== loser);
   return {
@@ -932,9 +1046,50 @@ export function buildCircleLossResult(loser, seats, reason, rules = DEFAULT_RULE
   };
 }
 
-export function applyMeldCards(seat, incomingCard, action, rules = DEFAULT_RULES) {
+/** 执行吃碰招：从手牌移除 action.keys 对应牌，与 incoming 组成 meld.cards */
+function applyMeldCards(seat, incomingCard, action, rules = DEFAULT_RULES) {
   const removed = findCardsByKeys(seat.hand, action.keys);
   const nextHand = removeCardsByKeys(seat.hand, action.keys).cards;
   const cards = sortCards(removed.concat([incomingCard]), rules);
   return { hand: sortCards(nextHand, rules), cards };
 }
+
+module.exports = {
+  counterclockwiseSeat,
+  dealOpeningHands,
+  hasTriplet,
+  findTakeoverEligibleSeats,
+  phraseHasComplete,
+  getCompletePhraseKeys,
+  getPhraseCardCount,
+  isPreviousSeat,
+  responseSeatOrder,
+  findChiActions,
+  canPengWithIncoming,
+  findPengActions,
+  findZhaoActions,
+  findTaActions,
+  findSelfDrawActions,
+  findAppearingCardActions,
+  findResponseActions,
+  highestPriorityActions,
+  filterHighestPriority,
+  isForcedPhrasePattern,
+  getSpecialTaziRequirement,
+  createChiPenaltyKey,
+  validateSupportPairs,
+  validateSupportPairObligations,
+  computePhraseTripletLocks,
+  isLegalDiscard,
+  getLegalDiscards,
+  hasKezi,
+  scoreOperationMeld,
+  calculateOperationFu,
+  calculateHuScoring,
+  evaluateWin,
+  isListening,
+  buildCircleLossResult,
+  applyMeldCards,
+  classifyHuGrade,
+  pointValueForGrade,
+};

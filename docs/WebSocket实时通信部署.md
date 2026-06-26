@@ -88,4 +88,4 @@ curl https://api.example.com/healthz
 - `GAME_FUNCTION_URL`
 - `SOCKET_PROXY_SECRET`
 
-旧的 `cloudfunctions/login`、`cloudfunctions/game` 和 `services/socket` 可以保留作历史参考，但生产在线链路应以 `services/backend` 为准。
+旧的 `cloudfunctions/login`、`cloudfunctions/game` 和独立 `services/socket` 服务已经移除；生产在线链路以 `services/backend` 为准。

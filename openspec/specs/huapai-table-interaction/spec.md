@@ -243,11 +243,21 @@ TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose a
 - **AND** 不得命中过时的空列区域
 
 ### Requirement: Action Prompts
-The system SHALL render legal action choices for pending player decisions such as accept takeover, decline takeover, chi, peng, zhao, ta, hu, pass, and restart. During normal play, the hand SHALL be the only persistent operation area. Chi, peng, zhao, ta, hu, pass, accept takeover, decline takeover, dealer-slip, takeover-limit, forced-action, support-pair, dealer-kezi, chi-lock, discard-restriction, scoring, draw-round, or circle-loss warnings SHALL appear in a temporary modal popup when the current rule state requires a decision or warning. The modal SHALL be the only place where non-hand action controls are shown while a decision is pending.
+The system SHALL render legal action choices for pending player decisions such as accept takeover, decline takeover, chi, peng, zhao, ta, hu, pass, and restart. During normal play, the hand SHALL be the only persistent operation area. Chi, peng, zhao, ta, hu, pass, accept takeover, decline takeover, dealer-slip, takeover-limit, forced-action, support-pair, dealer-kezi, chi-lock, discard-restriction, scoring, draw-round, or circle-loss warnings SHALL appear in a temporary modal popup when the current rule state requires a decision or warning. The modal SHALL be the only place where non-hand action controls are shown while a decision is pending. When multiple zhao sizes are legal for the same appearing card, the modal SHALL let the human player choose the intended zhao size before submitting the zhao intent.
 
 #### Scenario: Pending response choices
 - **WHEN** the human player has one or more legal responses to an appearing card
 - **THEN** the system MUST show a modal popup containing only the currently legal response buttons using labels `吃`, `碰`, `招`, `踏`, `胡`, and `过` as appropriate, and prevent unrelated hand discards until the player chooses an action
+
+#### Scenario: Multiple zhao sizes are visible
+- **WHEN** the human player can form more than one zhao group size with the same appearing card
+- **THEN** the action modal MUST let the player distinguish and choose each legal zhao size, such as `招4张`, `招5张`, or `招6张`
+- **AND** the submitted action MUST preserve the selected zhao size for server validation
+
+#### Scenario: Zhao size support warning
+- **WHEN** the human player is choosing among zhao sizes
+- **THEN** the modal MUST show or otherwise make available the support-pair requirement for each zhao size
+- **AND** a zhao size lacking enough current support pairs MUST NOT hide another zhao size that is currently legal
 
 #### Scenario: Prompt follows global priority
 - **WHEN** a higher-priority action tier is available for the current appearing card
@@ -629,3 +639,4 @@ The system SHALL configure the WeChat minigame to run in landscape orientation f
 #### Scenario: 背面牌不泄露将牌信息
 - **WHEN** renderer 绘制对手未公开手牌或其他背面牌
 - **THEN** renderer MUST NOT 叠加将牌覆盖图
+

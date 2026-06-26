@@ -99,6 +99,7 @@ export function localActionIdentity(action = {}) {
     actingSeat: typeof action.actingSeat === 'number' ? action.actingSeat : (typeof action.seat === 'number' ? action.seat : 0),
     cardId,
     key: action.card && action.card.key ? action.card.key : '',
+    zhaoSize: action.zhaoSize || 0,
   };
 }
 
@@ -963,6 +964,7 @@ export default class OnlineController {
       this.pendingLocalAction
       && this.pendingLocalAction.identity.type === identity.type
       && this.pendingLocalAction.identity.cardId === identity.cardId
+      && this.pendingLocalAction.identity.zhaoSize === identity.zhaoSize
     ) return;
     this.localActionPreviewType = animationActionType(action.type);
     this.pendingLocalAction = {
@@ -1213,7 +1215,15 @@ export default class OnlineController {
       this.sendOp({ kind: 'takeover', accept: false });
       return;
     }
-    this.sendOp({ kind: 'response', ref: { index: action.index, type: action.type } });
+    this.sendOp({
+      kind: 'response',
+      ref: {
+        index: action.index,
+        type: action.type,
+        zhaoSize: action.zhaoSize,
+        handKeyCount: action.handKeyCount,
+      },
+    });
   }
 
   async nextRound() {

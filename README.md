@@ -35,7 +35,9 @@
 │   ├── databus.js                // 全局牌局状态
 │   ├── main.js                   // 游戏入口主循环
 │   └── render.js                 // Canvas 初始化和屏幕尺寸
-├── scripts
+├── services
+│   └── backend                   // 自有 HTTPS API 与 WebSocket 后端
+├── scripts                       // 本地验证脚本
 │   └── run-huapai-checks.mjs     // 共享规则/布局验证脚本
 ├── game.js                       // 小游戏入口
 ├── game.json                     // 小游戏运行配置，默认 landscape

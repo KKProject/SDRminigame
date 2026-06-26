@@ -30,7 +30,6 @@
   "libVersion": "3.15.2",
   "appid": "wx487628e952ff200d",
   "projectname": "quickstart",
-  "cloudfunctionRoot": "cloudfunctions/",
   "condition": {
     "search": {
       "current": -1,
@@ -86,10 +85,6 @@
       },
       {
         "value": "scripts",
-        "type": "folder"
-      },
-      {
-        "value": "cloudfunctions",
         "type": "folder"
       },
       {

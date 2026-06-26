@@ -739,11 +739,12 @@ export default class TableRenderer {
       ctx.globalAlpha = visual.alpha;
       ctx.translate(centerX, centerY);
       if (ctx.scale) ctx.scale(visual.scale, visual.scale);
+      const actionSpriteType = button.action.zhaoSize ? null : button.action.type;
       this.drawButton(ctx, {
         ...button,
         x: -button.width / 2,
         y: -button.height / 2,
-      }, button.action.label || button.action.type, false, visual, button.action.type);
+      }, button.action.label || button.action.type, false, visual, actionSpriteType);
       ctx.restore();
     });
   }

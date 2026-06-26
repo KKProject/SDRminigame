@@ -958,14 +958,7 @@ onlineController.ackRetryTimer = null;
 fakeSocketReady = true;
 
 const require = createRequire(import.meta.url);
-const loginFunction = require(join(root, 'cloudfunctions/login/index.js'));
-const roomFunction = require(join(root, 'cloudfunctions/game/room.js'));
-if (!loginFunction.isCollectionMissingError({ errCode: -502005 })) {
-  throw new Error('login cloud function should recognize a missing database collection');
-}
-if (loginFunction.isCollectionMissingError({ errCode: -502003 })) {
-  throw new Error('login cloud function must not treat permission errors as missing collections');
-}
+const roomFunction = require(join(root, 'services/backend/src/game/room.js'));
 const roomDocument = roomFunction.documentData({ _id: 'room-id', status: 'waiting' });
 if ('_id' in roomDocument || roomDocument.status !== 'waiting') {
   throw new Error('doc(id).set data must omit the immutable _id field');
@@ -1265,9 +1258,9 @@ if (blockedNextRound.ok || blockedNextRound.error !== 'TABLE_FINISHED' || maxRou
   throw new Error('startRound should be blocked once a room reaches settings.maxRounds');
 }
 
-const { HuapaiEngine } = require(join(root, 'cloudfunctions/game/core/engine.js'));
-const { DEFAULT_RULES } = require(join(root, 'cloudfunctions/game/core/rules.js'));
-const { getLegalDiscards } = require(join(root, 'cloudfunctions/game/core/evaluator.js'));
+const { HuapaiEngine } = require(join(root, 'services/backend/src/game/core/engine.js'));
+const { DEFAULT_RULES } = require(join(root, 'services/backend/src/game/core/rules.js'));
+const { getLegalDiscards } = require(join(root, 'services/backend/src/game/core/evaluator.js'));
 const targetedBarrierEngine = new HuapaiEngine(DEFAULT_RULES);
 targetedBarrierEngine.load({
   phase: 'human-discard',
@@ -1437,11 +1430,7 @@ if (
   throw new Error('expired animation barriers should mark non-acknowledging clients offline and continue the room');
 }
 
-const loginSource = await readFile(join(root, 'cloudfunctions/login/index.js'), 'utf8');
-const roomSource = await readFile(join(root, 'cloudfunctions/game/room.js'), 'utf8');
-if (/userRef\.set\(\{\s*data:\s*\{\s*_id:/s.test(loginSource)) {
-  throw new Error('login user document set must not write _id');
-}
+const roomSource = await readFile(join(root, 'services/backend/src/game/room.js'), 'utf8');
 if (/\.doc\([^)]*\)\.set\(\{\s*data:\s*\{\s*_id:/s.test(roomSource)) {
   throw new Error('room document set must not write _id');
 }

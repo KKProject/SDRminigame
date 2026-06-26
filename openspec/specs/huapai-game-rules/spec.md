@@ -61,7 +61,7 @@ The system SHALL advance play through opening deal, dealer-slip takeover choice,
 - **AND** the dealer MUST remain unchanged for the next round
 
 ### Requirement: Meld Actions
-The system SHALL evaluate Shang Da Ren actions for the current rule configuration, including chi, peng, zhao, and ta, and SHALL resolve simultaneous opportunities by priority `hu > ta > zhao > peng > chi`. Within the same action tier, the system SHALL use the current response order and award the action to the first legal seat.
+The system SHALL evaluate Shang Da Ren actions for the current rule configuration, including chi, peng, zhao, and ta, and SHALL resolve simultaneous opportunities by priority `hu > ta > zhao > peng > chi`. Within the same action tier, the system SHALL use the current response order and award the action to the first legal seat. When the first legal seat has multiple legal choices within the awarded action tier, the system SHALL allow that seat to choose among those legal choices.
 
 #### Scenario: Legal response actions are found
 - **WHEN** a player discards or draws a card that an eligible seat can use for a configured action
@@ -84,13 +84,30 @@ The system SHALL evaluate Shang Da Ren actions for the current rule configuratio
 - **WHEN** a player accepts a legal peng action
 - **THEN** the system MUST combine the incoming card with two matching hand cards to form a three-of-a-kind door
 
-#### Scenario: Zhao is accepted
-- **WHEN** a player has at least three matching hand cards and accepts a legal zhao action with a matching appearing card
-- **THEN** the system MUST create a fixed 4-to-6-card high-order group and immediately validate its support-pair requirement
+#### Scenario: Zhao choices are enumerated
+- **WHEN** a player has 3, 4, or 5 matching hand cards and receives a matching appearing card
+- **THEN** the system MUST enumerate one legal zhao choice for each target group size from 4 cards through the maximum size that can be formed with that hand and appearing card
+- **AND** each zhao choice MUST identify the target group size or equivalent number of matching hand cards consumed
 
-#### Scenario: Zhao support pairs are validated
-- **WHEN** a zhao group contains 4, 5, or 6 cards
+#### Scenario: Zhao is accepted with selected size
+- **WHEN** a player accepts a legal zhao action with a matching appearing card
+- **THEN** the system MUST consume exactly the number of matching hand cards identified by that zhao choice
+- **AND** the system MUST create a fixed 4-to-6-card high-order group matching the selected zhao size
+- **AND** any extra matching hand cards not selected for this zhao MUST remain in the player's hand
+
+#### Scenario: Zhao support pairs use selected size
+- **WHEN** a zhao group is selected as 4, 5, or 6 cards
 - **THEN** the system MUST require 1, 2, or 3 support pairs respectively, allow support pairs split from larger same-character groups, prevent the same support pair from serving multiple high-order groups, and require distinct pair source characters when multiple pairs are required by one group
+
+#### Scenario: Xxxxy can preserve same-phrase remainder
+- **WHEN** a player has same-phrase cards `xxxxy` and receives an appearing `x`
+- **THEN** the system MUST allow a zhao choice that consumes exactly three hand `x` cards and the appearing `x` to form a 4-card zhao group
+- **AND** the remaining hand cards from that phrase MUST still include `xy`
+
+#### Scenario: Larger zhao choice does not hide smaller legal choice
+- **WHEN** a larger zhao choice lacks enough support pairs
+- **AND** a smaller zhao choice with the same appearing card has enough support pairs
+- **THEN** the system MUST still offer or allow the smaller legal zhao choice
 
 #### Scenario: Ta is accepted
 - **WHEN** a drawn card matches an already-zhaoed table group and a legal seat accepts ta
@@ -101,7 +118,7 @@ The system SHALL evaluate Shang Da Ren actions for the current rule configuratio
 - **THEN** the system MUST NOT allow ta with that card
 
 #### Scenario: Support failure causes circle-loss
-- **WHEN** a zhao or ta action leaves the player without enough valid support pairs under the immediate validation rule
+- **WHEN** a zhao or ta action leaves the player without enough valid support pairs under the immediate validation rule for the selected group size
 - **THEN** the system MUST end the round as circle-loss for that player
 
 #### Scenario: Action priority is applied
