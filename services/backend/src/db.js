@@ -115,6 +115,21 @@ class MemoryCollection {
     return new MemoryQuery(this).limit(max);
   }
 
+  async countDocuments(query = {}) {
+    const snap = await new MemoryQuery(this, query).get();
+    return snap.data.length;
+  }
+
+  async deleteMany(query = {}) {
+    const ids = [];
+    this.docs.forEach((doc, id) => {
+      if (matchesQuery(Object.assign({ _id: id }, doc), query)) ids.push(id);
+    });
+    ids.forEach((id) => this.docs.delete(id));
+    await this.persist();
+    return { deletedCount: ids.length };
+  }
+
   async persist() {
     if (this.owner && this.owner.persist) await this.owner.persist();
   }
@@ -258,6 +273,15 @@ class MongoCollection {
 
   limit(max) {
     return new MongoQuery(this).limit(max);
+  }
+
+  async countDocuments(query = {}) {
+    return this.mongo.countDocuments(query || {});
+  }
+
+  async deleteMany(query = {}) {
+    const res = await this.mongo.deleteMany(query || {});
+    return { deletedCount: res.deletedCount || 0 };
   }
 }
 

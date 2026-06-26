@@ -24,6 +24,7 @@ function readConfig(env = process.env) {
     devOpenid: env.BACKEND_DEV_OPENID || '',
     appTokenSecret: env.APP_TOKEN_SECRET || env.SESSION_TOKEN_SECRET || 'huapai-dev-app-secret',
     socketTokenSecret: env.SOCKET_TOKEN_SECRET || env.WEBSOCKET_TOKEN_SECRET || 'huapai-dev-socket-secret',
+    adminToken: env.ADMIN_TOKEN || '',
     appTokenTtlMs: Number(env.APP_TOKEN_TTL_MS || DEFAULT_APP_TOKEN_TTL_MS),
     socketTokenTtlMs: Number(env.SOCKET_TOKEN_TTL_MS || DEFAULT_SOCKET_TOKEN_TTL_MS),
     mongodbUri: env.MONGODB_URI || '',
