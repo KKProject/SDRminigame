@@ -2,6 +2,7 @@ const http = require('http');
 const { URL } = require('url');
 
 const { adminPageHtml } = require('./admin-page');
+const { AdminService } = require('./admin-service');
 const { AuthService } = require('./auth-service');
 const { readConfig } = require('./config');
 const { createDatabase } = require('./db');
@@ -54,16 +55,6 @@ function bearerToken(req) {
   return header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
 }
 
-function adminToken(req, parsedUrl) {
-  return bearerToken(req) || (parsedUrl && parsedUrl.searchParams.get('token')) || '';
-}
-
-function verifyAdmin(req, parsedUrl, config) {
-  if (!config.adminToken) return { ok: false, status: 503, error: 'ADMIN_DISABLED' };
-  if (adminToken(req, parsedUrl) !== config.adminToken) return { ok: false, status: 401, error: 'ADMIN_UNAUTHORIZED' };
-  return { ok: true };
-}
-
 const ADMIN_COLLECTIONS = [
   { name: 'rooms', description: '权威房间状态和玩家手牌' },
   { name: 'roomStates', description: '牌桌公共状态快照' },
@@ -105,9 +96,23 @@ async function adminClear(db, body = {}) {
   return { ok: true, deleted };
 }
 
+async function verifyAdminRequest(req, admin) {
+  const verified = await admin.verifySession(bearerToken(req));
+  if (!verified.ok) return { ok: false, status: 401, error: verified.error || 'ADMIN_UNAUTHORIZED' };
+  return verified;
+}
+
+function adminErrorStatus(error) {
+  if (error === 'ADMIN_FORBIDDEN') return 403;
+  if (error === 'ADMIN_UNAUTHORIZED') return 401;
+  return 200;
+}
+
 async function createBackendServer(options = {}) {
   const config = options.config || readConfig();
   const db = options.db || await createDatabase(config);
+  const admin = options.admin || new AdminService({ config, db });
+  await admin.ensureDefaultAdmin();
   const auth = options.auth || new AuthService({ config, db, fetch: options.fetch });
   const game = options.game || new LocalGameService({ db });
 
@@ -122,16 +127,78 @@ async function createBackendServer(options = {}) {
       return;
     }
     if (req.method === 'GET' && parsedUrl.pathname === '/admin') {
-      const verified = verifyAdmin(req, parsedUrl, config);
-      if (!verified.ok) {
-        sendHtml(res, verified.status, `<h1>${verified.error}</h1>`);
-        return;
-      }
       sendHtml(res, 200, adminPageHtml());
       return;
     }
+    if (parsedUrl.pathname === '/api/admin/login' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        const result = await admin.login(body);
+        sendJson(res, result.ok ? 200 : 401, result);
+      } catch (err) {
+        sendJson(res, 200, { ok: false, error: err.code || err.message || 'ADMIN_LOGIN_FAILED', message: err.message });
+      }
+      return;
+    }
+    if (parsedUrl.pathname === '/api/admin/logout' && req.method === 'POST') {
+      sendJson(res, 200, admin.logout());
+      return;
+    }
+    if (parsedUrl.pathname === '/api/admin/me' && req.method === 'GET') {
+      const verified = await verifyAdminRequest(req, admin);
+      if (!verified.ok) {
+        sendJson(res, verified.status, { ok: false, error: verified.error });
+        return;
+      }
+      sendJson(res, 200, { ok: true, admin: verified.admin });
+      return;
+    }
+    if (parsedUrl.pathname === '/api/admin/admins' && req.method === 'GET') {
+      const verified = await verifyAdminRequest(req, admin);
+      if (!verified.ok) {
+        sendJson(res, verified.status, { ok: false, error: verified.error });
+        return;
+      }
+      try {
+        sendJson(res, 200, await admin.listAdmins(verified.admin));
+      } catch (err) {
+        const error = err.code || err.message || 'ADMIN_LIST_FAILED';
+        sendJson(res, adminErrorStatus(error), { ok: false, error, message: err.message });
+      }
+      return;
+    }
+    if (parsedUrl.pathname === '/api/admin/admins' && req.method === 'POST') {
+      const verified = await verifyAdminRequest(req, admin);
+      if (!verified.ok) {
+        sendJson(res, verified.status, { ok: false, error: verified.error });
+        return;
+      }
+      try {
+        const body = await readBody(req);
+        sendJson(res, 200, await admin.createAdmin(verified.admin, body));
+      } catch (err) {
+        const error = err.code || err.message || 'ADMIN_CREATE_FAILED';
+        sendJson(res, adminErrorStatus(error), { ok: false, error, message: err.message });
+      }
+      return;
+    }
+    if (parsedUrl.pathname === '/api/admin/admins/disable' && req.method === 'POST') {
+      const verified = await verifyAdminRequest(req, admin);
+      if (!verified.ok) {
+        sendJson(res, verified.status, { ok: false, error: verified.error });
+        return;
+      }
+      try {
+        const body = await readBody(req);
+        sendJson(res, 200, await admin.disableAdmin(verified.admin, body.username));
+      } catch (err) {
+        const error = err.code || err.message || 'ADMIN_DISABLE_FAILED';
+        sendJson(res, adminErrorStatus(error), { ok: false, error, message: err.message });
+      }
+      return;
+    }
     if (parsedUrl.pathname === '/api/admin/status' && req.method === 'GET') {
-      const verified = verifyAdmin(req, parsedUrl, config);
+      const verified = await verifyAdminRequest(req, admin);
       if (!verified.ok) {
         sendJson(res, verified.status, { ok: false, error: verified.error });
         return;
@@ -144,7 +211,7 @@ async function createBackendServer(options = {}) {
       return;
     }
     if (parsedUrl.pathname === '/api/admin/clear' && req.method === 'POST') {
-      const verified = verifyAdmin(req, parsedUrl, config);
+      const verified = await verifyAdminRequest(req, admin);
       if (!verified.ok) {
         sendJson(res, verified.status, { ok: false, error: verified.error });
         return;
@@ -188,6 +255,7 @@ async function createBackendServer(options = {}) {
     server,
     config,
     db,
+    admin,
     auth,
     game,
     socket,
@@ -206,4 +274,5 @@ module.exports = {
   readBody,
   adminStatus,
   adminClear,
+  verifyAdminRequest,
 };

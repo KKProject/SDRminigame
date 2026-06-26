@@ -81,25 +81,13 @@ const unauthorized = await fetch(`${baseUrl}/api/game`, {
 assert(unauthorized.status === 401, 'game api should reject missing bearer token');
 await app.close();
 
-const adminDisabledApp = await createBackendServer({
-  config,
-  db: new MemoryDocumentDatabase(),
-});
-await adminDisabledApp.listen(0);
-const adminDisabledBase = `http://127.0.0.1:${adminDisabledApp.server.address().port}`;
-const disabledStatus = await fetch(`${adminDisabledBase}/api/admin/status`, {
-  headers: { authorization: 'Bearer admin-secret' },
-});
-assert(disabledStatus.status === 503, 'admin api should be disabled when ADMIN_TOKEN is not configured');
-await adminDisabledApp.close();
-
 const adminConfig = readConfig({
   PORT: '0',
   PUBLIC_API_BASE_URL: 'https://api.example.com',
   PUBLIC_SOCKET_URL: 'wss://api.example.com/ws',
   APP_TOKEN_SECRET: 'app-secret',
   SOCKET_TOKEN_SECRET: 'socket-secret',
-  ADMIN_TOKEN: 'admin-secret',
+  ADMIN_SESSION_SECRET: 'admin-secret',
 });
 const adminDb = new MemoryDocumentDatabase();
 await adminDb.collection('rooms').doc('room-a').set({ data: { status: 'waiting' } });
@@ -110,42 +98,94 @@ await adminDb.collection('users').doc('openid-a').set({ data: { nickName: '保�
 const adminApp = await createBackendServer({ config: adminConfig, db: adminDb });
 await adminApp.listen(0);
 const adminBase = `http://127.0.0.1:${adminApp.server.address().port}`;
-const adminPage = await fetch(`${adminBase}/admin?token=admin-secret`);
-assert(adminPage.status === 200 && /花牌后端管理/.test(await adminPage.text()), 'admin page should render with a valid token');
-const adminPageUnauthorized = await fetch(`${adminBase}/admin?token=wrong`);
-assert(adminPageUnauthorized.status === 401, 'admin page should reject an invalid token');
+const adminPage = await fetch(`${adminBase}/admin`);
+const adminPageText = await adminPage.text();
+assert(adminPage.status === 200 && /管理员登录/.test(adminPageText), 'admin page should render the login workspace');
 const adminApiUnauthorized = await fetch(`${adminBase}/api/admin/status`, {
   headers: { authorization: 'Bearer wrong' },
 });
-assert(adminApiUnauthorized.status === 401, 'admin api should reject an invalid token');
+assert(adminApiUnauthorized.status === 401, 'admin api should reject an invalid session token');
+const adminLoginFailed = await fetch(`${adminBase}/api/admin/login`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ username: 'wangyk', password: 'wrong' }),
+});
+assert(adminLoginFailed.status === 401, 'admin login should reject wrong password');
+const adminLogin = await fetch(`${adminBase}/api/admin/login`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ username: 'wangyk', password: 'ww808123' }),
+}).then((res) => res.json());
+assert(adminLogin.ok && adminLogin.token && adminLogin.admin.role === 'superadmin', 'default superadmin should login');
+const adminAuthHeaders = { authorization: `Bearer ${adminLogin.token}` };
+const adminMe = await fetch(`${adminBase}/api/admin/me`, { headers: adminAuthHeaders }).then((res) => res.json());
+assert(adminMe.ok && adminMe.admin.username === 'wangyk', 'admin me should return current admin');
+const adminList = await fetch(`${adminBase}/api/admin/admins`, { headers: adminAuthHeaders }).then((res) => res.json());
+assert(adminList.ok && adminList.admins.some((item) => item.username === 'wangyk'), 'superadmin should list admins');
+assert(!JSON.stringify(adminList).includes('passwordHash') && !JSON.stringify(adminList).includes('salt'), 'admin list should hide password fields');
+const createAdmin = await fetch(`${adminBase}/api/admin/admins`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
+  body: JSON.stringify({ username: 'opsadmin', password: 'ops-pass-123', role: 'admin' }),
+}).then((res) => res.json());
+assert(createAdmin.ok && createAdmin.admin.username === 'opsadmin', 'superadmin should create an admin');
+const duplicateAdmin = await fetch(`${adminBase}/api/admin/admins`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
+  body: JSON.stringify({ username: 'opsadmin', password: 'ops-pass-123', role: 'admin' }),
+}).then((res) => res.json());
+assert(!duplicateAdmin.ok && duplicateAdmin.error === 'ADMIN_ALREADY_EXISTS', 'duplicate admin username should be rejected');
+const opsLogin = await fetch(`${adminBase}/api/admin/login`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ username: 'opsadmin', password: 'ops-pass-123' }),
+}).then((res) => res.json());
+assert(opsLogin.ok && opsLogin.admin.role === 'admin', 'created admin should login');
+const opsAuthHeaders = { authorization: `Bearer ${opsLogin.token}` };
+const opsAdminList = await fetch(`${adminBase}/api/admin/admins`, { headers: opsAuthHeaders });
+assert(opsAdminList.status === 403, 'regular admin should not list admins');
+const disableDefaultAdmin = await fetch(`${adminBase}/api/admin/admins/disable`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
+  body: JSON.stringify({ username: 'wangyk' }),
+}).then((res) => res.json());
+assert(!disableDefaultAdmin.ok && disableDefaultAdmin.error === 'ADMIN_DEFAULT_CANNOT_DISABLE', 'default superadmin should not be disabled');
+const disableOpsAdmin = await fetch(`${adminBase}/api/admin/admins/disable`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
+  body: JSON.stringify({ username: 'opsadmin' }),
+}).then((res) => res.json());
+assert(disableOpsAdmin.ok && disableOpsAdmin.admin.enabled === false, 'superadmin should disable regular admins');
+const disabledOpsStatus = await fetch(`${adminBase}/api/admin/status`, { headers: opsAuthHeaders });
+assert(disabledOpsStatus.status === 401, 'disabled admin sessions should stop working');
 const adminStatus = await fetch(`${adminBase}/api/admin/status`, {
-  headers: { authorization: 'Bearer admin-secret' },
+  headers: adminAuthHeaders,
 }).then((res) => res.json());
 const roomsStatus = adminStatus.collections.find((item) => item.name === 'rooms');
 const roomStatesStatus = adminStatus.collections.find((item) => item.name === 'roomStates');
 assert(adminStatus.ok && roomsStatus.count === 2 && roomStatesStatus.count === 1, 'admin status should count managed collections');
 const forbiddenClear = await fetch(`${adminBase}/api/admin/clear`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json', authorization: 'Bearer admin-secret' },
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
   body: JSON.stringify({ collection: 'users', confirm: 'CLEAR' }),
 }).then((res) => res.json());
 assert(!forbiddenClear.ok && forbiddenClear.error === 'ADMIN_COLLECTION_NOT_ALLOWED', 'admin clear should reject collections outside the allowlist');
 const missingConfirm = await fetch(`${adminBase}/api/admin/clear`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json', authorization: 'Bearer admin-secret' },
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
   body: JSON.stringify({ collection: 'rooms', confirm: 'NO' }),
 }).then((res) => res.json());
 assert(!missingConfirm.ok && missingConfirm.error === 'ADMIN_CONFIRM_REQUIRED', 'admin clear should require explicit confirmation');
 const clearRooms = await fetch(`${adminBase}/api/admin/clear`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json', authorization: 'Bearer admin-secret' },
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
   body: JSON.stringify({ collection: 'rooms', confirm: 'CLEAR' }),
 }).then((res) => res.json());
 assert(clearRooms.ok && clearRooms.deleted.rooms === 2, 'admin clear should delete one managed collection');
 assert(await adminDb.collection('users').countDocuments({}) === 1, 'admin clear should leave non-managed collections untouched');
 const clearAll = await fetch(`${adminBase}/api/admin/clear`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json', authorization: 'Bearer admin-secret' },
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
   body: JSON.stringify({ collection: 'all', confirm: 'CLEAR' }),
 }).then((res) => res.json());
 assert(clearAll.ok && clearAll.deleted.roomStates === 1 && clearAll.deleted.matchQueue === 1, 'admin clear all should delete all managed room collections');

@@ -1,9 +1,4 @@
-# backend-database-admin Specification
-
-## Purpose
-自有后端数据库管理页面和受保护的房间数据清理能力。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 受保护的数据库管理页面
 系统 SHALL 在自有后端提供 `/admin` 管理页面。该页面 MUST 支持管理员账号密码登录；相关 API MUST 由管理员登录会话保护。

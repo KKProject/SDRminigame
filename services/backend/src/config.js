@@ -1,6 +1,7 @@
 const DEFAULT_PORT = 8080;
 const DEFAULT_APP_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_SOCKET_TOKEN_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 function cleanUrl(value) {
   return String(value || '').replace(/\/+$/, '');
@@ -25,8 +26,10 @@ function readConfig(env = process.env) {
     appTokenSecret: env.APP_TOKEN_SECRET || env.SESSION_TOKEN_SECRET || 'huapai-dev-app-secret',
     socketTokenSecret: env.SOCKET_TOKEN_SECRET || env.WEBSOCKET_TOKEN_SECRET || 'huapai-dev-socket-secret',
     adminToken: env.ADMIN_TOKEN || '',
+    adminSessionSecret: env.ADMIN_SESSION_SECRET || env.ADMIN_TOKEN || env.APP_TOKEN_SECRET || env.SESSION_TOKEN_SECRET || 'huapai-dev-admin-secret',
     appTokenTtlMs: Number(env.APP_TOKEN_TTL_MS || DEFAULT_APP_TOKEN_TTL_MS),
     socketTokenTtlMs: Number(env.SOCKET_TOKEN_TTL_MS || DEFAULT_SOCKET_TOKEN_TTL_MS),
+    adminSessionTtlMs: Number(env.ADMIN_SESSION_TTL_MS || DEFAULT_ADMIN_SESSION_TTL_MS),
     mongodbUri: env.MONGODB_URI || '',
     mongodbDb: env.MONGODB_DB || 'huapai',
     fileDbPath: env.FILE_DB_PATH || '',
@@ -37,6 +40,7 @@ function readConfig(env = process.env) {
 }
 
 module.exports = {
+  DEFAULT_ADMIN_SESSION_TTL_MS,
   DEFAULT_APP_TOKEN_TTL_MS,
   DEFAULT_SOCKET_TOKEN_TTL_MS,
   readConfig,
