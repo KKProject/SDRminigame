@@ -1,55 +1,66 @@
 /**
- * 客户端云能力引导。
- * 进入在线对战时按需初始化云环境。
+ * 自有后端 API 客户端。
+ * 在线对战只通过 HTTPS API 与 WSS 访问自有服务器，不再依赖 wx.cloud。
  */
 
-export const CLOUD_ENV = 'cloud1-d2gorzc71e74a3175';
+export const BACKEND_API_BASE_URL = 'https://www.wangyouk.cn';
 const CALL_TIMEOUT_MS = 15000;
 
 let initialized = false;
 let latestSocketAuth = null;
+let latestAccessToken = '';
 
-export function isCloudSupported() {
-  return typeof wx !== 'undefined' && typeof wx.cloud !== 'undefined';
+function configuredApiBaseUrl() {
+  const runtimeValue = typeof wx !== 'undefined' ? wx.__HUAPAI_BACKEND_API_BASE_URL : '';
+  return String(runtimeValue || BACKEND_API_BASE_URL || '').replace(/\/+$/, '');
 }
 
-/**
- * 幂等初始化云环境。返回是否初始化成功。
- */
+export function isCloudSupported() {
+  return typeof wx !== 'undefined' && typeof wx.request === 'function';
+}
+
 export function ensureCloudInit() {
   if (initialized) return true;
   if (!isCloudSupported()) return false;
-  try {
-    wx.cloud.init({ env: CLOUD_ENV, traceUser: true });
-    initialized = true;
-    return true;
-  } catch (err) {
-    return false;
-  }
+  initialized = true;
+  return true;
 }
 
 export function cloudErrorCode(err) {
   if (!err) return 'UNKNOWN_ERROR';
   if (typeof err.code === 'string' && err.code) return err.code;
-  if (err.errCode === -501000) return 'FUNCTION_NOT_FOUND';
-  if (err.errCode === -501005) return 'CLOUD_ENV_INVALID';
-  if (err.errCode === -502005) return 'DATABASE_COLLECTION_MISSING';
   if (typeof err.errCode === 'number') return String(err.errCode);
   const message = String(err.errMsg || err.message || err);
-  if (message.includes('FUNCTION_NOT_FOUND') || message.includes('-501000')) return 'FUNCTION_NOT_FOUND';
-  if (message.includes('CLOUD_UNSUPPORTED')) return 'CLOUD_UNSUPPORTED';
+  if (message.includes('BACKEND_UNSUPPORTED')) return 'BACKEND_UNSUPPORTED';
+  if (message.includes('BACKEND_TIMEOUT')) return 'BACKEND_TIMEOUT';
   if (message.includes('WX_LOGIN_FAILED')) return 'WX_LOGIN_FAILED';
-  if (message.includes('CLOUD_TIMEOUT')) return 'CLOUD_TIMEOUT';
   return message || 'UNKNOWN_ERROR';
 }
 
-/**
- * 调用云函数的 Promise 封装。
- */
+function backendError(code, detail = null) {
+  const error = new Error(code);
+  error.code = code;
+  if (detail) error.detail = detail;
+  return error;
+}
+
+function endpointFor(name) {
+  const baseUrl = configuredApiBaseUrl();
+  if (!baseUrl) return '';
+  if (name === 'login') return `${baseUrl}/api/auth/login`;
+  if (name === 'game') return `${baseUrl}/api/game`;
+  return '';
+}
+
+function authHeader() {
+  return latestAccessToken ? { Authorization: `Bearer ${latestAccessToken}` } : {};
+}
+
 export function callFunction(name, data = {}) {
-  if (!ensureCloudInit()) {
-    return Promise.reject(new Error('CLOUD_UNSUPPORTED'));
-  }
+  if (!ensureCloudInit()) return Promise.reject(backendError('BACKEND_UNSUPPORTED'));
+  const url = endpointFor(name);
+  if (!url) return Promise.reject(backendError('BACKEND_ENDPOINT_MISSING'));
+  if (name === 'game' && !latestAccessToken) return Promise.reject(backendError('BACKEND_AUTH_MISSING'));
   return new Promise((resolve, reject) => {
     let settled = false;
     const finish = (callback, value) => {
@@ -59,14 +70,21 @@ export function callFunction(name, data = {}) {
       callback(value);
     };
     const timer = setTimeout(() => {
-      const error = new Error('CLOUD_TIMEOUT');
-      error.code = 'CLOUD_TIMEOUT';
-      finish(reject, error);
+      finish(reject, backendError('BACKEND_TIMEOUT'));
     }, CALL_TIMEOUT_MS);
-    wx.cloud.callFunction({
-      name,
+    wx.request({
+      url,
+      method: 'POST',
       data,
-      success: (res) => finish(resolve, res && res.result),
+      timeout: CALL_TIMEOUT_MS,
+      header: Object.assign({ 'content-type': 'application/json' }, name === 'game' ? authHeader() : {}),
+      success: (res) => {
+        if (res.statusCode >= 400) {
+          finish(reject, backendError((res.data && res.data.error) || `BACKEND_HTTP_${res.statusCode}`, res));
+          return;
+        }
+        finish(resolve, res.data);
+      },
       fail: (err) => finish(reject, err),
     });
   });
@@ -78,40 +96,32 @@ export function getSocketAuth() {
 
 export function clearSocketAuth() {
   latestSocketAuth = null;
+  latestAccessToken = '';
 }
 
 export function refreshSocketToken(profile = {}) {
   return login(profile).then((res) => {
     if (!res || !res.ok || !res.socket || !res.socket.token) {
-      const error = new Error('SOCKET_TOKEN_UNAVAILABLE');
-      error.code = 'SOCKET_TOKEN_UNAVAILABLE';
-      throw error;
+      throw backendError('SOCKET_TOKEN_UNAVAILABLE');
     }
     return res.socket;
   });
 }
 
 function normalizeSocketAuth(socket = {}) {
-  if (!socket || !socket.token) return null;
-  const normalized = Object.assign({}, socket);
-  if (normalized.service && !normalized.env) normalized.env = CLOUD_ENV;
-  return normalized;
+  if (!socket || !socket.token || !socket.url) return null;
+  return Object.assign({}, socket);
 }
 
-/**
- * 登录：先 wx.login 触发会话，再调用 login 云函数换取服务端身份。
- * profile 可选，拿到微信资料后一并写入。
- */
 export function login(profile = {}) {
-  if (!ensureCloudInit()) {
-    return Promise.reject(new Error('CLOUD_UNSUPPORTED'));
-  }
+  if (!ensureCloudInit()) return Promise.reject(backendError('BACKEND_UNSUPPORTED'));
   return new Promise((resolve, reject) => {
     const proceed = (loginResult = {}) => {
       callFunction('login', Object.assign({}, profile, {
         profile,
         code: loginResult.code || '',
       })).then((res) => {
+        latestAccessToken = res && res.token ? res.token : '';
         latestSocketAuth = res && res.socket ? normalizeSocketAuth(res.socket) : null;
         if (res && res.socket) res.socket = latestSocketAuth;
         resolve(res);
@@ -121,8 +131,7 @@ export function login(profile = {}) {
       wx.login({
         success: proceed,
         fail: (err) => {
-          const error = new Error('WX_LOGIN_FAILED');
-          error.code = 'WX_LOGIN_FAILED';
+          const error = backendError('WX_LOGIN_FAILED');
           error.cause = err;
           reject(error);
         },

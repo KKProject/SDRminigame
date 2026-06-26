@@ -226,11 +226,48 @@ function buildSeatPlayers(room) {
   return players;
 }
 
-function requiredAnimationOpenids(room) {
+function onlineAnimationOpenids(room) {
   return (room.players || [])
     .filter((player) => player.online !== false)
     .map((player) => player.openid)
     .filter(Boolean);
+}
+
+function playerOpenidAtSeat(room, seat) {
+  const player = (room.players || []).find((item) => item && item.seat === seat);
+  return player && player.openid ? player.openid : '';
+}
+
+function requiredOpenidsForSeats(room, seats = []) {
+  const online = new Set(onlineAnimationOpenids(room));
+  return seats
+    .map((seat) => playerOpenidAtSeat(room, seat))
+    .filter((openid, index, list) => openid && online.has(openid) && list.indexOf(openid) === index);
+}
+
+function responseContinuationSeat(continuation = {}) {
+  const actions = Array.isArray(continuation.actions) ? continuation.actions : [];
+  return actions.length && typeof actions[0].seat === 'number' ? actions[0].seat : null;
+}
+
+function requiredAnimationOpenids(room, engine) {
+  const state = engine && engine.state ? engine.state : {};
+  const continuation = state.pendingContinuation || {};
+  const allOnline = onlineAnimationOpenids(room);
+  if (continuation.type === 'handle-response-window' || continuation.type === 'draw-response-window') {
+    return requiredOpenidsForSeats(room, [responseContinuationSeat(continuation)]);
+  }
+  if (continuation.type === 'after-grouping' && typeof continuation.seatIndex === 'number') {
+    return requiredOpenidsForSeats(room, [continuation.seatIndex]);
+  }
+  if (continuation.type === 'enter-dealer-gift' && typeof continuation.slippedSeat === 'number') {
+    return requiredOpenidsForSeats(room, [continuation.slippedSeat]);
+  }
+  if (continuation.type === 'next-draw' && typeof continuation.sourceSeat === 'number') {
+    const nextSeatOpenids = requiredOpenidsForSeats(room, [(continuation.sourceSeat + 1) % SEAT_COUNT]);
+    return nextSeatOpenids.length ? nextSeatOpenids : requiredOpenidsForSeats(room, [continuation.sourceSeat]);
+  }
+  return allOnline;
 }
 
 function animationMetrics(room) {
@@ -256,14 +293,14 @@ function syncAnimationBarrier(room, engine, now = Date.now()) {
   }
   const current = room.animationBarrier;
   if (current && current.eventSeq === event.eventSeq) {
-    const online = new Set(requiredAnimationOpenids(room));
+    const online = new Set(requiredAnimationOpenids(room, engine));
     current.requiredOpenids = (current.requiredOpenids || []).filter((openid) => online.has(openid));
     current.ackedOpenids = (current.ackedOpenids || []).filter((openid) => current.requiredOpenids.indexOf(openid) >= 0);
     return current;
   }
   room.animationBarrier = {
     eventSeq: event.eventSeq,
-    requiredOpenids: requiredAnimationOpenids(room),
+    requiredOpenids: requiredAnimationOpenids(room, engine),
     ackedOpenids: [],
     createdAt: now,
     deadlineAt: now + ANIMATION_ACK_TIMEOUT_MS,

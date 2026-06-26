@@ -22,13 +22,26 @@ await writeFile(
 await writeFile(join(tempDir, 'rules-stub.mjs'), 'export const DEFAULT_RULES = { seatCount: 4 };');
 
 let callData = null;
+let latestLoginToken = '';
 globalThis.wx = {
-  cloud: {
-    init() {},
-    callFunction(options) {
-      callData = options.data;
-      options.success({ result: { ok: true } });
-    },
+  __HUAPAI_BACKEND_API_BASE_URL: 'https://api.unit.test',
+  request(options) {
+    callData = options.data;
+    if (options.url === 'https://api.unit.test/api/auth/login') {
+      latestLoginToken = 'unit-access-token';
+      options.success({
+        statusCode: 200,
+        data: {
+          ok: true,
+          openid: 'unit-openid',
+          user: { nickName: options.data.nickName || '测试玩家', avatarUrl: '' },
+          token: latestLoginToken,
+          socket: { url: 'ws://unit-test', token: 'socket-token', expiresAt: Date.now() + 60000 },
+        },
+      });
+      return;
+    }
+    options.success({ statusCode: 200, data: { ok: true } });
   },
   login(options) {
     options.success({ code: 'wx-login-code' });
@@ -92,7 +105,7 @@ if (
   || !callData.profile
   || callData.profile.nickName !== '测试玩家'
 ) {
-  throw new Error('online login should forward wx.login code and profile to the login cloud function');
+  throw new Error('online login should forward wx.login code and profile to the backend login api');
 }
 
 globalThis.wx.login = (options) => options.fail({ errMsg: 'login failed' });
@@ -106,17 +119,17 @@ if (!loginFailure || loginFailure.code !== 'WX_LOGIN_FAILED') {
   throw new Error('wx.login failure should stop online login with a diagnosable error');
 }
 
-if (online.onlineErrorMessage({ code: 'LOGIN_STORAGE_ERROR' }) !== '登录数据库初始化失败，请检查云数据库权限') {
+if (online.onlineErrorMessage({ code: 'LOGIN_STORAGE_ERROR' }) !== '登录数据库初始化失败，请检查后端数据库权限') {
   throw new Error('storage login errors should display an actionable message');
 }
-if (online.onlineErrorMessage({ code: 'FUNCTION_NOT_FOUND' }) !== '登录云函数未部署，请先上传并部署云函数') {
-  throw new Error('missing login cloud function should display an actionable message');
+if (online.onlineErrorMessage({ code: 'BACKEND_ENDPOINT_MISSING' }) !== '自有后端 API 未配置，请设置服务器域名') {
+  throw new Error('missing backend endpoint should display an actionable message');
 }
 if (online.onlineErrorMessage({ code: 'ACTIVE_ROOM_FAILED' }) !== '检查已有房间失败，请重试') {
   throw new Error('active room lookup failures should display an actionable lobby message');
 }
-if (cloud.cloudErrorCode({ errCode: -501005 }) !== 'CLOUD_ENV_INVALID') {
-  throw new Error('invalid cloud environment errors should be normalized');
+if (cloud.cloudErrorCode({ code: 'BACKEND_TIMEOUT' }) !== 'BACKEND_TIMEOUT') {
+  throw new Error('backend timeout errors should be normalized');
 }
 
 const storage = {};
@@ -235,22 +248,29 @@ let lobbyCalls = [];
 let activeRoomResult = { ok: true, hasRoom: false };
 let waitingRoomState = null;
 let sharedPayload = null;
-globalThis.wx.cloud.callFunction = (options) => {
+globalThis.wx.request = (options) => {
   lobbyCalls.push(options);
-  if (options.name === 'login') {
+  if (options.url === 'https://api.unit.test/api/auth/login') {
+    latestLoginToken = 'lobby-access-token';
     options.success({
-      result: {
+      statusCode: 200,
+      data: {
         ok: true,
         openid: 'lobby-openid',
         user: { nickName: '大厅玩家', avatarUrl: 'avatar.png' },
+        token: latestLoginToken,
         socket: { url: 'ws://unit-test', token: 'socket-token', expiresAt: Date.now() + 60000 },
       },
     });
     return;
   }
+  if (options.url !== 'https://api.unit.test/api/game') throw new Error(`unexpected backend url ${options.url}`);
+  if (!options.header || options.header.Authorization !== `Bearer ${latestLoginToken}`) {
+    throw new Error('game api should include bearer token');
+  }
   const action = options.data && options.data.action;
   if (action === 'activeRoom') {
-    options.success({ result: activeRoomResult });
+    options.success({ statusCode: 200, data: activeRoomResult });
     return;
   }
   if (action === 'createRoom') {
@@ -269,11 +289,11 @@ globalThis.wx.cloud.callFunction = (options) => {
       yourSeat: 0,
       isHost: true,
     };
-    options.success({ result: { ok: true, roomId: '123456', seat: 0, settings: { maxRounds: options.data.maxRounds }, room: waitingRoomState } });
+    options.success({ statusCode: 200, data: { ok: true, roomId: '123456', seat: 0, settings: { maxRounds: options.data.maxRounds }, room: waitingRoomState } });
     return;
   }
   if (action === 'roomInfo') {
-    options.success({ result: { ok: true, roomId: options.data.roomId, seat: 0, room: waitingRoomState } });
+    options.success({ statusCode: 200, data: { ok: true, roomId: options.data.roomId, seat: 0, room: waitingRoomState } });
     return;
   }
   if (action === 'setReady') {
@@ -283,7 +303,7 @@ globalThis.wx.cloud.callFunction = (options) => {
       canStart: waitingRoomState.players.length >= 2,
       readyToStart: waitingRoomState.players.length >= 2,
     };
-    options.success({ result: { ok: true, roomId: options.data.roomId, seat: 0, room: waitingRoomState } });
+    options.success({ statusCode: 200, data: { ok: true, roomId: options.data.roomId, seat: 0, room: waitingRoomState } });
     return;
   }
   if (action === 'joinRoom') {
@@ -303,16 +323,17 @@ globalThis.wx.cloud.callFunction = (options) => {
       yourSeat: 1,
       isHost: false,
     };
-    options.success({ result: { ok: true, roomId: options.data.roomId, seat: 1, room: waitingRoomState } });
+    options.success({ statusCode: 200, data: { ok: true, roomId: options.data.roomId, seat: 1, room: waitingRoomState } });
     return;
   }
   if (action === 'startRound') {
-    options.success({ result: { ok: true, roomId: options.data.roomId, version: 1 } });
+    options.success({ statusCode: 200, data: { ok: true, roomId: options.data.roomId, version: 1 } });
     return;
   }
   if (action === 'pull') {
     options.success({
-      result: {
+      statusCode: 200,
+      data: {
         ok: true,
         roomId: options.data.roomId,
         version: 1,
@@ -325,7 +346,7 @@ globalThis.wx.cloud.callFunction = (options) => {
     });
     return;
   }
-  options.success({ result: { ok: true } });
+  options.success({ statusCode: 200, data: { ok: true } });
 };
 globalThis.wx.shareAppMessage = (payload) => { sharedPayload = payload; };
 
@@ -471,9 +492,9 @@ let activeLocalPreview = false;
 let failNextLocalPreview = false;
 const cardSoundEvents = [];
 const actionSoundEvents = [];
-globalThis.wx.cloud.callFunction = (options) => {
+globalThis.wx.request = (options) => {
   if (options.data.action === 'ackAnimation') animationAckCount += 1;
-  options.success({ result: options.data.action === 'ackAnimation' ? { ok: true } : { ok: false } });
+  options.success({ statusCode: 200, data: options.data.action === 'ackAnimation' ? { ok: true } : { ok: false } });
 };
 const onlineRenderer = {
   playOnlineEvent(event, onComplete) {
@@ -582,6 +603,39 @@ if (
   || cardSoundEvents.join(',') !== 'discarded-card'
 ) {
   throw new Error('direct operation snapshot should remove the discarded hand card and start its animation and card voice immediately');
+}
+const versionBeforeForeignSnapshot = onlineController.version;
+const foreignSeatSnapshot = {
+  ok: true,
+  version: 99,
+  yourSeat: 1,
+  public: directSnapshot.public,
+  private: { seat: 1, hand: [{ id: 'foreign-seat-card', key: 'ren' }] },
+  animation: { waiting: false, selfAcked: false, currentEvent: null },
+};
+if (
+  onlineController.applyServerSnapshot(foreignSeatSnapshot)
+  || onlineController.mySeat !== 0
+  || onlineController.version !== versionBeforeForeignSnapshot
+  || onlineDatabus.seats[0].hand.some((card) => card.id === 'foreign-seat-card')
+) {
+  throw new Error('online controller should ignore snapshots that would switch the local player seat');
+}
+const mismatchedPrivateSnapshot = {
+  ok: true,
+  version: 100,
+  yourSeat: 0,
+  public: directSnapshot.public,
+  private: { seat: 1, hand: [{ id: 'mismatched-private-card', key: 'ren' }] },
+  animation: { waiting: false, selfAcked: false, currentEvent: null },
+};
+if (
+  onlineController.applyServerSnapshot(mismatchedPrivateSnapshot)
+  || onlineController.mySeat !== 0
+  || onlineController.version !== versionBeforeForeignSnapshot
+  || onlineDatabus.seats[0].hand.some((card) => card.id === 'mismatched-private-card')
+) {
+  throw new Error('online controller should ignore snapshots whose private hand belongs to another seat');
 }
 const tableResultSnapshot = {
   ok: true,
@@ -696,6 +750,24 @@ if (
   || onlineDatabus.playerActions.length
 ) {
   throw new Error('other-player response discard should schedule exactly one authoritative appearance event while hiding response actions during animation-waiting');
+}
+const selfAckedResponseSnapshot = {
+  ...responseDiscardSnapshot,
+  version: 9,
+  animation: {
+    ...responseDiscardSnapshot.animation,
+    selfAcked: true,
+  },
+};
+if (!onlineController.applyServerSnapshot(selfAckedResponseSnapshot)) {
+  throw new Error('online controller should apply a self-acked response-window snapshot');
+}
+if (
+  onlineDatabus.animationWaiting
+  || onlineDatabus.playerActions.length !== 2
+  || onlineDatabus.pendingActions.length !== 2
+) {
+  throw new Error('self-acked response-window snapshots should reveal local response actions without waiting for spectators');
 }
 const looseWaitingCard = { id: 'loose-waiting-card', key: 'ren' };
 const looseWaitingSnapshot = {
@@ -864,7 +936,7 @@ onlineController.ackRetryTimer = null;
 fakeSocketFailAck = false;
 
 let realtimeFallbackCalled = false;
-globalThis.wx.cloud.callFunction = () => { realtimeFallbackCalled = true; };
+globalThis.wx.request = () => { realtimeFallbackCalled = true; };
 fakeSocketReady = false;
 onlineController.animationWaiting = false;
 onlineController.isAnimating = false;
@@ -1196,6 +1268,40 @@ if (blockedNextRound.ok || blockedNextRound.error !== 'TABLE_FINISHED' || maxRou
 const { HuapaiEngine } = require(join(root, 'cloudfunctions/game/core/engine.js'));
 const { DEFAULT_RULES } = require(join(root, 'cloudfunctions/game/core/rules.js'));
 const { getLegalDiscards } = require(join(root, 'cloudfunctions/game/core/evaluator.js'));
+const targetedBarrierEngine = new HuapaiEngine(DEFAULT_RULES);
+targetedBarrierEngine.load({
+  phase: 'human-discard',
+  currentSeat: 0,
+  seats: [{}, {}, {}, {}],
+  eventSeq: 0,
+  publicEvent: null,
+  pendingContinuation: null,
+});
+targetedBarrierEngine.emitPublicEvent('discard', {
+  seat: 0,
+  card: { id: 'targeted-barrier-card', key: 'shang' },
+  appearanceResolution: 'await-response',
+}, {
+  type: 'handle-response-window',
+  actions: [{ type: 'peng', seat: 2, card: { id: 'targeted-barrier-card', key: 'shang' } }],
+  sourceSeat: 0,
+});
+const targetedBarrierRoom = {
+  players: [
+    { seat: 0, openid: 'targeted-a', online: true },
+    { seat: 1, openid: 'targeted-b', online: true },
+    { seat: 2, openid: 'targeted-c', online: true },
+    { seat: 3, openid: 'targeted-d', online: true },
+  ],
+};
+roomFunction.syncAnimationBarrier(targetedBarrierRoom, targetedBarrierEngine, 1);
+if (
+  !targetedBarrierRoom.animationBarrier
+  || targetedBarrierRoom.animationBarrier.requiredOpenids.length !== 1
+  || targetedBarrierRoom.animationBarrier.requiredOpenids[0] !== 'targeted-c'
+) {
+  throw new Error('response-window animation barriers should wait only for the next actionable player, not every spectator');
+}
 const opEngine = new HuapaiEngine(DEFAULT_RULES);
 opEngine.startRound({
   seed: 1,

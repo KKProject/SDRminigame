@@ -21,7 +21,7 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **THEN** 服务端 MUST 用托管 AI 填充空座以开局，或维持等待，按配置策略执行
 
 ### Requirement: 好友房间
-系统 SHALL 允许玩家创建带房间码的私有牌桌，其他玩家凭房间码加入。系统 MUST 校验房间是否存在与是否已满；座位分配与开局 MUST 由服务端控制。
+系统 SHALL 允许玩家通过自有 HTTPS 游戏 API 创建带房间码的私有牌桌，其他玩家凭房间码加入。系统 MUST 校验房间是否存在与是否已满；座位分配与开局 MUST 由服务端控制。
 
 #### Scenario: 创建房间
 - **WHEN** 玩家选择创建好友房间
@@ -47,12 +47,12 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **AND** 服务端 MUST 释放该牌桌相关的座位与匹配资源
 
 ### Requirement: 查询玩家未结束牌桌
-系统 SHALL 允许已登录玩家查询自己是否参与了未结束牌桌。服务端 MUST 以当前请求的 `OPENID` 为身份来源，并 MUST 只返回该玩家所在且尚未关闭或最终结算完成的牌桌信息。
+系统 SHALL 允许已登录玩家通过自有 HTTPS 游戏 API 查询自己是否参与了未结束牌桌。服务端 MUST 以访问 token 解析出的 `OPENID` 为身份来源，并 MUST 只返回该玩家所在且尚未关闭或最终结算完成的牌桌信息。
 
 #### Scenario: 返回未结束牌桌
 - **WHEN** 已登录玩家参与的牌桌仍处于等待、进行中或本局结算后可继续的状态
 - **THEN** 服务端 MUST 返回该牌桌的 `roomId`、玩家座位、牌桌状态、版本和牌桌配置
-- **AND** 客户端 MUST 能使用返回信息继续执行 `pull` 重连流程
+- **AND** 客户端 MUST 能使用返回信息继续执行等待房恢复或 socket 重连流程
 
 #### Scenario: 没有未结束牌桌
 - **WHEN** 当前玩家没有参与任何未结束牌桌
@@ -106,7 +106,7 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **THEN** 服务端查询未结束牌桌 MUST 返回没有牌桌
 
 ### Requirement: 等待房间公开状态
-系统 SHALL 为等待中的好友房提供公开状态查询能力。公开状态 MUST 包含房间号、房主、牌桌配置、玩家座位、玩家资料、准备状态和是否满足开局条件。
+系统 SHALL 为等待中的好友房通过自有 HTTPS 游戏 API 提供公开状态查询能力。公开状态 MUST 包含房间号、房主、牌桌配置、玩家座位、玩家资料、准备状态和是否满足开局条件。
 
 #### Scenario: 查询等待房间状态
 - **WHEN** 房间处于等待状态且玩家请求房间状态
@@ -136,7 +136,7 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **AND** 服务端 MUST NOT 让该玩家同时占用两张未结束牌桌
 
 ### Requirement: 等待房间准备与开局校验
-系统 SHALL 由服务端维护等待房间准备状态并校验开局条件。房主只有在至少 2 名真人在房间内且房主已准备时才能开局；开局后空座 MUST 由 AI 补位。
+系统 SHALL 由服务端维护等待房间准备状态并通过自有 HTTPS 游戏 API 校验开局条件。房主只有在至少 2 名真人在房间内且房主已准备时才能开局；开局后空座 MUST 由 AI 补位。
 
 #### Scenario: 设置准备状态
 - **WHEN** 房间内真人玩家请求准备
@@ -151,3 +151,4 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 #### Scenario: 不满足条件开局
 - **WHEN** 房主未准备或房间内真人少于 2 名
 - **THEN** 服务端 MUST 拒绝开局并返回明确错误
+

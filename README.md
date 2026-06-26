@@ -60,6 +60,7 @@
 node scripts/run-huapai-checks.mjs
 node scripts/run-animation-checks.mjs
 node scripts/run-online-checks.mjs
+node scripts/run-backend-checks.mjs
 node scripts/run-server-core-checks.mjs
 npx --yes esbuild game.js --bundle --format=iife --platform=browser --outfile=/tmp/sdrminigame-rules-bundle.js
 ```

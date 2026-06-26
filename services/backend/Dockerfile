@@ -1,0 +1,13 @@
+FROM node:20-alpine
+
+WORKDIR /app
+COPY services/backend/package*.json ./
+RUN npm install --omit=dev
+
+COPY services/backend ./services/backend
+COPY cloudfunctions/game ./cloudfunctions/game
+
+WORKDIR /app/services/backend
+ENV PORT=8080
+EXPOSE 8080
+CMD ["npm", "start"]

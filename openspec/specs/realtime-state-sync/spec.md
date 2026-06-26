@@ -4,7 +4,7 @@
 TBD - created by archiving change add-wechat-online-battle. Update Purpose after archive.
 ## Requirements
 ### Requirement: 权威状态实时下发
-系统 SHALL 通过 WebSocket 主通道把牌桌公共状态、当前公开操作事件和动画等待状态下发给本局所有已连接客户端。客户端 MUST 订阅本牌桌的 socket 状态流，在状态变化时更新本地权威镜像，播放当前事件并回执动画完成；公共状态和公开事件 MUST 只包含可对全体玩家公开的信息（阶段、当前行动席、各席公开资料与分数、最近弃牌、将牌、待响应动作摘要、公开动作等）。当 WebSocket 不可用或事件缺口无法补齐时，客户端 MUST 保留最后权威快照并等待 socket 重连；云数据库 `roomStates.watch()` 和云函数 `pull` MUST NOT 作为在线牌桌实时同步兜底。
+系统 SHALL 通过自有 WebSocket 主通道把牌桌公共状态、当前公开操作事件和动画等待状态下发给本局所有已连接客户端。客户端 MUST 订阅本牌桌的 socket 状态流，在状态变化时更新本地权威镜像，播放当前事件并回执动画完成；公共状态和公开事件 MUST 只包含可对全体玩家公开的信息（阶段、当前行动席、各席公开资料与分数、最近弃牌、将牌、待响应动作摘要、公开动作等）。当 WebSocket 不可用或事件缺口无法补齐时，客户端 MUST 保留最后权威快照并等待 socket 重连；HTTPS 游戏 API、云数据库 `roomStates.watch()` 和云函数 `pull` MUST NOT 作为在线牌桌实时同步兜底。
 
 #### Scenario: 状态变化推送
 - **WHEN** 服务端更新了牌桌公共状态
@@ -29,7 +29,7 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 #### Scenario: 事件缺口等待重连恢复
 - **WHEN** 客户端发现收到的事件序号与最后已消费事件之间存在缺口
 - **THEN** 客户端 MUST 通过 socket 补发请求或重新订阅恢复最新权威快照
-- **AND** 客户端 MUST NOT 使用云函数快照接口补齐在线牌桌实时状态
+- **AND** 客户端 MUST NOT 使用 HTTPS API 或云函数快照接口补齐在线牌桌实时状态
 
 #### Scenario: 首次进入和断线重连
 - **WHEN** 客户端首次进入牌桌或断线后恢复
@@ -65,10 +65,10 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 #### Scenario: socket 不可用时禁止提交意图
 - **WHEN** 玩家需要提交操作但 socket 通道不可用
 - **THEN** 客户端 MUST 显示等待重连提示并拒绝提交该操作
-- **AND** 客户端 MUST NOT 使用云函数兜底路径提交操作
+- **AND** 客户端 MUST NOT 使用 HTTPS API 或云函数兜底路径提交操作
 
 ### Requirement: 断线重连恢复
-系统 SHALL 支持玩家断线后通过 WebSocket 重连并恢复当前牌局视图。客户端重连后 MUST 重新建立 WebSocket 连接、完成鉴权、订阅原房间，并从服务端获取当前权威状态与本人手牌；服务端 MUST 在玩家掉线期间保留其牌局状态并向同桌玩家展示该玩家离线。客户端无法恢复 WebSocket 连接时 MUST 停留在等待重连状态，MUST NOT 使用云函数快照恢复路径继续实时同步。
+系统 SHALL 支持玩家断线后通过 WebSocket 重连并恢复当前牌局视图。客户端重连后 MUST 重新建立 WebSocket 连接、完成鉴权、订阅原房间，并从服务端获取当前权威状态与本人手牌；服务端 MUST 在玩家掉线期间保留其牌局状态并向同桌玩家展示该玩家离线。客户端无法恢复 WebSocket 连接时 MUST 停留在等待重连状态，MUST NOT 使用 HTTPS API 或云函数快照恢复路径继续实时同步。
 
 #### Scenario: 重连恢复牌局
 - **WHEN** 玩家断线后重新进入同一牌局
@@ -83,7 +83,7 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 #### Scenario: 重连失败保持等待
 - **WHEN** 客户端无法恢复 WebSocket 连接
 - **THEN** 客户端 MUST 保持等待重连状态
-- **AND** 客户端 MUST NOT 使用云函数快照接口恢复当前牌局视图
+- **AND** 客户端 MUST NOT 使用 HTTPS API 或云函数快照接口恢复当前牌局视图
 
 ### Requirement: 动画完成回执同步
 系统 SHALL 提供按 OPENID 鉴权且幂等的动画完成回执操作。客户端 MUST 通过 WebSocket 在动画管理器完成当前权威公开事件规定的全部必需阶段后提交对应 `eventSeq`；本地预演完成、动画开始或尚未完成的移动阶段 MUST NOT 被视为权威动画完成。服务端 MUST 同步当前必需回执名单、已回执名单和回执截止时间。`await-response` 出现牌事件在入场动画完成且等待牌已保留时即可回执；`auto-discard` 出现牌事件必须在归位和静态 mini 牌交接完成后回执；完整凑牌事件必须在牌组到达凑牌区并完成静态交接后回执。当 socket 回执失败时，客户端 MUST 等待 socket 重连后重试同一 `eventSeq`，MUST NOT 通过云函数兜底提交回执。

@@ -113,18 +113,8 @@ assert(missingToken.code === 'SOCKET_TOKEN_MISSING', 'socket transport should re
 const unsupported = await new OnlineSocketTransport({}).connect({ url: 'wss://socket.example', token: 'token' }).catch((err) => err);
 assert(unsupported.code === 'SOCKET_UNSUPPORTED', 'socket transport should report unsupported runtime');
 
-const missingEnv = await new OnlineSocketTransport({ cloud: { connectContainer() {} } })
-  .connect({ service: 'huapai-socket', token: 'token' })
-  .catch((err) => err);
-assert(missingEnv.code === 'SOCKET_ENV_MISSING', 'socket transport should report missing cloud run env');
-
-const directCloudRunUrl = await new OnlineSocketTransport({ connectSocket() {} })
-  .connect({ url: 'wss://service-cloud1-test-123.ap-shanghai.run.wxcloudrun.com/', token: 'token' })
-  .catch((err) => err);
-assert(directCloudRunUrl.code === 'SOCKET_SERVICE_MISSING', 'cloud run websocket should require connectContainer service config');
-
-let containerOptions = null;
-const containerSocket = {
+let socketOptions = null;
+const directSocket = {
   send() {},
   close() {},
   onOpen(callback) { setTimeout(callback, 0); },
@@ -132,19 +122,15 @@ const containerSocket = {
   onClose() {},
   onError() {},
 };
-const containerTransport = new OnlineSocketTransport({
-  cloud: {
-    connectContainer(options) {
-      containerOptions = options;
-      return Promise.resolve({ socketTask: containerSocket });
-    },
+const directTransport = new OnlineSocketTransport({
+  connectSocket(options) {
+    socketOptions = options;
+    return directSocket;
   },
 });
-await containerTransport.connect({ env: 'cloud1-unit', service: 'huapai-socket', path: '/game', token: 'container-token' });
-assert(containerOptions.config.env === 'cloud1-unit', 'socket transport should pass cloud run env');
-assert(containerOptions.service === 'huapai-socket', 'socket transport should connect to cloud run service');
-assert(containerOptions.path === '/game?token=container-token', 'socket transport should pass token in cloud run path');
-assert(containerOptions.header.Authorization === 'Bearer container-token', 'socket transport should pass token in cloud run header');
-containerTransport.close();
+await directTransport.connect({ url: 'wss://socket.example/ws', token: 'socket-token' });
+assert(socketOptions.url === 'wss://socket.example/ws?token=socket-token', 'socket transport should append token to self-hosted wss url');
+assert(socketOptions.header.Authorization === 'Bearer socket-token', 'socket transport should pass token in direct socket header');
+directTransport.close();
 
 console.log('socket checks passed');

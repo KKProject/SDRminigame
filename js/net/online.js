@@ -1,6 +1,6 @@
 import { DEFAULT_RULES } from '../game/rules';
 import { ensureCloudInit, callFunction, cloudErrorCode, login } from './cloud';
-import OnlineSocketTransport, { isWxCloudRunUrl } from './socket';
+import OnlineSocketTransport from './socket';
 
 const SEAT_COUNT = DEFAULT_RULES.seatCount;
 const ROOM_SESSION_KEY = 'huapai-online-room';
@@ -168,14 +168,18 @@ function rotateResult(result, mySeat) {
 export function onlineErrorMessage(err) {
   const code = cloudErrorCode(err);
   const messages = {
-    CLOUD_UNSUPPORTED: '当前环境不支持云开发，请使用微信真机或开发者工具',
+    BACKEND_UNSUPPORTED: '当前环境不支持网络请求，请使用微信真机或开发者工具',
+    CLOUD_UNSUPPORTED: '当前环境不支持网络请求，请使用微信真机或开发者工具',
     WX_LOGIN_FAILED: '微信登录失败，请检查登录状态后重试',
-    CLOUD_TIMEOUT: '云服务响应超时，请检查网络后重试',
-    CLOUD_ENV_INVALID: '云环境不可用，请确认小游戏 AppID 与云环境一致',
-    FUNCTION_NOT_FOUND: '登录云函数未部署，请先上传并部署云函数',
-    DATABASE_COLLECTION_MISSING: '云数据库集合缺失，请重新部署登录云函数',
-    NO_OPENID: '未获取到微信身份，请确认小游戏 AppID 与云环境一致',
-    LOGIN_STORAGE_ERROR: '登录数据库初始化失败，请检查云数据库权限',
+    BACKEND_TIMEOUT: '后端服务响应超时，请检查网络后重试',
+    BACKEND_ENDPOINT_MISSING: '自有后端 API 未配置，请设置服务器域名',
+    BACKEND_AUTH_MISSING: '登录状态已失效，请重新进入在线对战',
+    CLOUD_TIMEOUT: '后端服务响应超时，请检查网络后重试',
+    CLOUD_ENV_INVALID: '后端服务不可用，请确认小游戏 AppID 与服务配置一致',
+    FUNCTION_NOT_FOUND: '自有后端服务未部署，请先发布服务器',
+    DATABASE_COLLECTION_MISSING: '后端数据库集合缺失，请检查自有服务数据库',
+    NO_OPENID: '未获取到微信身份，请确认小游戏 AppID 与后端服务配置一致',
+    LOGIN_STORAGE_ERROR: '登录数据库初始化失败，请检查后端数据库权限',
     LOGIN_FAILED: '登录失败，请重试',
     ACTIVE_ROOM_FAILED: '检查已有房间失败，请重试',
     RECONNECT_FAILED: '进入房间失败，请重试',
@@ -193,11 +197,11 @@ export function onlineErrorMessage(err) {
     NOT_IN_ROOM: '当前微信账号不在这张牌桌中',
     WAITING_FOR_PLAYERS: '至少需要 2 名真人玩家才能开局',
     HOST_NOT_READY: '房主准备后才能开局',
-    SOCKET_ENDPOINT_MISSING: 'WebSocket 入口未配置，请设置登录云函数 SOCKET_SERVICE',
-    SOCKET_URL_MISSING: 'WebSocket 入口未配置，请设置登录云函数 SOCKET_SERVICE',
-    SOCKET_SERVICE_MISSING: '微信云托管 WebSocket 需要配置登录云函数 SOCKET_SERVICE，不能直接填写云托管默认域名',
-    SOCKET_ENV_MISSING: 'WebSocket 云环境未配置，请设置登录云函数 SOCKET_ENV 或客户端云环境',
-    SOCKET_TOKEN_MISSING: 'WebSocket 鉴权缺失，请检查登录云函数 token 配置',
+    SOCKET_ENDPOINT_MISSING: 'WebSocket 入口未配置，请设置自有 WSS 域名',
+    SOCKET_URL_MISSING: 'WebSocket 入口未配置，请设置自有 WSS 域名',
+    SOCKET_SERVICE_MISSING: 'WebSocket 入口未配置，请设置自有 WSS 域名',
+    SOCKET_ENV_MISSING: 'WebSocket 入口未配置，请设置自有 WSS 域名',
+    SOCKET_TOKEN_MISSING: 'WebSocket 鉴权缺失，请检查自有服务 token 配置',
     SOCKET_UNSUPPORTED: '当前环境不支持 WebSocket，请使用微信开发者工具或真机',
     SOCKET_ABNORMAL_CLOSE: 'WebSocket 异常断开，请检查 socket 服务日志',
     SOCKET_CONNECT_FAILED: 'WebSocket 连接失败，请检查服务和域名配置',
@@ -229,17 +233,15 @@ function socketAuthSummary(auth = {}) {
 }
 
 function missingSocketAuthCode(auth = {}) {
-  if (!auth || (!auth.url && !auth.service)) return 'SOCKET_ENDPOINT_MISSING';
+  if (!auth || !auth.url) return 'SOCKET_ENDPOINT_MISSING';
   if (!auth.token) return 'SOCKET_TOKEN_MISSING';
-  if (auth.service && !auth.env) return 'SOCKET_ENV_MISSING';
-  if (!auth.service && isWxCloudRunUrl(auth.url)) return 'SOCKET_SERVICE_MISSING';
   return '';
 }
 
 function socketWaitingMessage(code) {
   if (code === 'SOCKET_ENDPOINT_MISSING' || code === 'SOCKET_URL_MISSING') return 'WebSocket 未配置，等待重连…';
-  if (code === 'SOCKET_SERVICE_MISSING') return 'WebSocket 云托管服务名未配置，等待重连…';
-  if (code === 'SOCKET_ENV_MISSING') return 'WebSocket 云环境未配置，等待重连…';
+  if (code === 'SOCKET_SERVICE_MISSING') return 'WebSocket 未配置，等待重连…';
+  if (code === 'SOCKET_ENV_MISSING') return 'WebSocket 未配置，等待重连…';
   if (code === 'SOCKET_TOKEN_MISSING') return 'WebSocket 鉴权缺失，等待重连…';
   if (code === 'SOCKET_UNSUPPORTED') return '当前环境不支持 WebSocket，等待重连…';
   if (code === 'SOCKET_ABNORMAL_CLOSE') return 'WebSocket 异常断开，等待重连…';
@@ -428,7 +430,7 @@ export default class OnlineController {
   }
 
   async loginForLobby(profile = {}) {
-    if (!ensureCloudInit()) throw new Error('CLOUD_UNSUPPORTED');
+    if (!ensureCloudInit()) throw new Error('BACKEND_UNSUPPORTED');
     this.setStatus('登录中…');
     const loginRes = await login(profile);
     if (!loginRes || !loginRes.ok) {
@@ -514,7 +516,7 @@ export default class OnlineController {
     if (this.starting) throw new Error('ONLINE_STARTING');
     this.starting = true;
     try {
-      if (!ensureCloudInit()) throw new Error('CLOUD_UNSUPPORTED');
+      if (!ensureCloudInit()) throw new Error('BACKEND_UNSUPPORTED');
       this.setLobbyState(LOBBY_STATES.CREATING, { maxRounds });
       this.setStatus('创建牌桌…');
       const created = await callFunction('game', {
@@ -830,8 +832,28 @@ export default class OnlineController {
   /** 立即应用一次服务端裁决附带的完整快照，避免再次 pull 时错过短暂动作事件。 */
   applyServerSnapshot(res) {
     if (!res || !res.ok || !res.public) return false;
-    this.mySeat = typeof res.yourSeat === 'number' && res.yourSeat >= 0 ? res.yourSeat : this.mySeat;
-    if (this.mySeat < 0) return false;
+    const incomingSeat = typeof res.yourSeat === 'number' && res.yourSeat >= 0 ? res.yourSeat : this.mySeat;
+    if (incomingSeat < 0) return false;
+    const privateSeat = res.private && typeof res.private.seat === 'number' ? res.private.seat : incomingSeat;
+    if (privateSeat !== incomingSeat) {
+      console.warn('[online] ignored snapshot with mismatched private seat', {
+        roomId: this.roomId,
+        incomingSeat,
+        privateSeat,
+        version: res.version,
+      });
+      return false;
+    }
+    if (this.mySeat >= 0 && this.version >= 0 && incomingSeat !== this.mySeat) {
+      console.warn('[online] ignored snapshot that would switch local seat', {
+        roomId: this.roomId,
+        currentSeat: this.mySeat,
+        incomingSeat,
+        version: res.version,
+      });
+      return false;
+    }
+    this.mySeat = incomingSeat;
     saveRoomSession(this.roomId, this.mySeat);
     this.version = res.version;
     const local = buildLocalState(res.public, res.private || { hand: [] }, this.mySeat, this.databus.selectedCardId);
@@ -848,7 +870,7 @@ export default class OnlineController {
       typeof animation.latestEventSeq === 'number' ? animation.latestEventSeq : 0,
       animation.currentEvent && typeof animation.currentEvent.eventSeq === 'number' ? animation.currentEvent.eventSeq : 0
     );
-    this.animationWaiting = Boolean(animation.waiting || animation.currentEvent);
+    this.animationWaiting = Boolean((animation.waiting || animation.currentEvent) && !animation.selfAcked);
     local.animationWaiting = this.animationWaiting;
     if (this.animationWaiting) {
       local.pendingActions = [];

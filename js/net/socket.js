@@ -64,13 +64,6 @@ export default class OnlineSocketTransport {
   }
 
   isSupported(auth = {}) {
-    if (auth && auth.service) {
-      return Boolean(
-        this.runtime
-        && this.runtime.cloud
-        && typeof this.runtime.cloud.connectContainer === 'function'
-      );
-    }
     return this.runtime && typeof this.runtime.connectSocket === 'function';
   }
 
@@ -79,10 +72,8 @@ export default class OnlineSocketTransport {
   }
 
   connect(auth = {}) {
-    if (!auth || (!auth.url && !auth.service)) return Promise.reject(socketError('SOCKET_ENDPOINT_MISSING'));
+    if (!auth || !auth.url) return Promise.reject(socketError('SOCKET_ENDPOINT_MISSING'));
     if (!auth.token) return Promise.reject(socketError('SOCKET_TOKEN_MISSING'));
-    if (auth.service && !auth.env) return Promise.reject(socketError('SOCKET_ENV_MISSING'));
-    if (!auth.service && isWxCloudRunUrl(auth.url)) return Promise.reject(socketError('SOCKET_SERVICE_MISSING'));
     if (!this.isSupported(auth)) return Promise.reject(socketError('SOCKET_UNSUPPORTED'));
     if (this.isReady()) return Promise.resolve(true);
     if (this.connecting) return this.connecting;
@@ -114,19 +105,6 @@ export default class OnlineSocketTransport {
           this.handleClose(error);
         });
       };
-      if (auth.service) {
-        this.runtime.cloud.connectContainer({
-          config: { env: auth.env },
-          service: auth.service,
-          path: appendToken(auth.path || '/', auth.token),
-          header: authHeader(auth.token),
-        }).then((res) => {
-          attachSocket(res && res.socketTask);
-        }).catch((err) => {
-          finish(reject, normalizeSocketError(err, 'SOCKET_CONNECT_FAILED'));
-        });
-        return;
-      }
       attachSocket(this.runtime.connectSocket({
         url: appendToken(auth.url, auth.token),
         header: authHeader(auth.token),

@@ -1,0 +1,15 @@
+{
+  "name": "huapai-backend-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "上大人花牌自有 HTTPS API 与 WebSocket 后端服务",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node ../../scripts/run-backend-checks.mjs"
+  },
+  "dependencies": {
+    "mongodb": "^6.18.0",
+    "ws": "^8.18.0"
+  }
+}
