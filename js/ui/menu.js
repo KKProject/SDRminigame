@@ -339,11 +339,13 @@ export default class StartMenu {
       ctx.fillStyle = '#cbd5e1';
       ctx.font = '20px sans-serif';
       ctx.fillText('局数', centerX, roundY - 24);
-      const optionW = 72;
+      const roundOptions = [1, 2, 4, 6];
+      const optionW = 62;
       const optionH = 48;
-      const gap = 14;
-      [2, 4, 6].forEach((maxRounds, index) => {
-        const x = centerX - (optionW * 3 + gap * 2) / 2 + index * (optionW + gap);
+      const gap = 12;
+      const optionsWidth = optionW * roundOptions.length + gap * (roundOptions.length - 1);
+      roundOptions.forEach((maxRounds, index) => {
+        const x = centerX - optionsWidth / 2 + index * (optionW + gap);
         const selected = this.lobby.selectedMaxRounds === maxRounds;
         ctx.fillStyle = selected ? '#d92d20' : 'rgba(255,255,255,0.14)';
         this.roundRect(ctx, x, roundY, optionW, optionH, 8);

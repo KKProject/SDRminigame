@@ -34,7 +34,7 @@ const MIN_HUMANS = 2;
 const ROOMS = 'rooms';
 const ROOM_STATES = 'roomStates';
 const QUEUE = 'matchQueue';
-const SUPPORTED_MAX_ROUNDS = [2, 4, 6];
+const SUPPORTED_MAX_ROUNDS = [1, 2, 4, 6];
 const DEFAULT_MAX_ROUNDS = 2;
 const CLOSED_ROOM_STATUSES = ['closed'];
 /** 玩家超过此毫秒未心跳则视为掉线 */

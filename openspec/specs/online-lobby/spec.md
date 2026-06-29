@@ -53,7 +53,7 @@ TBD - created by archiving change add-online-lobby-room-entry. Update Purpose af
 
 #### Scenario: 创建时选择局数
 - **WHEN** 玩家点击创建房间
-- **THEN** 大厅 MUST 提供最大局数选项 `2`、`4`、`6`
+- **THEN** 大厅 MUST 提供最大局数选项 `1`、`2`、`4`、`6`
 - **AND** 玩家选择局数后客户端 MUST 使用所选局数请求创建房间
 
 #### Scenario: 创建中防止重复提交

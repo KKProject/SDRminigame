@@ -69,17 +69,17 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **THEN** 服务端 MUST 返回没有未结束牌桌
 
 ### Requirement: 创建房间局数配置
-系统 SHALL 在创建好友房间时支持配置牌桌最大局数。服务端 MUST 校验最大局数，只允许 `2`、`4`、`6`，并 MUST 将该配置保存到房间文档。
+系统 SHALL 在创建好友房间时支持配置牌桌最大局数。服务端 MUST 校验最大局数，只允许 `1`、`2`、`4`、`6`，并 MUST 将该配置保存到房间文档。
 
 #### Scenario: 创建指定局数房间
-- **WHEN** 玩家创建好友房间并传入 `maxRounds` 为 `2`、`4` 或 `6`
+- **WHEN** 玩家创建好友房间并传入 `maxRounds` 为 `1`、`2`、`4` 或 `6`
 - **THEN** 服务端 MUST 创建房间并保存 `settings.maxRounds`
 - **AND** 创建者 MUST 进入该牌桌的一个座位
 
 #### Scenario: 非法局数被拒绝或归一化
 - **WHEN** 玩家创建好友房间时传入不受支持的 `maxRounds`
 - **THEN** 服务端 MUST 拒绝该请求或使用默认值 `2`
-- **AND** 服务端 MUST NOT 保存不在 `2`、`4`、`6` 范围内的局数配置
+- **AND** 服务端 MUST NOT 保存不在 `1`、`2`、`4`、`6` 范围内的局数配置
 
 #### Scenario: 旧客户端创建房间
 - **WHEN** 创建房间请求未传入 `maxRounds`

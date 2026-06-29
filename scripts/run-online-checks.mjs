@@ -1100,6 +1100,14 @@ if (
 ) {
   throw new Error('createRoom should save maxRounds settings and queryable playerOpenids');
 }
+const createOneRoundDbInstance = createRoomDb();
+const createdOneRoundRoom = await roomFunction.createRoom({
+  profile: { nickName: '一局玩家' },
+  maxRounds: 1,
+}, { db: createOneRoundDbInstance, OPENID: 'one-round-openid' });
+if (!createdOneRoundRoom.ok || createdOneRoundRoom.settings.maxRounds !== 1) {
+  throw new Error('createRoom should accept one-round rooms as a supported maxRounds option');
+}
 const createdDefaultRoom = await roomFunction.createRoom({
   profile: { nickName: '非法局数玩家' },
   maxRounds: 99,
@@ -1752,6 +1760,10 @@ if (!/playOnlineEvent\(event, onComplete\)/.test(animationControllerSource)) {
 const mainSource = await readFile(join(root, 'js/main.js'), 'utf8');
 if (!/this\.online\.onLobby = \(lobby\) => \{[\s\S]*?this\.mode = 'lobby';[\s\S]*?this\.menu\.show\(\);[\s\S]*?\};/.test(mainSource)) {
   throw new Error('returning to the online lobby should switch the main render mode away from the table and show the menu');
+}
+const menuSource = await readFile(join(root, 'js/ui/menu.js'), 'utf8');
+if (!/roundOptions\s*=\s*\[1,\s*2,\s*4,\s*6\]/.test(menuSource)) {
+  throw new Error('online lobby should expose one, two, four, and six round room options');
 }
 const rendererSource = await readFile(join(root, 'js/game/renderer.js'), 'utf8');
 const layoutSource = await readFile(join(root, 'js/game/layout.js'), 'utf8');
