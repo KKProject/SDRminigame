@@ -319,12 +319,20 @@ function responseContinuationSeat(continuation = {}) {
   return actions.length && typeof actions[0].seat === 'number' ? actions[0].seat : null;
 }
 
+function responseContinuationSeats(continuation = {}) {
+  const actions = Array.isArray(continuation.actions) ? continuation.actions : [];
+  return actions
+    .map((action) => action.seat)
+    .filter((seat, index, list) => typeof seat === 'number' && list.indexOf(seat) === index);
+}
+
 function requiredAnimationOpenids(room, engine) {
   const state = engine && engine.state ? engine.state : {};
   const continuation = state.pendingContinuation || {};
   const allOnline = onlineAnimationOpenids(room);
   if (continuation.type === 'handle-response-window' || continuation.type === 'draw-response-window') {
-    return requiredOpenidsForSeats(room, [responseContinuationSeat(continuation)]);
+    const seats = responseContinuationSeats(continuation);
+    return requiredOpenidsForSeats(room, seats.length ? seats : [responseContinuationSeat(continuation)]);
   }
   if (continuation.type === 'after-grouping' && typeof continuation.seatIndex === 'number') {
     return requiredOpenidsForSeats(room, [continuation.seatIndex]);
@@ -1049,7 +1057,13 @@ async function op(event, ctx) {
       eventSeq: room.animationBarrier.eventSeq,
     };
   }
-  if (engine.state.currentSeat !== seat) {
+  const responseWindow = engine.state.responseWindow;
+  const canRespondInWindow = event.kind === 'response'
+    && responseWindow
+    && responseWindow.decisions
+    && responseWindow.decisions[seat]
+    && responseWindow.decisions[seat].status === 'pending';
+  if (!canRespondInWindow && engine.state.currentSeat !== seat) {
     return {
       ok: false,
       error: 'NOT_YOUR_TURN',
@@ -1206,6 +1220,15 @@ function advanceTimedOutSeat(engine, seat) {
   const state = engine.state;
   if (!state || state.currentSeat !== seat || state.phase === 'result') return false;
   state.seats[seat].online = false;
+  if (
+    state.responseWindow
+    && state.responseWindow.decisions
+    && state.responseWindow.decisions[seat]
+    && state.responseWindow.decisions[seat].status === 'pending'
+  ) {
+    engine.passResponse(seat);
+    return true;
+  }
   return false;
 }
 

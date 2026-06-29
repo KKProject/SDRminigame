@@ -4,7 +4,7 @@
 TBD - created by archiving change add-wechat-online-battle. Update Purpose after archive.
 ## Requirements
 ### Requirement: 权威状态实时下发
-系统 SHALL 通过自有 WebSocket 主通道把牌桌公共状态、当前公开操作事件和动画等待状态下发给本局所有已连接客户端。客户端 MUST 订阅本牌桌的 socket 状态流，在状态变化时更新本地权威镜像，播放当前事件并回执动画完成；公共状态和公开事件 MUST 只包含可对全体玩家公开的信息（阶段、当前行动席、各席公开资料与分数、最近弃牌、将牌、待响应动作摘要、公开动作等）。当 WebSocket 不可用或事件缺口无法补齐时，客户端 MUST 保留最后权威快照并等待 socket 重连；HTTPS 游戏 API、云数据库 `roomStates.watch()` 和云函数 `pull` MUST NOT 作为在线牌桌实时同步兜底。
+系统 SHALL 通过自有 WebSocket 主通道把牌桌公共状态、当前公开操作事件和动画等待状态下发给本局所有已连接客户端。客户端 MUST 订阅本牌桌的 socket 状态流，在状态变化时更新本地权威镜像，播放当前事件并回执动画完成；公共状态和公开事件 MUST 只包含可对全体玩家公开的信息（阶段、当前行动席、各席公开资料与分数、最近弃牌、将牌、待响应摘要、公开动作等）。并发响应窗口的公共状态 MAY 包含等待响应席位、已响应席位和出现牌来源等摘要，但 MUST NOT 包含其他玩家具体可用动作、胡牌候选、手牌推导结果或私密选择。当 WebSocket 不可用或事件缺口无法补齐时，客户端 MUST 保留最后权威快照并等待 socket 重连；HTTPS 游戏 API、云数据库 `roomStates.watch()` 和云函数 `pull` MUST NOT 作为在线牌桌实时同步兜底。
 
 #### Scenario: 状态变化推送
 - **WHEN** 服务端更新了牌桌公共状态
@@ -20,6 +20,11 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **WHEN** 当前公开事件动画完成回执条件满足
 - **THEN** 服务端 MUST 推进并通过 socket 下发下一个公开事件
 - **AND** 客户端 MUST NOT 在当前事件完成前收到可推进牌局的后续事件
+
+#### Scenario: 并发响应摘要不泄密
+- **WHEN** 服务端下发并发响应窗口公共状态
+- **THEN** 公共状态 MUST NOT 包含任一玩家的具体响应按钮、胡牌结果、候选动作列表或响应选择详情
+- **AND** 公共状态 MAY 只包含响应窗口是否存在、等待席位和已响应席位等摘要信息
 
 #### Scenario: 重复事件去重
 - **WHEN** 实时推送重复返回已消费的公开事件
@@ -37,12 +42,17 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **AND** 当自身仍需回执时客户端 MUST 播放当前事件并提交动画完成回执
 
 ### Requirement: 私密手牌保密下发
-系统 SHALL 保证每位玩家只能获取自己的私密信息（如手牌）。私密手牌 MUST 仅通过按 OPENID 鉴权的通道下发给本人；公共状态文档 MUST NOT 包含其他玩家的手牌明细。
+系统 SHALL 保证每位玩家只能获取自己的私密信息（如手牌和本人响应按钮）。私密手牌与私密响应动作 MUST 仅通过按 OPENID 鉴权的通道下发给本人；公共状态文档 MUST NOT 包含其他玩家的手牌明细、响应按钮、可胡信息或候选动作明细。
 
 #### Scenario: 玩家获取本人手牌
 - **WHEN** 玩家需要查看或操作自己的手牌
 - **THEN** 系统 MUST 仅向该玩家本人下发其手牌
 - **AND** 其他玩家 MUST NOT 能从公共状态读取到该玩家手牌
+
+#### Scenario: 玩家获取本人响应按钮
+- **WHEN** 并发响应窗口中某玩家拥有合法响应动作
+- **THEN** 系统 MUST 仅向该玩家本人下发其可选响应按钮和必要参数
+- **AND** 其他玩家 MUST NOT 能读取该玩家是否可胡、可碰、可招、可踏或可吃的具体动作明细
 
 #### Scenario: 公共状态不含他人手牌
 - **WHEN** 客户端订阅牌桌公共状态
@@ -50,17 +60,27 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **AND** 仅 MUST 包含各玩家的公开信息（如已亮出的凑牌、弃牌、分数）
 
 ### Requirement: 操作意图上报
-系统 SHALL 让客户端以「操作意图」形式把玩家动作上报服务端，而不是本地直接执行。客户端 MUST 通过 WebSocket 把出牌、吃、碰、招、踏、胡、过、接庄、不接庄等动作作为意图提交，并在服务端确认后才反映为最终状态；当 socket 不可用时，客户端 MUST 暂停操作并等待重连。服务端 MUST 对 socket 入口执行身份校验、版本校验和规则裁决。
+系统 SHALL 让客户端以「操作意图」形式把玩家动作上报服务端，而不是本地直接执行。客户端 MUST 通过 WebSocket 把出牌、吃、碰、招、踏、胡、过、接庄、不接庄等动作作为意图提交，并在服务端确认后才反映为最终状态；并发响应窗口内多个玩家 MAY 同时提交响应意图，服务端 MUST 对这些意图执行身份校验、版本校验、窗口校验和规则裁决。当 socket 不可用时，客户端 MUST 暂停操作并等待重连。服务端 MUST 对 socket 入口执行身份校验、版本校验和规则裁决。
 
 #### Scenario: 上报出牌意图
 - **WHEN** 玩家在自己回合选择打出一张牌且 socket 可用
 - **THEN** 客户端 MUST 把该出牌意图通过 socket 上报服务端
 - **AND** 客户端 MUST 等待服务端下发的权威状态来确认该出牌结果
 
+#### Scenario: 上报并发响应意图
+- **WHEN** 玩家在并发响应窗口中选择吃、碰、招、踏、胡或过
+- **THEN** 客户端 MUST 把该响应意图通过 socket 上报服务端
+- **AND** 客户端 MUST 等待服务端权威裁决确认该响应是否最终生效
+
 #### Scenario: 意图被拒绝的反馈
 - **WHEN** 服务端拒绝某个操作意图
 - **THEN** 客户端 MUST 保持服务端权威状态显示不变
 - **AND** 客户端 MUST 向玩家展示对应的拒绝提示
+
+#### Scenario: 提前裁决取消本地按钮
+- **WHEN** 服务端已经裁决同一响应窗口且当前玩家的响应未胜出或未提交
+- **THEN** 客户端 MUST 收起本地响应按钮并显示最新权威状态
+- **AND** 客户端 MUST NOT 继续提交已失效的响应意图
 
 #### Scenario: socket 不可用时禁止提交意图
 - **WHEN** 玩家需要提交操作但 socket 通道不可用

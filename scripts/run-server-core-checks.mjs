@@ -193,6 +193,157 @@ if (previousPhase !== 'result' && timeoutEngine.state.currentSeat !== timedOutSe
   throw new Error('timed-out human manual action should keep the same acting seat');
 }
 
+function takeServerCards(keys, excludedIds = []) {
+  const used = new Set(excludedIds);
+  return keys.map((key) => {
+    const card = serverDeck.find((item) => item.key === key && !used.has(item.id));
+    if (!card) throw new Error(`missing card for key ${key}`);
+    used.add(card.id);
+    return card;
+  });
+}
+
+function makeResponseEngine() {
+  const engine = new serverEngine.HuapaiEngine(serverRules.DEFAULT_RULES);
+  const seats = serverCards.createSeats(serverRules.DEFAULT_RULES);
+  seats.forEach((seat, index) => {
+    seat.isHuman = true;
+    seat.online = true;
+    seat.openid = `test-${index}`;
+    seat.nickName = `玩家${index}`;
+    seat.hand = [];
+  });
+  const incoming = takeServerCards(['shang'])[0];
+  seats[0].discards = [incoming];
+  engine.load({
+    rules: serverRules.DEFAULT_RULES,
+    seats,
+    deck: [],
+    phase: 'human-response',
+    currentSeat: 0,
+    dealerSeat: 0,
+    nextDealerSeat: 0,
+    jiangPhraseId: 'sdr',
+    appearingCard: serverCards.createAppearingCard({
+      card: incoming,
+      source: 'discard',
+      sourceSeat: 0,
+      responseStartSeat: 1,
+    }),
+    drawnCard: null,
+    recentDiscard: { seat: 0, card: incoming },
+    pendingActions: [],
+    playerActions: [],
+    eventSeq: 0,
+    publicEvent: null,
+    pendingContinuation: null,
+    responseWindow: null,
+  });
+  return { engine, incoming };
+}
+
+{
+  const { engine, incoming } = makeResponseEngine();
+  engine.state.seats[1].hand = takeServerCards(['shang', 'shang'], [incoming.id]);
+  engine.state.seats[2].hand = takeServerCards(['shang', 'shang'], [incoming.id].concat(engine.state.seats[1].hand.map((card) => card.id)));
+  const actions = [
+    { type: 'peng', seat: 1, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['shang', 'shang'], priority: serverRules.ACTION_PRIORITY.peng, label: '碰', responseIndex: 0 },
+    { type: 'peng', seat: 2, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['shang', 'shang'], priority: serverRules.ACTION_PRIORITY.peng, label: '碰', responseIndex: 1 },
+  ];
+  engine.handleResponseWindow(actions, 0);
+  const publicWindow = serverEngine.buildPublicState(engine.state);
+  const privateOne = serverEngine.buildPrivateView(engine.state, 1);
+  if ((publicWindow.pendingActions || []).length || (publicWindow.playerActions || []).length || !publicWindow.responseSummary) {
+    throw new Error('concurrent response public state should expose only a response summary');
+  }
+  if (!privateOne.playerActions || privateOne.playerActions.length !== 2) {
+    throw new Error('private view should expose only the matching seat response actions plus pass');
+  }
+  engine.submitResponse(2, { type: 'peng' });
+  if (!engine.state.responseWindow || engine.state.seats[2].melds.length) {
+    throw new Error('later same-tier peng must wait for earlier response-order seat');
+  }
+  engine.submitResponse(1, { type: 'pass' });
+  if (engine.state.responseWindow || engine.state.seats[2].melds[0].type !== 'peng') {
+    throw new Error('later peng should resolve after earlier same-tier seat passes');
+  }
+}
+
+{
+  const { engine, incoming } = makeResponseEngine();
+  engine.state.seats[1].hand = takeServerCards(['shang', 'shang', 'shang', 'da', 'da'], [incoming.id]);
+  engine.state.seats[2].hand = takeServerCards(['shang', 'shang'], [incoming.id].concat(engine.state.seats[1].hand.map((card) => card.id)));
+  const actions = [
+    { type: 'zhao', seat: 1, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['shang', 'shang', 'shang'], zhaoSize: 4, handKeyCount: 3, priority: serverRules.ACTION_PRIORITY.zhao, label: '招4张1对', responseIndex: 0 },
+    { type: 'peng', seat: 2, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['shang', 'shang'], priority: serverRules.ACTION_PRIORITY.peng, label: '碰', responseIndex: 1 },
+  ];
+  engine.handleResponseWindow(actions, 0);
+  engine.submitResponse(1, { type: 'zhao', zhaoSize: 4, handKeyCount: 3 });
+  if (engine.state.responseWindow || engine.state.seats[1].melds[0].type !== 'zhao') {
+    throw new Error('zhao should resolve immediately when no unresolved hu can beat it');
+  }
+}
+
+{
+  const { engine, incoming } = makeResponseEngine();
+  engine.state.seats[2].hand = takeServerCards(['shang', 'shang', 'shang', 'da', 'da'], [incoming.id]);
+  const actions = [
+    { type: 'hu', seat: 1, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: [], priority: serverRules.ACTION_PRIORITY.hu, label: '胡', responseIndex: 0, win: { summary: '测试胡', points: 1, scoring: {}, grade: '屁胡', pattern: [], doors: [] } },
+    { type: 'zhao', seat: 2, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['shang', 'shang', 'shang'], zhaoSize: 4, handKeyCount: 3, priority: serverRules.ACTION_PRIORITY.zhao, label: '招4张1对', responseIndex: 1 },
+  ];
+  engine.handleResponseWindow(actions, 0);
+  engine.submitResponse(2, { type: 'zhao', zhaoSize: 4, handKeyCount: 3 });
+  if (!engine.state.responseWindow || engine.state.seats[2].melds.length) {
+    throw new Error('zhao must wait while an unresolved hu candidate can beat it');
+  }
+  engine.submitResponse(1, { type: 'pass' });
+  if (engine.state.responseWindow || engine.state.seats[2].melds[0].type !== 'zhao') {
+    throw new Error('zhao should resolve after the unresolved hu candidate passes');
+  }
+}
+
+{
+  const { engine, incoming } = makeResponseEngine();
+  engine.state.seats[1].hand = takeServerCards(['shang', 'shang'], [incoming.id]);
+  engine.state.seats[2].hand = takeServerCards(['shang', 'shang'], [incoming.id].concat(engine.state.seats[1].hand.map((card) => card.id)));
+  const actions = [
+    { type: 'peng', seat: 1, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['shang', 'shang'], priority: serverRules.ACTION_PRIORITY.peng, label: '碰', responseIndex: 0 },
+    { type: 'peng', seat: 2, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['shang', 'shang'], priority: serverRules.ACTION_PRIORITY.peng, label: '碰', responseIndex: 1 },
+  ];
+  engine.handleResponseWindow(actions, 0);
+  engine.submitResponse(1, { type: 'pass' });
+  engine.submitResponse(2, { type: 'pass' });
+  if (engine.state.responseWindow || !engine.state.publicEvent || engine.state.publicEvent.type !== 'unclaimed') {
+    throw new Error('all concurrent response passes should produce one final unclaimed event');
+  }
+}
+
+{
+  const { engine, incoming } = makeResponseEngine();
+  engine.state.seats[1].isHuman = false;
+  engine.state.seats[1].hand = takeServerCards(['shang', 'shang'], [incoming.id]);
+  const actions = [
+    { type: 'peng', seat: 1, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['shang', 'shang'], priority: serverRules.ACTION_PRIORITY.peng, label: '碰', responseIndex: 0 },
+  ];
+  engine.handleResponseWindow(actions, 0);
+  if (engine.state.responseWindow || engine.state.seats[1].melds[0].type !== 'peng') {
+    throw new Error('AI response window seat should choose and resolve automatically');
+  }
+}
+
+{
+  const { engine, incoming } = makeResponseEngine();
+  engine.state.seats[1].hand = takeServerCards(['shang', 'shang'], [incoming.id]);
+  const actions = [
+    { type: 'peng', seat: 1, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['shang', 'shang'], priority: serverRules.ACTION_PRIORITY.peng, label: '碰', responseIndex: 0, forced: true },
+  ];
+  engine.handleResponseWindow(actions, 0);
+  engine.submitResponse(1, { type: 'pass' });
+  if (engine.state.phase !== 'result' || !engine.state.result || engine.state.result.type !== 'circle-loss') {
+    throw new Error('forced response pass should resolve as circle-loss');
+  }
+}
+
 const rematchDb = new MemoryDocumentDatabase();
 const rematchRoomId = '991122';
 const rematchEngine = new serverEngine.HuapaiEngine(serverRules.DEFAULT_RULES);

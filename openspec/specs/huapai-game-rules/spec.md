@@ -61,11 +61,17 @@ The system SHALL advance play through opening deal, dealer-slip takeover choice,
 - **AND** the dealer MUST remain unchanged for the next round
 
 ### Requirement: Meld Actions
-The system SHALL evaluate Shang Da Ren actions for the current rule configuration, including chi, peng, zhao, and ta, and SHALL resolve simultaneous opportunities by priority `hu > ta > zhao > peng > chi`. Within the same action tier, the system SHALL use the current response order and award the action to the first legal seat. When the first legal seat has multiple legal choices within the awarded action tier, the system SHALL allow that seat to choose among those legal choices.
+The system SHALL evaluate Shang Da Ren actions for the current rule configuration, including chi, peng, zhao, and ta, and SHALL resolve simultaneous opportunities by priority `hu > ta > zhao > peng > chi`. Within the same action tier, the system SHALL use the current response order and award the action to the first legal seat. When one appearing card creates legal opportunities for multiple seats, the system SHALL allow all eligible seats to decide concurrently, then award the appearing card to the highest-priority accepted legal action. When the currently accepted best action cannot be defeated by any unresolved legal action, the system SHALL resolve that action immediately without waiting for lower-priority unresolved seats. When the first legal seat has multiple legal choices within the awarded action tier, the system SHALL allow that seat to choose among those legal choices.
 
 #### Scenario: Legal response actions are found
 - **WHEN** a player discards or draws a card that an eligible seat can use for a configured action
 - **THEN** the system MUST expose only legal actions available to each eligible seat
+- **AND** legal actions for one seat MUST NOT be exposed to other seats
+
+#### Scenario: Concurrent response actions are collected
+- **WHEN** multiple eligible seats can respond to the same appearing card
+- **THEN** the system MUST allow each eligible human seat to choose from its own legal actions without waiting for earlier response-order seats to pass
+- **AND** the system MUST keep the appearing card reserved until the response window resolves
 
 #### Scenario: Chi is accepted
 - **WHEN** a player accepts a legal chi action
@@ -123,7 +129,23 @@ The system SHALL evaluate Shang Da Ren actions for the current rule configuratio
 
 #### Scenario: Action priority is applied
 - **WHEN** multiple players or actions are available for the same appearing card
-- **THEN** the system MUST resolve only the highest-priority action tier before lower-priority actions
+- **THEN** the system MUST resolve only the highest-priority accepted legal action tier before lower-priority actions
+- **AND** a lower-priority accepted action MUST NOT take the appearing card while a higher-priority legal candidate remains unresolved
+
+#### Scenario: Zhao or ta resolves before lower priority candidates
+- **WHEN** a player accepts a legal zhao or ta action for an appearing card
+- **AND** no unresolved hu candidate can still claim that appearing card
+- **THEN** the system MUST resolve the zhao or ta immediately
+- **AND** unresolved peng or chi choices for the same appearing card MUST become invalid
+
+#### Scenario: Hu intercepts zhao or ta
+- **WHEN** one seat can hu an appearing card and another seat can zhao or ta that same appearing card
+- **THEN** the hu candidate MUST remain able to win according to priority until it chooses, times out, or is otherwise resolved
+- **AND** zhao or ta MUST NOT be applied before the hu candidate is no longer able to defeat it
+
+#### Scenario: Same-tier response order decides winner
+- **WHEN** multiple seats accept legal actions in the same priority tier for the same appearing card
+- **THEN** the system MUST award the action to the earliest seat in the current response order
 
 #### Scenario: Same player has chi and peng
 - **WHEN** the same player can both chi and peng the same appearing card and no higher-priority action intercepts it

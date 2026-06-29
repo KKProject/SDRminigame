@@ -83,6 +83,7 @@ class HuapaiEngine {
     if (typeof this.state.eventSeq !== 'number') this.state.eventSeq = 0;
     if (!('publicEvent' in this.state)) this.state.publicEvent = null;
     if (!('pendingContinuation' in this.state)) this.state.pendingContinuation = null;
+    if (!('responseWindow' in this.state)) this.state.responseWindow = null;
   }
 
   /**
@@ -194,6 +195,7 @@ class HuapaiEngine {
       recentDiscard: null,
       pendingActions: [],
       playerActions: [],
+      responseWindow: null,
       feedback: `庄家${seats[roundDealer].nickName}开局，将牌${opening.jiangCard ? opening.jiangCard.text : ''}`,
       result: null,
       round: prevRound + 1,
@@ -294,6 +296,7 @@ class HuapaiEngine {
     state.currentSeat = slippedSeat;
     state.pendingActions = [];
     state.playerActions = [];
+    state.responseWindow = null;
     state.appearingCard = null;
     state.drawnCard = null;
     state.selectedCardId = null;
@@ -394,6 +397,7 @@ class HuapaiEngine {
     state.selectedCardId = null;
     state.pendingActions = [];
     state.playerActions = [];
+    state.responseWindow = null;
     state.phase = seat.isHuman ? PHASES.HUMAN_DISCARD : PHASES.AI_THINKING;
     this.setFeedback(feedback);
     if (!seat.isHuman) {
@@ -464,7 +468,7 @@ class HuapaiEngine {
     state.recentDiscard = { seat: seatIndex, card };
     if (this.music) this.music.playCardVoice(card);
 
-    const actions = filterHighestPriority(findResponseActions(state, seatIndex, card, this.rules));
+    const actions = this.responseCandidates(findResponseActions(state, seatIndex, card, this.rules));
     const appearanceResolution = actions.length ? 'await-response' : 'auto-discard';
     if (!actions.length) {
       state.appearingCard = null;
@@ -524,40 +528,87 @@ class HuapaiEngine {
     });
   }
 
+  responseCandidates(actions) {
+    return (actions || [])
+      .filter((action) => !action.circleLossRisk || action.forced)
+      .sort((a, b) => b.priority - a.priority || (a.responseIndex || 0) - (b.responseIndex || 0) || a.seat - b.seat);
+  }
+
+  actionCompare(a, b) {
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    if ((a.responseIndex || 0) !== (b.responseIndex || 0)) return (a.responseIndex || 0) - (b.responseIndex || 0);
+    return a.seat - b.seat;
+  }
+
+  actionBeats(candidate, best) {
+    return this.actionCompare(candidate, best) < 0;
+  }
+
+  actionsForSeat(actions, seatIndex) {
+    return (actions || []).filter((action) => action.seat === seatIndex);
+  }
+
+  responseSeats(actions) {
+    const seats = [];
+    (actions || []).forEach((action) => {
+      if (seats.indexOf(action.seat) < 0) seats.push(action.seat);
+    });
+    return seats.sort((a, b) => {
+      const firstA = (actions || []).find((action) => action.seat === a);
+      const firstB = (actions || []).find((action) => action.seat === b);
+      return this.actionCompare(firstA, firstB);
+    });
+  }
+
   /**
-   * 响应窗口调度：按 actions[0].seat 轮转。
-   * 真人展示 playerActions + pass；AI 自动 chooseResponse 或 pass 到下一家。
+   * 响应窗口调度：同一张出现牌的所有候选席位并发响应。
+   * AI/离线席位立即写入选择或过牌，真人在线席位通过私密视图看到按钮。
    */
   handleResponseWindow(actions, sourceSeat) {
     const state = this.state;
-    state.pendingActions = actions;
-    if (!actions.length) {
+    const candidates = this.responseCandidates(actions);
+    state.pendingActions = candidates;
+    state.playerActions = [];
+    if (!candidates.length) {
       this.resolveUnclaimedAppearingCard(sourceSeat);
       return;
     }
 
-    const responseSeat = actions[0].seat;
-    const responseActions = actions.filter((action) => action.seat === responseSeat);
-    state.currentSeat = responseSeat;
-
-    if (state.seats[responseSeat].isHuman) {
-      state.playerActions = responseActions.concat([{ type: 'pass', seat: responseSeat, label: ACTION_LABELS.pass }]);
-      state.phase = PHASES.HUMAN_RESPONSE;
-      this.setFeedback(this.describeActions('你可以响应这张牌', responseActions));
-      return;
-    }
-
-    const aiAction = chooseResponse(responseActions);
-    if (aiAction) {
-      this.scheduleAI(() => this.applyAction(aiAction));
-      return;
-    }
-
-    this.emitPublicEvent('pass', { seat: responseSeat }, {
-      type: 'handle-response-window',
-      actions: actions.filter((action) => action.seat !== responseSeat),
-      sourceSeat,
+    const seats = this.responseSeats(candidates);
+    const actionsBySeat = {};
+    const decisions = {};
+    seats.forEach((seatIndex) => {
+      actionsBySeat[seatIndex] = this.actionsForSeat(candidates, seatIndex);
+      decisions[seatIndex] = { status: 'pending' };
     });
+    state.responseWindow = {
+      id: `${state.eventSeq || 0}-${sourceSeat}-${Date.now()}`,
+      sourceSeat,
+      sourceType: state.drawnCard ? APPEARING_CARD_SOURCES.DRAW : APPEARING_CARD_SOURCES.DISCARD,
+      cardId: (state.drawnCard || (state.recentDiscard && state.recentDiscard.card) || {}).id || null,
+      candidateSeats: seats,
+      actions: candidates,
+      actionsBySeat,
+      decisions,
+      createdAt: Date.now(),
+    };
+    state.phase = PHASES.HUMAN_RESPONSE;
+    state.currentSeat = seats[0];
+    this.setFeedback('多家可响应，等待玩家选择');
+
+    seats.forEach((seatIndex) => {
+      const seat = state.seats[seatIndex];
+      if (seat && seat.isHuman && seat.online !== false) return;
+      const responseActions = actionsBySeat[seatIndex] || [];
+      const aiAction = seat && seat.isHuman ? null : chooseResponse(responseActions);
+      if (aiAction) this.recordResponseDecision(seatIndex, aiAction, { auto: true });
+      else this.recordResponsePass(seatIndex, { auto: true });
+    });
+
+    this.resolveResponseWindow();
   }
 
   /** 无人响应：摸牌走 discardUnclaimedDraw，出牌则进弃牌区并下家摸牌 */
@@ -569,6 +620,7 @@ class HuapaiEngine {
     }
     state.pendingActions = [];
     state.playerActions = [];
+    state.responseWindow = null;
     state.appearingCard = null;
     if (state.recentDiscard) {
       state.recentDiscard.unclaimed = true;
@@ -592,6 +644,7 @@ class HuapaiEngine {
     state.currentSeat = sourceSeat;
     state.pendingActions = [];
     state.playerActions = [];
+    state.responseWindow = null;
     state.phase = PHASES.AI_THINKING;
     if (state.phase === PHASES.RESULT) return;
     this.beginTurn(next, true);
@@ -602,6 +655,7 @@ class HuapaiEngine {
     state.currentSeat = seatIndex;
     state.pendingActions = [];
     state.playerActions = [];
+    state.responseWindow = null;
     state.phase = PHASES.AI_THINKING;
     this.setFeedback(`${state.seats[seatIndex].nickName}${label}，等待动作完成`);
     const melds = state.seats[seatIndex].melds || [];
@@ -629,15 +683,17 @@ class HuapaiEngine {
    * 玩家选择「过」。
    * forced 动作不能过 → 进圈；放弃吃会记录惩罚键。
    */
-  passResponse(seatIndex) {
+  recordResponsePass(seatIndex, options = {}) {
     const state = this.state;
-    const forcedAction = state.pendingActions.find((action) => action.seat === seatIndex && action.forced);
+    const window = state.responseWindow;
+    const actions = window ? (window.actionsBySeat[seatIndex] || []) : this.actionsForSeat(state.pendingActions, seatIndex);
+    const forcedAction = actions.find((action) => action.forced);
     if (forcedAction) {
       this.finishCircleLoss(seatIndex, `必须${forcedAction.label}，放弃后进圈`);
-      return;
+      return false;
     }
 
-    state.pendingActions
+    actions
       .filter((action) => action.type === 'chi' && action.seat === seatIndex)
       .forEach((action) => {
         const key = createChiPenaltyKey(action);
@@ -645,17 +701,86 @@ class HuapaiEngine {
         state.seats[seatIndex].history.declinedChiKeys.push(action.card.key);
       });
 
-    const remaining = state.pendingActions.filter((action) => action.seat !== seatIndex);
-    state.pendingActions = remaining;
-    state.playerActions = [];
-    const source = state.appearingCard
-      ? state.appearingCard.sourceSeat
-      : (state.recentDiscard ? state.recentDiscard.seat : state.currentSeat);
-    this.emitPublicEvent('pass', { seat: seatIndex }, {
-      type: 'handle-response-window',
-      actions: remaining,
-      sourceSeat: source,
+    if (window && window.decisions[seatIndex]) {
+      window.decisions[seatIndex] = {
+        status: 'pass',
+        auto: Boolean(options.auto),
+        at: Date.now(),
+      };
+    }
+    return true;
+  }
+
+  passResponse(seatIndex) {
+    if (!this.recordResponsePass(seatIndex)) return;
+    this.resolveResponseWindow();
+  }
+
+  recordResponseDecision(seatIndex, action, options = {}) {
+    const window = this.state.responseWindow;
+    if (!window || !window.decisions[seatIndex]) return false;
+    window.decisions[seatIndex] = {
+      status: 'action',
+      action,
+      auto: Boolean(options.auto),
+      at: Date.now(),
+    };
+    return true;
+  }
+
+  bestSelectedResponse(window) {
+    return Object.keys(window.decisions || {})
+      .map((seat) => window.decisions[seat])
+      .filter((decision) => decision && decision.status === 'action' && decision.action)
+      .map((decision) => decision.action)
+      .sort((a, b) => this.actionCompare(a, b))[0] || null;
+  }
+
+  unresolvedActionsThatBeat(window, best) {
+    return (window.actions || []).filter((action) => {
+      const decision = window.decisions[action.seat];
+      return decision && decision.status === 'pending' && (!best || this.actionBeats(action, best));
     });
+  }
+
+  pendingResponseSeats(window) {
+    return (window.candidateSeats || []).filter((seat) => {
+      const decision = window.decisions[seat];
+      return decision && decision.status === 'pending';
+    });
+  }
+
+  resolveResponseWindow() {
+    const state = this.state;
+    const window = state.responseWindow;
+    if (!window || state.phase === PHASES.RESULT) return false;
+
+    const best = this.bestSelectedResponse(window);
+    const blockers = this.unresolvedActionsThatBeat(window, best);
+    if (best && !blockers.length) {
+      state.responseWindow = null;
+      state.pendingActions = [];
+      state.playerActions = [];
+      if (best.type === 'hu') this.finishWin(best.seat, best.card, best.win);
+      else if (best.type === 'ta') this.applyTa(best);
+      else this.applyAction(best);
+      return true;
+    }
+
+    const pendingSeats = this.pendingResponseSeats(window);
+    if (!pendingSeats.length) {
+      state.responseWindow = null;
+      state.pendingActions = [];
+      state.playerActions = [];
+      this.resolveUnclaimedAppearingCard(window.sourceSeat);
+      return true;
+    }
+
+    state.currentSeat = pendingSeats[0];
+    state.phase = PHASES.HUMAN_RESPONSE;
+    state.playerActions = [];
+    this.setFeedback('等待玩家响应这张牌');
+    return false;
   }
 
   validateSeatSupportPairs(seat) {
@@ -770,6 +895,7 @@ class HuapaiEngine {
     state.recentDiscard = null;
     state.pendingActions = [];
     state.playerActions = [];
+    state.responseWindow = null;
     state.currentSeat = action.seat;
     if (this.music) this.music.playActionVoice(action.type);
     this.scheduleAfterMeldAnimation(action.seat, action.label, meld);
@@ -809,6 +935,7 @@ class HuapaiEngine {
     state.drawnCard = null;
     state.pendingActions = [];
     state.playerActions = [];
+    state.responseWindow = null;
     if (this.music) this.music.playActionVoice('ta');
     this.scheduleAfterMeldAnimation(action.seat, ACTION_LABELS.ta, meld);
   }
@@ -838,6 +965,7 @@ class HuapaiEngine {
     state.currentSeat = seatIndex;
     state.pendingActions = [];
     state.playerActions = [];
+    state.responseWindow = null;
     state.selectedCardId = null;
     state.recentDiscard = null;
 
@@ -865,7 +993,7 @@ class HuapaiEngine {
     });
     state.drawnCard = drawnCard;
     if (this.music) this.music.playCardVoice(drawnCard);
-    const actions = filterHighestPriority(findAppearingCardActions(state, seatIndex, drawnCard, APPEARING_CARD_SOURCES.DRAW, this.rules));
+    const actions = this.responseCandidates(findAppearingCardActions(state, seatIndex, drawnCard, APPEARING_CARD_SOURCES.DRAW, this.rules));
     const appearanceResolution = actions.length ? 'await-response' : 'auto-discard';
     const discardIndex = actions.length ? undefined : this.settleUnclaimedDraw(seatIndex, drawnCard);
     this.emitPublicEvent('draw', {
@@ -925,6 +1053,7 @@ class HuapaiEngine {
     this.state.phase = PHASES.RESULT;
     this.state.pendingActions = [];
     this.state.playerActions = [];
+    this.state.responseWindow = null;
     this.state.selectedCardId = null;
     this.state.appearingCard = null;
     this.state.drawnCard = null;
@@ -968,6 +1097,7 @@ class HuapaiEngine {
     this.state.phase = PHASES.RESULT;
     this.state.pendingActions = [];
     this.state.playerActions = [];
+    this.state.responseWindow = null;
     this.state.selectedCardId = null;
     this.state.appearingCard = null;
     this.state.drawnCard = null;
@@ -985,6 +1115,7 @@ class HuapaiEngine {
   finishDraw() {
     this.state.phase = PHASES.RESULT;
     this.state.playerActions = [];
+    this.state.responseWindow = null;
     this.state.appearingCard = null;
     this.state.result = { type: RESULT_TYPES.DRAW, reasonCode: DRAW_ROUND_REASONS.EXHAUSTED_DECK, summary: '荒庄' };
     this.emitPublicEvent('draw-round', { result: this.state.result });
@@ -1023,7 +1154,10 @@ class HuapaiEngine {
    * ref: { index } 优先；否则按 { type, key, meldId } 模糊匹配。
    */
   findPlayerAction(seatIndex, ref = {}) {
-    const list = this.state.playerActions || [];
+    const window = this.state.responseWindow;
+    const list = window && window.actionsBySeat
+      ? (window.actionsBySeat[seatIndex] || []).concat([{ type: 'pass', seat: seatIndex, label: ACTION_LABELS.pass }])
+      : (this.state.playerActions || []);
     if (typeof ref.index === 'number' && list[ref.index]) {
       return list[ref.index];
     }
@@ -1041,8 +1175,12 @@ class HuapaiEngine {
   /** 真人响应意图（胡/吃碰招踏/过），phase 须为 human-response */
   submitResponse(seatIndex, ref = {}) {
     const state = this.state;
-    if (state.phase !== PHASES.HUMAN_RESPONSE || !this.isSeatToAct(seatIndex)) {
+    const window = state.responseWindow;
+    if (state.phase !== PHASES.HUMAN_RESPONSE || !window || !window.decisions[seatIndex]) {
       return { ok: false, reason: '现在不能响应' };
+    }
+    if (window.decisions[seatIndex].status !== 'pending') {
+      return { ok: false, reason: '动作已失效' };
     }
     const action = this.findPlayerAction(seatIndex, ref);
     if (!action) {
@@ -1052,15 +1190,8 @@ class HuapaiEngine {
       this.passResponse(seatIndex);
       return { ok: true };
     }
-    if (action.type === 'hu') {
-      this.finishWin(action.seat, action.card, action.win);
-      return { ok: true };
-    }
-    if (action.type === 'ta') {
-      this.applyTa(action);
-      return { ok: true };
-    }
-    this.applyAction(action);
+    this.recordResponseDecision(seatIndex, action);
+    this.resolveResponseWindow();
     return { ok: true };
   }
 
@@ -1098,6 +1229,23 @@ class HuapaiEngine {
  */
 function buildPublicState(state) {
   if (!state) return null;
+  const responseWindow = state.responseWindow || null;
+  const responseSummary = responseWindow ? {
+    active: true,
+    sourceSeat: responseWindow.sourceSeat,
+    sourceType: responseWindow.sourceType,
+    cardId: responseWindow.cardId,
+    waitingSeats: (responseWindow.candidateSeats || []).filter((seat) => (
+      responseWindow.decisions
+      && responseWindow.decisions[seat]
+      && responseWindow.decisions[seat].status === 'pending'
+    )),
+    decidedSeats: (responseWindow.candidateSeats || []).filter((seat) => (
+      responseWindow.decisions
+      && responseWindow.decisions[seat]
+      && responseWindow.decisions[seat].status !== 'pending'
+    )),
+  } : null;
   return {
     phase: state.phase,
     currentSeat: state.currentSeat,
@@ -1113,8 +1261,9 @@ function buildPublicState(state) {
     deckCount: Array.isArray(state.deck) ? state.deck.length : 0,
     recentDiscard: state.recentDiscard || null,
     appearingCard: state.appearingCard || null,
-    pendingActions: state.pendingActions || [],
-    playerActions: state.playerActions || [],
+    pendingActions: responseWindow ? [] : (state.pendingActions || []),
+    playerActions: responseWindow ? [] : (state.playerActions || []),
+    responseSummary,
     eventSeq: typeof state.eventSeq === 'number' ? state.eventSeq : 0,
     publicEvent: serializePublicEvent(state.publicEvent),
     seats: (state.seats || []).map((seat) => ({
@@ -1170,10 +1319,19 @@ function serializePublicEvent(event) {
 function buildPrivateView(state, seatIndex) {
   if (!state || !state.seats || !state.seats[seatIndex]) return { hand: [] };
   const seat = state.seats[seatIndex];
+  const window = state.responseWindow;
+  const responseActions = window
+    && window.decisions
+    && window.decisions[seatIndex]
+    && window.decisions[seatIndex].status === 'pending'
+    ? (window.actionsBySeat[seatIndex] || []).concat([{ type: 'pass', seat: seatIndex, label: ACTION_LABELS.pass }])
+    : [];
   return {
     seat: seatIndex,
     hand: seat.hand || [],
     drawnCard: state.drawnCard || null,
+    playerActions: responseActions,
+    responseWindowId: window ? window.id : null,
   };
 }
 

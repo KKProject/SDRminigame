@@ -7,6 +7,7 @@ const ROOM_SESSION_KEY = 'huapai-online-room';
 const RECONNECT_DELAY_MS = 1500;
 const HEARTBEAT_INTERVAL_MS = 20000;
 const WAITING_REFRESH_INTERVAL_MS = 2000;
+const RESPONSE_ACTION_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'];
 export const LOBBY_STATES = {
   CHECKING_ROOM: 'checking-room',
   RECONNECTING: 'reconnecting',
@@ -29,6 +30,11 @@ function animationActionType(type) {
   if (type === 'acceptTakeover') return 'accept-takeover';
   if (type === 'declineTakeover') return 'decline-takeover';
   return type;
+}
+
+function shouldPlayOptimisticLocalPreview(action = {}) {
+  const type = animationActionType(action.type);
+  return RESPONSE_ACTION_TYPES.indexOf(type) < 0;
 }
 
 function normalizeInviteRoomId(value) {
@@ -315,9 +321,10 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
     ? pub.appearingCard.card
     : null;
 
-  const myTurnActions = pub.currentSeat === mySeat
-    ? (pub.playerActions || []).map((action, index) => rotateAction(action, mySeat, index))
-    : [];
+  const privateActions = Array.isArray(priv.playerActions) && priv.playerActions.length
+    ? priv.playerActions
+    : (pub.currentSeat === mySeat ? (pub.playerActions || []) : []);
+  const myTurnActions = privateActions.map((action, index) => rotateAction(action, mySeat, index));
 
   const recentDiscard = pub.recentDiscard
     ? Object.assign({}, pub.recentDiscard, { seat: rotateSeat(pub.recentDiscard.seat, mySeat) })
@@ -325,6 +332,20 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
 
   const handIds = new Set((priv.hand || []).map((c) => c.id));
   const selectedCardId = prevSelectedId && handIds.has(prevSelectedId) ? prevSelectedId : null;
+
+  const responseSummary = pub.responseSummary ? Object.assign({}, pub.responseSummary, {
+    sourceSeat: rotateSeat(pub.responseSummary.sourceSeat, mySeat),
+    waitingSeats: (pub.responseSummary.waitingSeats || []).map((seat) => rotateSeat(seat, mySeat)),
+    decidedSeats: (pub.responseSummary.decidedSeats || []).map((seat) => rotateSeat(seat, mySeat)),
+  }) : null;
+  const pendingActions = (pub.pendingActions || []).map((action) => rotateAction(action, mySeat));
+  if (responseSummary && responseSummary.active && pub.appearingCard && !pendingActions.length) {
+    pendingActions.push({
+      type: 'pass',
+      seat: responseSummary.sourceSeat,
+      card: pub.appearingCard.card,
+    });
+  }
 
   return {
     rules: DEFAULT_RULES,
@@ -343,8 +364,9 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
     drawnCard,
     selectedCardId,
     recentDiscard,
-    pendingActions: (pub.pendingActions || []).map((action) => rotateAction(action, mySeat)),
+    pendingActions,
     playerActions: myTurnActions,
+    responseSummary,
     feedback: pub.feedback || '',
     result: rotateResult(pub.result, mySeat),
     muted: false,
@@ -971,7 +993,9 @@ export default class OnlineController {
     }
     this.lastPlayedEventSeq = event.eventSeq;
     this.isAnimating = true;
-    const usesLocalPreview = localActionMatchesEvent(this.pendingLocalAction, event)
+    const hasLocalPreview = Boolean(this.pendingLocalAction && this.pendingLocalAction.localPreviewStarted);
+    const usesLocalPreview = hasLocalPreview
+      && localActionMatchesEvent(this.pendingLocalAction, event)
       && this.animator.confirmLocalActionPreview
       && this.animator.confirmLocalActionPreview(event, () => this.markLocalAnimationComplete());
     if (usesLocalPreview) {
@@ -1018,6 +1042,7 @@ export default class OnlineController {
       && this.pendingLocalAction.identity.cardId === identity.cardId
       && this.pendingLocalAction.identity.zhaoSize === identity.zhaoSize
     ) return;
+    const shouldAnimate = shouldPlayOptimisticLocalPreview(action);
     this.localActionPreviewType = animationActionType(action.type);
     this.pendingLocalAction = {
       identity,
@@ -1026,7 +1051,12 @@ export default class OnlineController {
       eventSeq: null,
       event: null,
       finishing: false,
+      localPreviewStarted: false,
     };
+    if (!shouldAnimate) {
+      this.markLocalAnimationComplete();
+      return;
+    }
     if (this.music && action.type === 'discard' && action.card) {
       this.music.playCardVoice(action.card);
     } else if (this.music && ['chi', 'peng', 'zhao', 'ta', 'hu'].indexOf(action.type) >= 0) {
@@ -1035,6 +1065,7 @@ export default class OnlineController {
     const started = this.animator.playLocalActionPreview
       ? this.animator.playLocalActionPreview(action, () => this.markLocalAnimationComplete())
       : false;
+    if (started && this.pendingLocalAction) this.pendingLocalAction.localPreviewStarted = true;
     if (!started) this.markLocalAnimationComplete();
   }
 
@@ -1060,9 +1091,10 @@ export default class OnlineController {
 
   cancelLocalActionPreview() {
     if (!this.localActionPreviewType && !this.pendingLocalAction) return;
+    const shouldCancelAnimatorPreview = Boolean(this.pendingLocalAction && this.pendingLocalAction.localPreviewStarted);
     this.localActionPreviewType = null;
     this.pendingLocalAction = null;
-    if (this.animator.cancelLocalActionPreview) this.animator.cancelLocalActionPreview();
+    if (shouldCancelAnimatorPreview && this.animator.cancelLocalActionPreview) this.animator.cancelLocalActionPreview();
   }
 
   async sendAnimationAck(eventSeq) {
