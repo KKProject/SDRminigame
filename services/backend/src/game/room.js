@@ -184,7 +184,7 @@ function reachedMaxRounds(room, engine) {
 }
 
 function settleRoomStatus(room, engine) {
-  if (reachedMaxRounds(room, engine) && !(engine.state && engine.state.publicEvent)) {
+  if (reachedMaxRounds(room, engine)) {
     room.status = 'tableResult';
   } else if (engine && engine.state && engine.state.phase === 'result') {
     room.status = 'finished';
@@ -373,6 +373,7 @@ function animationState(room, engine, openid = null) {
  */
 async function writeRoomState(db, roomId, room, engine, version) {
   advanceUnobservedEvents(room, engine);
+  settleRoomStatus(room, engine);
   animationMetrics(room).stateWriteCount += 1;
   const publicState = buildPublicState(engine.state);
   const animation = animationState(room, engine);
@@ -682,6 +683,7 @@ async function startRound(event, ctx) {
   if (room.hostOpenid !== OPENID) return { ok: false, error: 'NOT_HOST' };
 
   const engine = loadEngine(room.state || null);
+  settleRoomStatus(room, engine);
   if (room.status === 'tableResult' || reachedMaxRounds(room, engine)) {
     room.status = 'tableResult';
     await db.collection(ROOMS).doc(roomId).update({

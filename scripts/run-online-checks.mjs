@@ -1257,6 +1257,76 @@ const blockedNextRound = await roomFunction.startRound({
 if (blockedNextRound.ok || blockedNextRound.error !== 'TABLE_FINISHED' || maxRoundDb.documents.rooms['max-round-room'].status !== 'tableResult') {
   throw new Error('startRound should be blocked once a room reaches settings.maxRounds');
 }
+const resultDriftDb = createRoomDb({
+  'result-drift-room': {
+    _id: 'result-drift-room',
+    status: 'playing',
+    version: 8,
+    updatedAt: 8,
+    hostOpenid: 'result-drift-host',
+    players: [
+      { seat: 0, openid: 'result-drift-host', ready: true, online: true },
+      { seat: 1, openid: 'result-drift-guest', ready: true, online: true },
+    ],
+    playerOpenids: ['result-drift-host', 'result-drift-guest'],
+    settings: { maxRounds: 2 },
+    state: {
+      phase: 'result',
+      round: 1,
+      seats: [],
+      eventSeq: 0,
+      publicEvent: null,
+      pendingContinuation: null,
+      result: { type: 'win', winner: 0 },
+    },
+  },
+});
+const recoveredNextRound = await roomFunction.startRound({
+  roomId: 'result-drift-room',
+}, { db: resultDriftDb, OPENID: 'result-drift-host' });
+if (
+  !recoveredNextRound.ok
+  || resultDriftDb.documents.rooms['result-drift-room'].status !== 'playing'
+  || resultDriftDb.documents.rooms['result-drift-room'].state.round !== 2
+  || resultDriftDb.documents.rooms['result-drift-room'].state.seats.length !== 4
+) {
+  throw new Error('startRound should recover playing/result drift rooms before opening the next non-final round');
+}
+const finalEventDriftDb = createRoomDb({
+  'final-event-drift-room': {
+    _id: 'final-event-drift-room',
+    status: 'playing',
+    version: 11,
+    updatedAt: 11,
+    hostOpenid: 'final-event-host',
+    players: [
+      { seat: 0, openid: 'final-event-host', ready: true, online: true },
+      { seat: 1, openid: 'final-event-guest', ready: true, online: true },
+    ],
+    playerOpenids: ['final-event-host', 'final-event-guest'],
+    settings: { maxRounds: 2 },
+    state: {
+      phase: 'result',
+      round: 2,
+      seats: [{}, {}, {}, {}],
+      eventSeq: 21,
+      publicEvent: { eventSeq: 21, type: 'hu', createdAt: 11, result: { type: 'win', winner: 0 } },
+      pendingContinuation: { type: 'settlement' },
+      result: { type: 'win', winner: 0 },
+    },
+  },
+});
+const finalEventConnection = await roomFunction.setPlayerConnection({
+  roomId: 'final-event-drift-room',
+  online: true,
+}, { db: finalEventDriftDb, OPENID: 'final-event-host' });
+if (
+  !finalEventConnection.ok
+  || finalEventConnection.status !== 'tableResult'
+  || finalEventDriftDb.documents.rooms['final-event-drift-room'].status !== 'tableResult'
+) {
+  throw new Error('result persistence should mark max-round result rooms as tableResult even while a result event exists');
+}
 
 const { HuapaiEngine } = require(join(root, 'services/backend/src/game/core/engine.js'));
 const { DEFAULT_RULES } = require(join(root, 'services/backend/src/game/core/rules.js'));
