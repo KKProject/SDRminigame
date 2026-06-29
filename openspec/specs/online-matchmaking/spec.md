@@ -95,12 +95,13 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **AND** 服务端 MUST NOT 为该玩家创建第二张未结束牌桌
 
 ### Requirement: 最大局数结束牌桌
-系统 SHALL 在牌桌达到创建时配置的最大局数后进入最终结果状态。达到最大局数后，服务端 MUST 阻止直接继续下一局；客户端 MUST 展示牌局已经结束，并允许玩家退出，且允许房主发起当前房间重开确认。
+系统 SHALL 在牌桌达到创建时配置的最大局数后进入最终结果状态。达到最大局数后，服务端 MUST 阻止直接继续下一局；客户端 MUST 展示牌局已经结束，并允许玩家退出，且只允许房主在 15 秒内决定是否发起当前房间继续牌局确认。
 
 #### Scenario: 达到最大局数后结束
 - **WHEN** 牌桌完成第 `settings.maxRounds` 局结算
 - **THEN** 服务端 MUST 将牌桌标记为最终结果状态
 - **AND** 客户端 MUST 展示当前结果和牌局已经结束提示
+- **AND** 服务端 MUST 记录房主决策截止时间 `deadlineAt`
 
 #### Scenario: 未达到最大局数可继续
 - **WHEN** 牌桌完成一局结算且当前局数小于 `settings.maxRounds`
@@ -112,12 +113,37 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **AND** 客户端 MUST 恢复到最终结果牌桌视图
 
 ### Requirement: 最大局数后当前房间重开
-系统 SHALL 支持最大局数结束后由房主发起当前房间重开。房主发起后，所有仍在房间内的真人玩家 MUST 同意；全部同意后服务端 MUST 在当前房间清零已打局数并开启新一局。
+系统 SHALL 支持最大局数结束后由房主在 15 秒决策窗口内发起当前房间重开。房主发起后，所有仍在房间内的真人玩家 MUST 能选择接受或拒绝；全部接受后服务端 MUST 在当前房间清零已打局数并开启新一局。
+
+#### Scenario: 房主超时未选择
+- **WHEN** 当前时间超过房主决策截止时间且房主未发起重开
+- **THEN** 服务端 MUST 关闭该房间
+- **AND** 房间内客户端 MUST 返回在线大厅
+
+#### Scenario: 等待房主期间玩家退出
+- **WHEN** 非房主在房主决策窗口内点击退出
+- **THEN** 服务端 MUST 将该玩家移出房间
+- **AND** 该玩家客户端 MUST 返回在线大厅
 
 #### Scenario: 房主发起重开
-- **WHEN** 牌桌处于最终结果状态且房主点击再来一局
+- **WHEN** 牌桌处于最终结果状态且房主在 15 秒决策窗口内点击再来一局
 - **THEN** 服务端 MUST 记录房主已发起并已同意重开
 - **AND** 客户端 MUST 向其他真人玩家展示等待同意状态
+
+#### Scenario: 玩家接受继续牌局
+- **WHEN** 非房主在重开确认阶段点击接受
+- **THEN** 服务端 MUST 记录该玩家已同意
+- **AND** 当剩余真人玩家全部同意且人数满足开局条件时，服务端 MUST 清零已打局数并开启新一局
+
+#### Scenario: 玩家拒绝继续牌局
+- **WHEN** 非房主在重开确认阶段点击拒绝
+- **THEN** 服务端 MUST 将该玩家移出房间
+- **AND** 该玩家客户端 MUST 返回在线大厅
+
+#### Scenario: 拒绝后人数不足
+- **WHEN** 玩家拒绝后房间剩余真人玩家少于开局所需人数
+- **THEN** 服务端 MUST 关闭该房间
+- **AND** 剩余玩家客户端 MUST 返回在线大厅
 
 #### Scenario: 全员同意后重开
 - **WHEN** 房间内所有真人玩家均已同意重开
@@ -146,6 +172,11 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **WHEN** 房间文档仍为 `playing` 但权威引擎已经处于非最终局 `phase=result`
 - **THEN** 服务端处理房主下一局请求时 MUST 恢复该房间为可继续状态
 - **AND** 服务端 MUST NOT 将该请求误判为牌桌正在进行中
+
+#### Scenario: 状态漂移时退出最终结果
+- **WHEN** 房间文档仍为 `playing` 但权威引擎已经处于最大局数最终结果
+- **THEN** 玩家点击退出时服务端 MUST 恢复最终结果状态并允许退出
+- **AND** 客户端 MUST 返回在线大厅
 
 ### Requirement: 等待房间公开状态
 系统 SHALL 为等待中的好友房通过自有 HTTPS 游戏 API 提供公开状态查询能力。公开状态 MUST 包含房间号、房主、牌桌配置、玩家座位、玩家资料、准备状态和是否满足开局条件。

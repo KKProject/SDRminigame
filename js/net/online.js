@@ -394,6 +394,7 @@ export default class OnlineController {
     this.lastServerEventSeq = 0;
     this.socketReconnecting = false;
     this.lastSocketErrorCode = '';
+    this.rematchDecisionTimer = null;
   }
 
   setStatus(text) {
@@ -433,6 +434,47 @@ export default class OnlineController {
         seat: this.mySeat,
       }, result));
     }
+  }
+
+  clearRematchDecisionTimer() {
+    if (this.rematchDecisionTimer) clearTimeout(this.rematchDecisionTimer);
+    this.rematchDecisionTimer = null;
+  }
+
+  scheduleRematchDecisionTimer(rematch = {}) {
+    this.clearRematchDecisionTimer();
+    if (!rematch || !rematch.hostDecision || !rematch.deadlineAt) return;
+    const delay = Math.max(0, Number(rematch.deadlineAt) - Date.now());
+    this.rematchDecisionTimer = setTimeout(() => {
+      this.returnToLobby();
+    }, delay);
+  }
+
+  returnToLobby() {
+    clearRoomSession();
+    this.active = false;
+    this.roomId = null;
+    this.version = -1;
+    this.lastServerEventSeq = 0;
+    this.currentEvent = null;
+    this.isAnimating = false;
+    this.animationWaiting = false;
+    this.ackingEventSeq = 0;
+    this.clearRematchDecisionTimer();
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+    if (this.ackRetryTimer) clearTimeout(this.ackRetryTimer);
+    this.ackRetryTimer = null;
+    this.cancelLocalActionPreview();
+    this.closeWatcher();
+    if (this.socket) this.socket.close();
+    if (wx.offTouchStart) wx.offTouchStart(this.boundTouch);
+    if (this.databus && typeof this.databus.reset === 'function') this.databus.reset();
+    this.setStatus('');
+    this.setLobbyState(LOBBY_STATES.IDLE, { profile: this.lobbyProfile });
+    return true;
   }
 
   async loginForLobby(profile = {}) {
@@ -837,6 +879,9 @@ export default class OnlineController {
 
   /** 立即应用一次服务端裁决附带的完整快照，避免再次 pull 时错过短暂动作事件。 */
   applyServerSnapshot(res) {
+    if (res && res.ok && (res.left || res.closed || res.declined || res.status === 'closed')) {
+      return this.returnToLobby();
+    }
     if (!res || !res.ok || !res.public) return false;
     const incomingSeat = typeof res.yourSeat === 'number' && res.yourSeat >= 0 ? res.yourSeat : this.mySeat;
     if (incomingSeat < 0) return false;
@@ -867,6 +912,7 @@ export default class OnlineController {
     local.tableSettings = res.settings || {};
     local.tableFinished = res.status === 'tableResult';
     local.tableRematch = res.rematch || null;
+    this.scheduleRematchDecisionTimer(local.tableRematch);
     const animation = res.animation || {
       currentEvent: res.public.publicEvent || null,
       selfAcked: false,
@@ -1220,6 +1266,10 @@ export default class OnlineController {
       this.requestRematch();
       return;
     }
+    if (action.type === 'declineRematch') {
+      this.requestRematch(false);
+      return;
+    }
     this.startLocalActionPreview(action);
     if (action.type === 'acceptTakeover') {
       this.sendOp({ kind: 'takeover', accept: true });
@@ -1255,46 +1305,38 @@ export default class OnlineController {
   }
 
   async leaveTable() {
+    const roomId = this.roomId;
+    if (!roomId) return false;
+    callFunction('game', { action: 'leaveRoom', roomId })
+      .then((res) => {
+        if (!res || !res.ok) {
+          console.warn('[online] leave room request rejected', { roomId, error: res && res.error });
+        }
+      })
+      .catch((err) => {
+        console.warn('[online] leave room request failed after local exit', {
+          roomId,
+          code: err && (err.code || err.errMsg || err.message),
+        });
+      });
+    return this.returnToLobby();
+  }
+
+  async requestRematch(accept = true) {
     if (!this.roomId) return false;
     try {
-      const res = await this.callGame('leaveRoom');
+      const res = await this.callGame('requestRematch', { accept });
       if (!res || !res.ok) {
         this.databus.feedback = onlineErrorMessage({ code: res && res.error });
         return false;
       }
-      clearRoomSession();
-      this.active = false;
-      this.roomId = null;
-      this.version = -1;
-      this.lastServerEventSeq = 0;
-      this.currentEvent = null;
-      this.isAnimating = false;
-      this.animationWaiting = false;
-      this.cancelLocalActionPreview();
-      this.closeWatcher();
-      if (this.socket) this.socket.close();
-      if (wx.offTouchStart) wx.offTouchStart(this.boundTouch);
-      this.databus.reset();
-      this.setStatus('');
-      this.setLobbyState(LOBBY_STATES.IDLE, { profile: this.lobbyProfile });
-      return true;
-    } catch (err) {
-      this.databus.feedback = onlineErrorMessage(err);
-      return false;
-    }
-  }
-
-  async requestRematch() {
-    if (!this.roomId) return false;
-    try {
-      const res = await this.callGame('requestRematch');
-      if (!res || !res.ok) {
-        this.databus.feedback = onlineErrorMessage({ code: res && res.error });
-        return false;
+      if (res.left || res.closed || res.declined || res.status === 'closed') {
+        return this.returnToLobby();
       }
       if (!this.applyServerSnapshot(res)) {
         this.databus.tableRematch = res.rematch || this.databus.tableRematch;
-        this.databus.feedback = res.rematchStarted ? '新一局开始' : '已同意，等待其他玩家';
+        this.scheduleRematchDecisionTimer(this.databus.tableRematch);
+        this.databus.feedback = accept === false ? '已退出牌桌' : (res.rematchStarted ? '新一局开始' : '已同意，等待其他玩家');
       }
       return true;
     } catch (err) {
@@ -1313,6 +1355,7 @@ export default class OnlineController {
     this.heartbeatTimer = null;
     if (this.ackRetryTimer) clearTimeout(this.ackRetryTimer);
     this.ackRetryTimer = null;
+    this.clearRematchDecisionTimer();
     this.ackingEventSeq = 0;
     this.cancelLocalActionPreview();
     if (wx.offNetworkStatusChange) wx.offNetworkStatusChange(this.boundNetworkChange);

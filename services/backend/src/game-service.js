@@ -97,7 +97,10 @@ class LocalGameService {
   }
 
   requestRematch(openid, request) {
-    return this.callAction('requestRematch', openid, { roomId: request.roomId });
+    return this.callAction('requestRematch', openid, {
+      roomId: request.roomId,
+      accept: request.payload ? request.payload.accept : request.accept,
+    });
   }
 }
 

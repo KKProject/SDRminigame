@@ -124,6 +124,8 @@ export default class Main {
     this.online.onLobby = (lobby) => {
       if (lobby.profile) this.menu.showLobby(lobby.profile);
       this.menu.setLobbyState(lobby.state, lobby);
+      this.mode = 'lobby';
+      this.menu.show();
     };
     this.online.onWaitingRoom = (waiting) => {
       this.menu.showWaitingRoom(waiting);

@@ -41,6 +41,8 @@ const CLOSED_ROOM_STATUSES = ['closed'];
 const PLAYER_TIMEOUT_MS = 60000;
 /** 单个公开动作等待客户端动画回执的最长时间 */
 const ANIMATION_ACK_TIMEOUT_MS = 12000;
+/** 最大局数结束后，房主决定是否继续牌局的窗口 */
+const FINAL_REMATCH_HOST_DECISION_MS = 15000;
 
 /**
  * 剥离 CloudBase 文档 _id，写入 set 时使用业务 roomId 作为 doc id。
@@ -75,19 +77,32 @@ function playerOpenids(players = []) {
   return players.map((player) => player.openid).filter(Boolean);
 }
 
+function roomPlayerOpenids(room) {
+  return room && room.status === 'closed' ? [] : playerOpenids(room.players || []);
+}
+
 function buildRematchState(room, openid = null) {
   const rematch = room && room.rematch ? room.rematch : null;
   const players = humanPlayers(room);
   const requiredOpenids = playerOpenids(players);
   const agreedOpenids = rematch && Array.isArray(rematch.agreedOpenids) ? rematch.agreedOpenids : [];
+  const status = rematch ? (rematch.status || '') : '';
+  const isHost = Boolean(openid && room && openid === room.hostOpenid);
+  const selfAgreed = Boolean(openid && agreedOpenids.indexOf(openid) >= 0);
   return {
-    active: Boolean(rematch && rematch.status === 'pending'),
+    status,
+    active: status === 'pending',
+    hostDecision: status === 'host-decision',
     requestedBy: rematch ? (rematch.requestedBy || '') : '',
+    deadlineAt: rematch ? (rematch.deadlineAt || null) : null,
     agreedOpenids,
     agreedCount: agreedOpenids.filter((id) => requiredOpenids.indexOf(id) >= 0).length,
     requiredCount: requiredOpenids.length,
-    selfAgreed: Boolean(openid && agreedOpenids.indexOf(openid) >= 0),
-    isHost: Boolean(openid && room && openid === room.hostOpenid),
+    selfAgreed,
+    isHost,
+    canRequest: Boolean(isHost && status === 'host-decision'),
+    canAccept: Boolean(!isHost && status === 'pending' && !selfAgreed),
+    canDecline: Boolean(!isHost && status === 'pending'),
   };
 }
 
@@ -183,9 +198,46 @@ function reachedMaxRounds(room, engine) {
   return (state.round || 0) >= maxRounds;
 }
 
+function ensureFinalRematchDecision(room, now = Date.now()) {
+  if (!room || room.status !== 'tableResult') return false;
+  if (room.rematch && (room.rematch.status === 'host-decision' || room.rematch.status === 'pending')) return false;
+  room.rematch = {
+    status: 'host-decision',
+    requestedBy: '',
+    agreedOpenids: [],
+    declinedOpenids: [],
+    createdAt: now,
+    deadlineAt: now + FINAL_REMATCH_HOST_DECISION_MS,
+  };
+  return true;
+}
+
+function closeRoom(room) {
+  room.status = 'closed';
+  room.playerOpenids = [];
+  room.rematch = null;
+  return room;
+}
+
+function expireFinalRematchDecision(room, now = Date.now()) {
+  if (
+    !room
+    || room.status !== 'tableResult'
+    || !room.rematch
+    || room.rematch.status !== 'host-decision'
+    || !room.rematch.deadlineAt
+    || now < room.rematch.deadlineAt
+  ) {
+    return false;
+  }
+  closeRoom(room);
+  return true;
+}
+
 function settleRoomStatus(room, engine) {
   if (reachedMaxRounds(room, engine)) {
     room.status = 'tableResult';
+    ensureFinalRematchDecision(room);
   } else if (engine && engine.state && engine.state.phase === 'result') {
     room.status = 'finished';
   }
@@ -383,7 +435,7 @@ async function writeRoomState(db, roomId, room, engine, version) {
       version,
       state: stripState(engine.state),
       players: room.players,
-      playerOpenids: playerOpenids(room.players),
+      playerOpenids: roomPlayerOpenids(room),
       settings: normalizeRoomSettings(room.settings),
       rematch: room.rematch || null,
       updatedAt: Date.now(),
@@ -598,7 +650,7 @@ async function joinRoom(event, ctx) {
     await db.collection(ROOMS).doc(roomId).update({
       data: {
         players: room.players,
-        playerOpenids: playerOpenids(room.players),
+        playerOpenids: roomPlayerOpenids(room),
         updatedAt: Date.now(),
       },
     });
@@ -634,7 +686,7 @@ async function roomInfo(event, ctx) {
   await db.collection(ROOMS).doc(roomId).update({
     data: {
       players: room.players,
-      playerOpenids: playerOpenids(room.players),
+      playerOpenids: roomPlayerOpenids(room),
       updatedAt: Date.now(),
     },
   });
@@ -659,7 +711,7 @@ async function setReady(event, ctx) {
   await db.collection(ROOMS).doc(roomId).update({
     data: {
       players: room.players,
-      playerOpenids: playerOpenids(room.players),
+      playerOpenids: roomPlayerOpenids(room),
       updatedAt: Date.now(),
     },
   });
@@ -732,29 +784,52 @@ async function leaveRoom(event, ctx) {
   const roomId = event.roomId;
   const room = await getRoom(db, roomId);
   if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
+  const now = Number(event.now) || Date.now();
+  const engine = loadEngine(room.state || null);
+  settleRoomStatus(room, engine);
+  const expired = expireFinalRematchDecision(room, now);
+  if (expired) {
+    await db.collection(ROOMS).doc(roomId).set({
+      data: documentData(Object.assign({}, room, {
+        playerOpenids: roomPlayerOpenids(room),
+        updatedAt: now,
+      })),
+    });
+    return {
+      ok: true,
+      roomId,
+      left: true,
+      closed: true,
+      status: room.status,
+      version: room.version || 0,
+      public: engine.state ? buildPublicState(engine.state) : null,
+      animation: engine.state ? animationState(room, engine, OPENID) : null,
+      rematch: buildRematchState(room, OPENID),
+    };
+  }
+  if (room.status === 'closed') {
+    return { ok: true, roomId, left: true, closed: true, status: room.status, version: room.version || 0, rematch: buildRematchState(room, OPENID) };
+  }
   const seat = seatOfOpenid(room, OPENID);
   if (seat < 0) return { ok: false, error: 'NOT_IN_ROOM' };
   if (room.status !== 'tableResult' && room.status !== 'closed') {
     return { ok: false, error: 'ROOM_NOT_FINISHED', status: room.status };
   }
 
+  const hostLeaving = room.hostOpenid === OPENID;
   room.players = (room.players || []).filter((player) => player.openid !== OPENID);
-  room.playerOpenids = playerOpenids(room.players);
-  if (room.hostOpenid === OPENID) {
+  room.playerOpenids = roomPlayerOpenids(room);
+  if (hostLeaving) {
     room.hostOpenid = room.players.length ? room.players[0].openid : '';
   }
   if (room.rematch && Array.isArray(room.rematch.agreedOpenids)) {
     room.rematch.agreedOpenids = room.rematch.agreedOpenids.filter((id) => id !== OPENID);
   }
-  if (!room.players.length) {
-    room.status = 'closed';
-    room.rematch = null;
-  }
-  const engine = loadEngine(room.state || null);
+  if (hostLeaving || humanPlayers(room).length < MIN_HUMANS) closeRoom(room);
   await db.collection(ROOMS).doc(roomId).set({
     data: documentData(Object.assign({}, room, {
-      playerOpenids: playerOpenids(room.players),
-      updatedAt: Date.now(),
+      playerOpenids: roomPlayerOpenids(room),
+      updatedAt: now,
     })),
   });
   return {
@@ -784,14 +859,92 @@ async function requestRematch(event, ctx) {
   const roomId = event.roomId;
   const room = await getRoom(db, roomId);
   if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
+  const now = Number(event.now) || Date.now();
+  const engine = loadEngine(room.state || null);
+  settleRoomStatus(room, engine);
+  const expired = expireFinalRematchDecision(room, now);
+  if (expired) {
+    await db.collection(ROOMS).doc(roomId).set({
+      data: documentData(Object.assign({}, room, {
+        playerOpenids: roomPlayerOpenids(room),
+        settings: normalizeRoomSettings(room.settings),
+        updatedAt: now,
+      })),
+    });
+    return {
+      ok: true,
+      roomId,
+      left: true,
+      closed: true,
+      status: room.status,
+      version: room.version || 0,
+      rematch: buildRematchState(room, OPENID),
+      public: engine.state ? buildPublicState(engine.state) : null,
+      private: { hand: [] },
+      animation: engine.state ? animationState(room, engine, OPENID) : null,
+    };
+  }
   if (room.status !== 'tableResult') return { ok: false, error: 'ROOM_NOT_FINISHED', status: room.status };
   const seat = seatOfOpenid(room, OPENID);
   if (seat < 0) return { ok: false, error: 'NOT_IN_ROOM' };
-  const players = humanPlayers(room);
+  let players = humanPlayers(room);
   if (players.length < MIN_HUMANS) {
     return { ok: false, error: 'WAITING_FOR_PLAYERS', rematch: buildRematchState(room, OPENID) };
   }
-  if (!room.rematch || room.rematch.status !== 'pending') {
+  if (event.accept === false) {
+    const hostDeclined = OPENID === room.hostOpenid;
+    room.players = (room.players || []).filter((player) => player.openid !== OPENID);
+    room.playerOpenids = roomPlayerOpenids(room);
+    if (room.rematch && Array.isArray(room.rematch.agreedOpenids)) {
+      room.rematch.agreedOpenids = room.rematch.agreedOpenids.filter((id) => id !== OPENID);
+    }
+    players = humanPlayers(room);
+    if (hostDeclined || players.length < MIN_HUMANS) {
+      closeRoom(room);
+    } else if (room.rematch && room.rematch.status === 'pending') {
+      const agreedAfterDecline = new Set(room.rematch.agreedOpenids || []);
+      if (playerOpenids(players).every((id) => agreedAfterDecline.has(id))) {
+        resetRoundCounter(engine);
+        room.rematch = null;
+        room.status = 'playing';
+        engine.startRound({ players: buildSeatPlayers(room) });
+        const startedVersion = (room.version || 0) + 1;
+        await writeRoomState(db, roomId, room, engine, startedVersion);
+        return {
+          ok: true,
+          roomId,
+          version: startedVersion,
+          left: true,
+          declined: true,
+          status: room.status,
+          rematch: buildRematchState(room, OPENID),
+        };
+      }
+    }
+    const declinedVersion = (room.version || 0) + 1;
+    room.version = declinedVersion;
+    await db.collection(ROOMS).doc(roomId).set({
+      data: documentData(Object.assign({}, room, {
+        playerOpenids: roomPlayerOpenids(room),
+        settings: normalizeRoomSettings(room.settings),
+        updatedAt: now,
+      })),
+    });
+    return {
+      ok: true,
+      roomId,
+      version: declinedVersion,
+      left: true,
+      declined: true,
+      closed: room.status === 'closed',
+      status: room.status,
+      rematch: buildRematchState(room, OPENID),
+      public: engine.state ? buildPublicState(engine.state) : null,
+      private: { hand: [] },
+      animation: engine.state ? animationState(room, engine, OPENID) : null,
+    };
+  }
+  if (!room.rematch || room.rematch.status === 'host-decision') {
     if (OPENID !== room.hostOpenid) {
       return { ok: false, error: 'NOT_HOST', rematch: buildRematchState(room, OPENID) };
     }
@@ -799,7 +952,9 @@ async function requestRematch(event, ctx) {
       status: 'pending',
       requestedBy: OPENID,
       agreedOpenids: [OPENID],
-      createdAt: Date.now(),
+      declinedOpenids: [],
+      createdAt: now,
+      deadlineAt: null,
     };
   } else if (room.rematch.agreedOpenids.indexOf(OPENID) < 0) {
     room.rematch.agreedOpenids.push(OPENID);
@@ -808,7 +963,6 @@ async function requestRematch(event, ctx) {
   const requiredOpenids = playerOpenids(players);
   const agreed = new Set(room.rematch.agreedOpenids || []);
   const allAgreed = requiredOpenids.every((id) => agreed.has(id));
-  const engine = loadEngine(room.state || null);
   if (allAgreed) {
     resetRoundCounter(engine);
     room.rematch = null;
@@ -835,7 +989,7 @@ async function requestRematch(event, ctx) {
   room.version = version;
   await db.collection(ROOMS).doc(roomId).set({
     data: documentData(Object.assign({}, room, {
-      playerOpenids: playerOpenids(room.players),
+      playerOpenids: roomPlayerOpenids(room),
       settings: normalizeRoomSettings(room.settings),
       updatedAt: Date.now(),
     })),

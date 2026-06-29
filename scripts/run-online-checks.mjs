@@ -569,6 +569,61 @@ onlineController.socket = {
   heartbeat() { return Promise.resolve({ ok: true }); },
   close() {},
 };
+let leaveRoomRequestSent = false;
+let leaveSocketRequestUsed = false;
+let leaveSocketClosed = false;
+const previousWxRequestForLeave = globalThis.wx.request;
+globalThis.wx.request = (options) => {
+  if (options.url === 'https://api.unit.test/api/game' && options.data && options.data.action === 'leaveRoom') {
+    leaveRoomRequestSent = options.data.roomId === 'host-exit-room';
+    setTimeout(() => {
+      options.success({ statusCode: 200, data: { ok: true, left: true, closed: true, status: 'closed' } });
+    }, 20);
+    return;
+  }
+  previousWxRequestForLeave(options);
+};
+const leaveDatabus = {
+  resetCount: 0,
+  selectedCardId: null,
+  reset() { this.resetCount += 1; },
+};
+const leaveController = new online.default(leaveDatabus, onlineRenderer, onlineMusic);
+leaveController.roomId = 'host-exit-room';
+leaveController.active = true;
+leaveController.socket = {
+  isReady() { return true; },
+  request() {
+    leaveSocketRequestUsed = true;
+    return new Promise(() => {});
+  },
+  close() { leaveSocketClosed = true; },
+};
+let leaveLobbyState = null;
+leaveController.onLobby = (state) => { leaveLobbyState = state; };
+let leaveResolved = false;
+let leaveResult = false;
+const leavePromise = leaveController.leaveTable().then((result) => {
+  leaveResolved = true;
+  leaveResult = result;
+});
+await Promise.resolve();
+globalThis.wx.request = previousWxRequestForLeave;
+if (
+  !leaveResolved
+  || !leaveResult
+  || !leaveRoomRequestSent
+  || leaveSocketRequestUsed
+  || !leaveSocketClosed
+  || leaveController.roomId !== null
+  || leaveController.active
+  || leaveDatabus.resetCount !== 1
+  || !leaveLobbyState
+  || leaveLobbyState.state !== online.LOBBY_STATES.IDLE
+) {
+  throw new Error('leaving a table should return to the lobby immediately through HTTPS without waiting on the room socket or HTTP response');
+}
+await leavePromise;
 const directSnapshot = {
   ok: true,
   version: 3,
@@ -1257,6 +1312,13 @@ const blockedNextRound = await roomFunction.startRound({
 if (blockedNextRound.ok || blockedNextRound.error !== 'TABLE_FINISHED' || maxRoundDb.documents.rooms['max-round-room'].status !== 'tableResult') {
   throw new Error('startRound should be blocked once a room reaches settings.maxRounds');
 }
+if (
+  !maxRoundDb.documents.rooms['max-round-room'].rematch
+  || maxRoundDb.documents.rooms['max-round-room'].rematch.status !== 'host-decision'
+  || typeof maxRoundDb.documents.rooms['max-round-room'].rematch.deadlineAt !== 'number'
+) {
+  throw new Error('final table result should initialize a host rematch decision window');
+}
 const resultDriftDb = createRoomDb({
   'result-drift-room': {
     _id: 'result-drift-room',
@@ -1331,6 +1393,182 @@ if (
 const { HuapaiEngine } = require(join(root, 'services/backend/src/game/core/engine.js'));
 const { DEFAULT_RULES } = require(join(root, 'services/backend/src/game/core/rules.js'));
 const { getLegalDiscards } = require(join(root, 'services/backend/src/game/core/evaluator.js'));
+function finalResultState(round = 2) {
+  return {
+    phase: 'result',
+    currentSeat: 0,
+    dealerSeat: 0,
+    nextDealerSeat: 1,
+    round,
+    seats: [0, 1, 2, 3].map((seat) => ({
+      id: seat,
+      nickName: `座位${seat}`,
+      isHuman: seat < 2,
+      hand: [],
+      melds: [],
+      discards: [],
+      history: {},
+    })),
+    deck: [],
+    eventSeq: 0,
+    publicEvent: null,
+    pendingContinuation: null,
+    result: { type: 'draw-round', summary: '测试结算' },
+  };
+}
+function finalRoom(id, overrides = {}) {
+  return Object.assign({
+    _id: id,
+    status: 'tableResult',
+    version: 1,
+    updatedAt: 1,
+    hostOpenid: 'rematch-host',
+    players: [
+      { seat: 0, openid: 'rematch-host', nickName: '房主', ready: true, online: true },
+      { seat: 1, openid: 'rematch-guest', nickName: '好友', ready: true, online: true },
+    ],
+    playerOpenids: ['rematch-host', 'rematch-guest'],
+    settings: { maxRounds: 2 },
+    state: finalResultState(2),
+    rematch: null,
+  }, overrides);
+}
+const leaveFinalDriftDb = createRoomDb({
+  'leave-final-drift': finalRoom('leave-final-drift', { status: 'playing', rematch: null }),
+});
+const leaveFinalDrift = await roomFunction.leaveRoom({
+  roomId: 'leave-final-drift',
+}, { db: leaveFinalDriftDb, OPENID: 'rematch-guest' });
+if (
+  !leaveFinalDrift.ok
+  || !leaveFinalDrift.left
+  || leaveFinalDrift.status !== 'closed'
+  || leaveFinalDriftDb.documents.rooms['leave-final-drift'].playerOpenids.length !== 0
+) {
+  throw new Error('leaveRoom should allow exiting max-round result drift rooms and release active room membership');
+}
+const hostLeaveFinalDb = createRoomDb({
+  'host-leave-final': finalRoom('host-leave-final', {
+    rematch: {
+      status: 'host-decision',
+      requestedBy: '',
+      agreedOpenids: [],
+      declinedOpenids: [],
+      createdAt: 10,
+      deadlineAt: Date.now() + 15000,
+    },
+  }),
+});
+const hostLeaveFinal = await roomFunction.leaveRoom({
+  roomId: 'host-leave-final',
+}, { db: hostLeaveFinalDb, OPENID: 'rematch-host' });
+if (
+  !hostLeaveFinal.ok
+  || !hostLeaveFinal.left
+  || !hostLeaveFinal.closed
+  || hostLeaveFinalDb.documents.rooms['host-leave-final'].status !== 'closed'
+  || hostLeaveFinalDb.documents.rooms['host-leave-final'].playerOpenids.length !== 0
+) {
+  throw new Error('host leave from a final rematch decision room should close the room and release active memberships');
+}
+const rematchTimeoutDb = createRoomDb({
+  'rematch-timeout': finalRoom('rematch-timeout', {
+    version: 5,
+    rematch: {
+      status: 'host-decision',
+      requestedBy: '',
+      agreedOpenids: [],
+      declinedOpenids: [],
+      createdAt: 10,
+      deadlineAt: 100,
+    },
+  }),
+});
+const timedOutRematch = await roomFunction.requestRematch({
+  roomId: 'rematch-timeout',
+  now: 116,
+}, { db: rematchTimeoutDb, OPENID: 'rematch-host' });
+if (
+  !timedOutRematch.ok
+  || !timedOutRematch.closed
+  || rematchTimeoutDb.documents.rooms['rematch-timeout'].status !== 'closed'
+  || rematchTimeoutDb.documents.rooms['rematch-timeout'].playerOpenids.length !== 0
+) {
+  throw new Error('expired host rematch decisions should close the room and release all active memberships');
+}
+const rematchPendingDb = createRoomDb({
+  'rematch-pending': finalRoom('rematch-pending', {
+    rematch: {
+      status: 'host-decision',
+      requestedBy: '',
+      agreedOpenids: [],
+      declinedOpenids: [],
+      createdAt: 10,
+      deadlineAt: Date.now() + 15000,
+    },
+  }),
+});
+const hostRequestedRematch = await roomFunction.requestRematch({
+  roomId: 'rematch-pending',
+}, { db: rematchPendingDb, OPENID: 'rematch-host' });
+if (
+  !hostRequestedRematch.ok
+  || !hostRequestedRematch.rematch.active
+  || !hostRequestedRematch.rematch.selfAgreed
+  || rematchPendingDb.documents.rooms['rematch-pending'].rematch.status !== 'pending'
+) {
+  throw new Error('only the host decision should open a pending rematch vote and count the host as agreed');
+}
+const rematchRejectDb = createRoomDb({
+  'rematch-reject': finalRoom('rematch-reject', {
+    rematch: {
+      status: 'pending',
+      requestedBy: 'rematch-host',
+      agreedOpenids: ['rematch-host'],
+      declinedOpenids: [],
+      createdAt: 10,
+      deadlineAt: null,
+    },
+  }),
+});
+const rejectedRematch = await roomFunction.requestRematch({
+  roomId: 'rematch-reject',
+  accept: false,
+}, { db: rematchRejectDb, OPENID: 'rematch-guest' });
+if (
+  !rejectedRematch.ok
+  || !rejectedRematch.left
+  || !rejectedRematch.declined
+  || !rejectedRematch.closed
+  || rematchRejectDb.documents.rooms['rematch-reject'].status !== 'closed'
+  || rematchRejectDb.documents.rooms['rematch-reject'].playerOpenids.length !== 0
+) {
+  throw new Error('declining a rematch should exit the player and close the room when too few humans remain');
+}
+const rematchAcceptDb = createRoomDb({
+  'rematch-accept': finalRoom('rematch-accept', {
+    rematch: {
+      status: 'pending',
+      requestedBy: 'rematch-host',
+      agreedOpenids: ['rematch-host'],
+      declinedOpenids: [],
+      createdAt: 10,
+      deadlineAt: null,
+    },
+  }),
+});
+const acceptedRematch = await roomFunction.requestRematch({
+  roomId: 'rematch-accept',
+}, { db: rematchAcceptDb, OPENID: 'rematch-guest' });
+if (
+  !acceptedRematch.ok
+  || !acceptedRematch.rematchStarted
+  || rematchAcceptDb.documents.rooms['rematch-accept'].status !== 'playing'
+  || rematchAcceptDb.documents.rooms['rematch-accept'].state.round !== 1
+  || rematchAcceptDb.documents.rooms['rematch-accept'].rematch !== null
+) {
+  throw new Error('all required rematch acceptances should reset the room counter and start a new round');
+}
 const targetedBarrierEngine = new HuapaiEngine(DEFAULT_RULES);
 targetedBarrierEngine.load({
   phase: 'human-discard',
@@ -1511,6 +1749,10 @@ const animationControllerSource = await readFile(join(root, 'js/game/animation/c
 if (!/playOnlineEvent\(event, onComplete\)/.test(animationControllerSource)) {
   throw new Error('animation controller should expose an explicit online event animation API');
 }
+const mainSource = await readFile(join(root, 'js/main.js'), 'utf8');
+if (!/this\.online\.onLobby = \(lobby\) => \{[\s\S]*?this\.mode = 'lobby';[\s\S]*?this\.menu\.show\(\);[\s\S]*?\};/.test(mainSource)) {
+  throw new Error('returning to the online lobby should switch the main render mode away from the table and show the menu');
+}
 const rendererSource = await readFile(join(root, 'js/game/renderer.js'), 'utf8');
 const layoutSource = await readFile(join(root, 'js/game/layout.js'), 'utf8');
 if (/eventSeq|playOnlineEvent/.test(rendererSource)) {
@@ -1519,8 +1761,8 @@ if (/eventSeq|playOnlineEvent/.test(rendererSource)) {
 if (!/state\.animationWaiting/.test(rendererSource)) {
   throw new Error('renderer should block state compensation while an online authoritative animation is waiting');
 }
-if (!/leaveTable/.test(layoutSource) || !/requestRematch/.test(layoutSource)) {
-  throw new Error('final table settlement should expose exit and rematch action hit regions');
+if (!/leaveTable/.test(layoutSource) || !/requestRematch/.test(layoutSource) || !/declineRematch/.test(layoutSource)) {
+  throw new Error('final table settlement should expose exit, accept, and decline action hit regions');
 }
 if (!/state\.tableFinished[\s\S]*?牌局已结束/.test(rendererSource)) {
   throw new Error('final table settlement should render an explicit table result title');

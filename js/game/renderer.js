@@ -847,9 +847,15 @@ export default class TableRenderer {
     if (state.tableFinished) {
       const maxRounds = state.tableSettings && state.tableSettings.maxRounds;
       const rematch = state.tableRematch || {};
-      const waitingText = rematch.active
-        ? `重开确认 ${rematch.agreedCount || 0}/${rematch.requiredCount || 0}`
-        : '可退出牌桌，房主可发起重开';
+      let waitingText = '可退出牌桌';
+      if (rematch.hostDecision) {
+        const seconds = rematch.deadlineAt ? Math.max(0, Math.ceil((rematch.deadlineAt - Date.now()) / 1000)) : 0;
+        waitingText = rematch.isHost
+          ? `${seconds || 15}秒内选择是否再来一局`
+          : `等待房主选择，可直接退出`;
+      } else if (rematch.active) {
+        waitingText = `重开确认 ${rematch.agreedCount || 0}/${rematch.requiredCount || 0}`;
+      }
       ctx.fillStyle = '#ffd666';
       ctx.font = '16px Arial';
       ctx.fillText(`已完成${maxRounds || state.round || ''}局，${waitingText}`, area.x + 24, area.y + area.height - 24);

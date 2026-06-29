@@ -25,7 +25,7 @@ function rect(x, y, width, height, meta = {}) {
 }
 
 function actionButtonWidth(action, buttonHeight) {
-  if (action && (action.type === 'leaveTable' || action.type === 'requestRematch')) {
+  if (action && (action.type === 'leaveTable' || action.type === 'requestRematch' || action.type === 'declineRematch')) {
     const labelLength = String(action.label || '').length;
     return Math.max(88, labelLength * 18 + 22);
   }
@@ -704,10 +704,13 @@ export default class TableLayout {
         const rematch = state.tableRematch || {};
         const resultButtonY = contentBounds.y + contentBounds.height / 2 + (isLandscape ? 58 : 76);
         const resultActions = [{ type: 'leaveTable', label: '退出' }];
-        if (rematch.isHost && !rematch.active) {
+        if (rematch.hostDecision) {
+          if (rematch.canRequest) resultActions.push({ type: 'requestRematch', label: '再来一局' });
+        } else if (rematch.active) {
+          if (rematch.canAccept) resultActions.push({ type: 'requestRematch', label: '接受' });
+          if (rematch.canDecline) resultActions.push({ type: 'declineRematch', label: '拒绝' });
+        } else if (rematch.isHost && !rematch.active) {
           resultActions.push({ type: 'requestRematch', label: '再来一局' });
-        } else if (rematch.active && !rematch.selfAgreed) {
-          resultActions.push({ type: 'requestRematch', label: '同意重开' });
         }
         const resultGap = 10;
         const resultWidths = resultActions.map((action) => actionButtonWidth(action, 40));
