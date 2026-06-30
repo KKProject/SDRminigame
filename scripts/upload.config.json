@@ -1,0 +1,15 @@
+{
+  "appid": "wx487628e952ff200d",
+  "projectPath": ".",
+  "privateKeyPath": "./private.wx487628e952ff200d.key",
+  "version": "1.0.0",
+  "desc": "CI上传",
+  "ignores": [],
+  "setting": {
+    "es6": true,
+    "es7": true,
+    "minify": true,
+    "codeProtect": false,
+    "autoPrefixWXSS": true
+  }
+}

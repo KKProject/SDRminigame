@@ -214,6 +214,8 @@ function createSocketLayer({ server, config, game, registry, logger = console } 
       logSocket(logger, event === 'error' ? 'warn' : 'info', `[socket] connection ${event}`, connectionLogDetail(connection, detail));
       connections.remove(connection);
       if (!roomId || connections.hasRoomConnection(openid, roomId)) return;
+      // 普通 close 可能只是小程序临时断线，离线托管交给心跳超时处理，避免吞掉响应窗口按钮。
+      if (event !== 'close' || detail.code !== 4000) return;
       const res = await game.setConnection(openid, roomId, false).catch(() => null);
       if (res && res.ok) await broadcastSnapshot(roomId, res);
     };

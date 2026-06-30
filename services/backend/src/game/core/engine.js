@@ -565,13 +565,18 @@ class HuapaiEngine {
 
   /**
    * 响应窗口调度：同一张出现牌的所有候选席位并发响应。
-   * AI/离线席位立即写入选择或过牌，真人在线席位通过私密视图看到按钮。
+   * AI 立即写入选择或过牌；真人候选统一等待，掉线托管交给房间心跳超时推进。
    */
   handleResponseWindow(actions, sourceSeat) {
     const state = this.state;
     const candidates = this.responseCandidates(actions);
     state.pendingActions = candidates;
     state.playerActions = [];
+    logResponseWindowDebug('evaluating', {
+      sourceSeat,
+      candidateCount: candidates.length,
+      candidates: summarizeResponseActions(candidates),
+    });
     if (!candidates.length) {
       this.resolveUnclaimedAppearingCard(sourceSeat);
       return;
@@ -595,19 +600,34 @@ class HuapaiEngine {
       decisions,
       createdAt: Date.now(),
     };
+    logResponseWindowDebug('created', {
+      id: state.responseWindow.id,
+      sourceSeat,
+      sourceType: state.responseWindow.sourceType,
+      cardId: state.responseWindow.cardId,
+      candidateSeats: seats,
+      actionsBySeat: Object.keys(actionsBySeat).reduce((output, seatIndex) => {
+        output[seatIndex] = summarizeResponseActions(actionsBySeat[seatIndex]);
+        return output;
+      }, {}),
+    });
     state.phase = PHASES.HUMAN_RESPONSE;
     state.currentSeat = seats[0];
     this.setFeedback('多家可响应，等待玩家选择');
 
     seats.forEach((seatIndex) => {
       const seat = state.seats[seatIndex];
-      if (seat && seat.isHuman && seat.online !== false) return;
+      if (seat && seat.isHuman) return;
       const responseActions = actionsBySeat[seatIndex] || [];
       const aiAction = seat && seat.isHuman ? null : chooseResponse(responseActions);
       if (aiAction) this.recordResponseDecision(seatIndex, aiAction, { auto: true });
       else this.recordResponsePass(seatIndex, { auto: true });
     });
 
+    logResponseWindowDebug('after-auto-decisions', {
+      id: state.responseWindow && state.responseWindow.id,
+      decisions: state.responseWindow ? summarizeResponseDecisions(state.responseWindow.decisions) : null,
+    });
     this.resolveResponseWindow();
   }
 
@@ -758,6 +778,11 @@ class HuapaiEngine {
     const best = this.bestSelectedResponse(window);
     const blockers = this.unresolvedActionsThatBeat(window, best);
     if (best && !blockers.length) {
+      logResponseWindowDebug('resolved-with-action', {
+        id: window.id,
+        winner: summarizeResponseAction(best),
+        decisions: summarizeResponseDecisions(window.decisions),
+      });
       state.responseWindow = null;
       state.pendingActions = [];
       state.playerActions = [];
@@ -769,6 +794,11 @@ class HuapaiEngine {
 
     const pendingSeats = this.pendingResponseSeats(window);
     if (!pendingSeats.length) {
+      logResponseWindowDebug('resolved-unclaimed', {
+        id: window.id,
+        sourceSeat: window.sourceSeat,
+        decisions: summarizeResponseDecisions(window.decisions),
+      });
       state.responseWindow = null;
       state.pendingActions = [];
       state.playerActions = [];
@@ -780,6 +810,13 @@ class HuapaiEngine {
     state.phase = PHASES.HUMAN_RESPONSE;
     state.playerActions = [];
     this.setFeedback('等待玩家响应这张牌');
+    logResponseWindowDebug('waiting', {
+      id: window.id,
+      pendingSeats,
+      best: best ? summarizeResponseAction(best) : null,
+      blockers: summarizeResponseActions(blockers),
+      decisions: summarizeResponseDecisions(window.decisions),
+    });
     return false;
   }
 
@@ -1223,6 +1260,43 @@ class HuapaiEngine {
   }
 }
 
+function summarizeResponseAction(action) {
+  if (!action) return null;
+  return {
+    type: action.type,
+    label: action.label,
+    seat: action.seat,
+    priority: action.priority,
+    forced: Boolean(action.forced),
+    cardId: action.card && action.card.id ? action.card.id : null,
+  };
+}
+
+function summarizeResponseActions(actions) {
+  return (actions || []).map(summarizeResponseAction);
+}
+
+function summarizeResponseDecisions(decisions) {
+  return Object.keys(decisions || {}).reduce((output, seatIndex) => {
+    const decision = decisions[seatIndex] || {};
+    output[seatIndex] = {
+      status: decision.status,
+      auto: Boolean(decision.auto),
+      action: decision.action ? summarizeResponseAction(decision.action) : null,
+    };
+    return output;
+  }, {});
+}
+
+function logResponseWindowDebug(message, detail = {}) {
+  if (typeof process !== 'undefined' && process.env && process.env.HUAPAI_RESPONSE_WINDOW_DEBUG === '0') return;
+  try {
+    console.info(`[engine:response-window] ${message}`, JSON.stringify(detail));
+  } catch (err) {
+    console.info(`[engine:response-window] ${message}`, detail);
+  }
+}
+
 /**
  * 构建公共状态（可 watch、可广播）。
  * 手牌仅暴露 handCount，melds/discards 完整可见。
@@ -1246,6 +1320,16 @@ function buildPublicState(state) {
       && responseWindow.decisions[seat].status !== 'pending'
     )),
   } : null;
+  if (responseWindow) {
+    logResponseWindowDebug('build-public-state', {
+      id: responseWindow.id,
+      phase: state.phase,
+      currentSeat: state.currentSeat,
+      responseSummary,
+      pendingActions: summarizeResponseActions(state.pendingActions || []),
+      playerActions: summarizeResponseActions(state.playerActions || []),
+    });
+  }
   return {
     phase: state.phase,
     currentSeat: state.currentSeat,
@@ -1261,8 +1345,8 @@ function buildPublicState(state) {
     deckCount: Array.isArray(state.deck) ? state.deck.length : 0,
     recentDiscard: state.recentDiscard || null,
     appearingCard: state.appearingCard || null,
-    pendingActions: responseWindow ? [] : (state.pendingActions || []),
-    playerActions: responseWindow ? [] : (state.playerActions || []),
+    pendingActions: state.pendingActions || [],
+    playerActions: state.playerActions || [],
     responseSummary,
     eventSeq: typeof state.eventSeq === 'number' ? state.eventSeq : 0,
     publicEvent: serializePublicEvent(state.publicEvent),

@@ -134,6 +134,12 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **THEN** 服务端 MUST 将该客户端按掉线或托管策略处理并从必需回执名单移除
 - **AND** 剩余条件满足后服务端 MUST 继续牌局
 
+#### Scenario: 拉取状态时推进过期动画屏障
+- **WHEN** 当前公开事件的动画屏障已经超过回执截止时间
+- **AND** 客户端通过 HTTPS 游戏 API 拉取最新权威快照
+- **THEN** 服务端 MUST 处理该过期动画屏障并解除已超时客户端的阻塞
+- **AND** 若剩余回执条件满足，服务端 MUST 继续执行当前事件保存的下一阶段推进
+
 ### Requirement: 动画推进后的结果落态
 服务端权威状态机 SHALL 在动画屏障解除、掉线回执处理或 AI 自动推进后重新同步房间生命周期状态。若这些推进使引擎进入 `phase=result`，服务端 MUST 在写入房间状态前完成 `finished` 或 `tableResult` 判定。
 
@@ -193,3 +199,9 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **WHEN** 响应窗口已经裁决或版本已经更新后，客户端提交旧窗口的响应意图
 - **THEN** 服务端 MUST 拒绝该意图且不改变权威状态
 - **AND** 服务端 MUST 返回足以让客户端同步最新快照的错误信息
+
+#### Scenario: 响应窗口期间正确构建公共状态
+- **WHEN** 服务端构建存在响应窗口的公共状态
+- **THEN** `buildPublicState()` 函数 MUST 保持 `playerActions` 和 `pendingActions` 的原始内容
+- **AND** 服务端 MUST NOT 在响应窗口激活期间清空这些动作选项
+- **AND** 真人玩家 MUST 能从公共状态获取自己的响应选项

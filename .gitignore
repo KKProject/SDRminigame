@@ -1,3 +1,4 @@
 .codex/
 .tmp-*
 node_modules/
+scripts/private.*.key

@@ -68,6 +68,36 @@ context: |
     - `ssh aliyun 'journalctl -u huapai-backend.service -f'`
   - 注意：后台使用管理员账号密码登录并签发会话 token；不要在 OpenSpec、日志或终端输出里记录后台密码、`ADMIN_SESSION_SECRET`、`ADMIN_TOKEN` 或登录返回的 token。
 
+  微信小游戏上传与发布速查：
+  - 项目类型: 微信小游戏，`project.config.json` 中 `compileType: game`
+  - AppID: `wx487628e952ff200d`
+  - 上传依赖: `miniprogram-ci`，由根目录 `package.json` 管理
+  - 上传脚本:
+    - `scripts/upload.js`
+    - `scripts/upload.config.json`
+  - 上传私钥:
+    - `scripts/private.wx487628e952ff200d.key`
+    - 私钥不得输出到 OpenSpec、日志、终端摘要或提交说明中。
+  - 推荐上传命令:
+    - `/opt/homebrew/Cellar/node@20/20.19.4/bin/node scripts/upload.js`
+  - 不推荐直接使用系统默认 Node 25 执行 `npm run upload`；当前环境下 `miniprogram-ci` 会在 Node 25 报 `r.getItem is not a function`。
+  - 若需要通过 npm 脚本上传，先确保 `node -v` 是 Node 20 LTS，或临时调整 PATH 后再执行 `npm run upload`。
+  - 上传前检查:
+    1. 已完成本地回归：`node scripts/run-online-checks.mjs && node scripts/run-server-core-checks.mjs && node scripts/run-backend-checks.mjs`
+    2. `project.config.json` 的 AppID 与目标小游戏一致。
+    3. 当前机器/IP 已加入微信后台上传白名单。
+    4. `scripts/upload.config.json` 的 `version` 和 `desc` 已按本次发布更新。
+    5. `project.config.json` 的 `packOptions.ignore` 已排除 OpenSpec、scripts、临时目录等不应进入小游戏包的文件。
+  - 上传成功判断:
+    - 终端输出 `上传成功`
+    - 返回 `subPackageInfo`，其中 `__FULL__` 包大小正常。
+  - 上传后仍需在微信后台/开发者工具中确认上传版本，并进行真机/生产房间复测；上传成功不等同于用户已验证修复。
+  - 2026-06-30 上传实测:
+    - 使用 Node `v20.19.4` 执行 `/opt/homebrew/Cellar/node@20/20.19.4/bin/node scripts/upload.js`
+    - 上传版本: `1.0.0`
+    - 上传描述: `CI上传`
+    - 上传结果: 成功，`__FULL__` 包大小约 `3.12 MB`
+
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
 # Example:

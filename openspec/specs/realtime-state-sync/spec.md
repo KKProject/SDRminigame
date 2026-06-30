@@ -4,7 +4,7 @@
 TBD - created by archiving change add-wechat-online-battle. Update Purpose after archive.
 ## Requirements
 ### Requirement: 权威状态实时下发
-系统 SHALL 通过自有 WebSocket 主通道把牌桌公共状态、当前公开操作事件和动画等待状态下发给本局所有已连接客户端。客户端 MUST 订阅本牌桌的 socket 状态流，在状态变化时更新本地权威镜像，播放当前事件并回执动画完成；公共状态和公开事件 MUST 只包含可对全体玩家公开的信息（阶段、当前行动席、各席公开资料与分数、最近弃牌、将牌、待响应摘要、公开动作等）。并发响应窗口的公共状态 MAY 包含等待响应席位、已响应席位和出现牌来源等摘要，但 MUST NOT 包含其他玩家具体可用动作、胡牌候选、手牌推导结果或私密选择。当 WebSocket 不可用或事件缺口无法补齐时，客户端 MUST 保留最后权威快照并等待 socket 重连；HTTPS 游戏 API、云数据库 `roomStates.watch()` 和云函数 `pull` MUST NOT 作为在线牌桌实时同步兜底。
+系统 SHALL 通过自有 WebSocket 主通道把牌桌公共状态、当前公开操作事件和动画等待状态下发给本局所有已连接客户端。客户端 MUST 订阅本牌桌的 socket 状态流，在状态变化时更新本地权威镜像，播放当前事件并回执动画完成；公共状态和公开事件 MUST 只包含可对全体玩家公开的信息（阶段、当前行动席、各席公开资料与分数、最近弃牌、将牌、待响应摘要、公开动作等）。并发响应窗口的公共状态 MAY 包含等待响应席位、已响应席位和出现牌来源等摘要，但 MUST NOT 包含其他玩家具体可用动作、胡牌候选、手牌推导结果或私密选择。当 WebSocket 暂时不可用时，客户端 MAY 通过 HTTPS 游戏 API 拉取最新权威快照作为短期兜底，并 MUST 持续尝试恢复 socket 主通道；当事件缺口无法通过 socket 补齐时，客户端 MUST 以服务端最新权威快照恢复显示，MUST NOT 用本地推断补造缺失事件。
 
 #### Scenario: 状态变化推送
 - **WHEN** 服务端更新了牌桌公共状态
@@ -33,13 +33,20 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 
 #### Scenario: 事件缺口等待重连恢复
 - **WHEN** 客户端发现收到的事件序号与最后已消费事件之间存在缺口
-- **THEN** 客户端 MUST 通过 socket 补发请求或重新订阅恢复最新权威快照
-- **AND** 客户端 MUST NOT 使用 HTTPS API 或云函数快照接口补齐在线牌桌实时状态
+- **THEN** 客户端 MUST 优先通过 socket 补发请求或重新订阅恢复最新权威快照
+- **AND** 若 socket 暂时不可用，客户端 MAY 通过 HTTPS 游戏 API 拉取最新权威快照恢复显示
+- **AND** 客户端 MUST NOT 本地补造缺失公开事件或跳过服务端权威状态
 
 #### Scenario: 首次进入和断线重连
 - **WHEN** 客户端首次进入牌桌或断线后恢复
 - **THEN** 客户端 MUST 建立或恢复 socket 订阅并获取最新权威快照、当前事件和自身是否仍属于必需回执客户端
 - **AND** 当自身仍需回执时客户端 MUST 播放当前事件并提交动画完成回执
+
+#### Scenario: 响应窗口期间保持动作选项可见性
+- **WHEN** 服务端下发存在响应窗口的公共状态
+- **THEN** 公共状态 MUST 保持 `playerActions` 和 `pendingActions` 字段的正确内容
+- **AND** 响应窗口激活期间，真人玩家 MUST 能看到并操作自己的响应选项
+- **AND** 动画等待状态 MUST 不影响响应窗口的 UI 显示
 
 ### Requirement: 私密手牌保密下发
 系统 SHALL 保证每位玩家只能获取自己的私密信息（如手牌和本人响应按钮）。私密手牌与私密响应动作 MUST 仅通过按 OPENID 鉴权的通道下发给本人；公共状态文档 MUST NOT 包含其他玩家的手牌明细、响应按钮、可胡信息或候选动作明细。
@@ -60,7 +67,7 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **AND** 仅 MUST 包含各玩家的公开信息（如已亮出的凑牌、弃牌、分数）
 
 ### Requirement: 操作意图上报
-系统 SHALL 让客户端以「操作意图」形式把玩家动作上报服务端，而不是本地直接执行。客户端 MUST 通过 WebSocket 把出牌、吃、碰、招、踏、胡、过、接庄、不接庄等动作作为意图提交，并在服务端确认后才反映为最终状态；并发响应窗口内多个玩家 MAY 同时提交响应意图，服务端 MUST 对这些意图执行身份校验、版本校验、窗口校验和规则裁决。当 socket 不可用时，客户端 MUST 暂停操作并等待重连。服务端 MUST 对 socket 入口执行身份校验、版本校验和规则裁决。
+系统 SHALL 让客户端以「操作意图」形式把玩家动作上报服务端，而不是本地直接执行。客户端 MUST 优先通过 WebSocket 把出牌、吃、碰、招、踏、胡、过、接庄、不接庄等动作作为意图提交，并在服务端确认后才反映为最终状态；并发响应窗口内多个玩家 MAY 同时提交响应意图，服务端 MUST 对这些意图执行身份校验、版本校验、窗口校验和规则裁决。当 socket 暂时不可用时，客户端 MAY 通过 HTTPS 游戏 API 提交同一类操作意图作为兜底；WebSocket 和 HTTPS 入口 MUST 复用同一套权威状态机、身份校验、版本校验和规则裁决。
 
 #### Scenario: 上报出牌意图
 - **WHEN** 玩家在自己回合选择打出一张牌且 socket 可用
@@ -82,13 +89,14 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **THEN** 客户端 MUST 收起本地响应按钮并显示最新权威状态
 - **AND** 客户端 MUST NOT 继续提交已失效的响应意图
 
-#### Scenario: socket 不可用时禁止提交意图
+#### Scenario: socket 不可用时 HTTPS 兜底提交意图
 - **WHEN** 玩家需要提交操作但 socket 通道不可用
-- **THEN** 客户端 MUST 显示等待重连提示并拒绝提交该操作
-- **AND** 客户端 MUST NOT 使用 HTTPS API 或云函数兜底路径提交操作
+- **THEN** 客户端 MAY 通过 HTTPS 游戏 API 提交该操作意图
+- **AND** 服务端 MUST 使用与 socket 入口一致的身份、版本、窗口和规则裁决
+- **AND** 若 HTTPS 兜底也失败，客户端 MUST 显示等待重连提示并保持服务端权威状态显示不变
 
 ### Requirement: 断线重连恢复
-系统 SHALL 支持玩家断线后通过 WebSocket 重连并恢复当前牌局视图。客户端重连后 MUST 重新建立 WebSocket 连接、完成鉴权、订阅原房间，并从服务端获取当前权威状态与本人手牌；服务端 MUST 在玩家掉线期间保留其牌局状态并向同桌玩家展示该玩家离线。客户端无法恢复 WebSocket 连接时 MUST 停留在等待重连状态，MUST NOT 使用 HTTPS API 或云函数快照恢复路径继续实时同步。若掉线期间服务端已自动推进到新的权威状态，重连玩家 MUST 直接看到最新牌局情况。
+系统 SHALL 支持玩家断线后通过 WebSocket 重连并恢复当前牌局视图。客户端重连后 MUST 重新建立 WebSocket 连接、完成鉴权、订阅原房间，并从服务端获取当前权威状态与本人手牌；服务端 MUST 在玩家掉线期间保留其牌局状态并向同桌玩家展示该玩家离线。客户端无法恢复 WebSocket 连接时 MAY 通过 HTTPS 游戏 API 拉取最新权威快照作为短期兜底，并 MUST 持续尝试恢复 WebSocket 主通道。若掉线期间服务端已自动推进到新的权威状态，重连玩家 MUST 直接看到最新牌局情况。
 
 #### Scenario: 重连恢复牌局
 - **WHEN** 玩家断线后重新进入同一牌局
@@ -102,8 +110,9 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 
 #### Scenario: 重连失败保持等待
 - **WHEN** 客户端无法恢复 WebSocket 连接
-- **THEN** 客户端 MUST 保持等待重连状态
-- **AND** 客户端 MUST NOT 使用 HTTPS API 或云函数快照接口恢复当前牌局视图
+- **THEN** 客户端 MUST 保持重连流程
+- **AND** 客户端 MAY 通过 HTTPS 游戏 API 拉取最新权威快照以恢复响应按钮和当前可操作状态
+- **AND** 客户端 MUST NOT 通过本地推断继续推进牌局
 
 #### Scenario: 重连显示最新状态
 - **WHEN** 玩家断线期间牌局已因自动摸牌、自动出牌或其他无需手动选择的动作继续推进

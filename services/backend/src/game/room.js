@@ -1120,33 +1120,39 @@ async function pull(event, ctx) {
   if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
   const seat = seatOfOpenid(room, OPENID);
   const engine = loadEngine(room.state || null);
+  const now = Date.now();
+  let shouldWriteState = false;
   if (seat >= 0) {
     const player = room.players.find((item) => item.openid === OPENID);
     const restored = player.online === false
       || Boolean(engine.state && engine.state.seats[seat] && !engine.state.seats[seat].isHuman);
     player.online = true;
-    player.lastSeenAt = Date.now();
+    player.lastSeenAt = now;
     if (engine.state && engine.state.seats[seat]) {
       engine.state.seats[seat].isHuman = true;
       engine.state.seats[seat].online = true;
     }
-    if (restored) {
-      await writeRoomState(db, roomId, room, engine, room.version || 0);
-    } else {
-      await db.collection(ROOMS).doc(roomId).update({
-        data: { players: room.players, updatedAt: Date.now() },
-      });
-    }
+    shouldWriteState = restored;
+  }
+  const advanced = advanceExpiredAnimationBarrier(room, engine, now);
+  const version = advanced ? (room.version || 0) + 1 : (room.version || 0);
+  let publicState = engine.state ? buildPublicState(engine.state) : null;
+  if (advanced || shouldWriteState) {
+    publicState = await writeRoomState(db, roomId, room, engine, version);
+  } else if (seat >= 0) {
+    await db.collection(ROOMS).doc(roomId).update({
+      data: { players: room.players, updatedAt: now },
+    });
   }
   return {
     ok: true,
     roomId,
-    version: room.version || 0,
+    version,
     yourSeat: seat,
     status: room.status,
     settings: normalizeRoomSettings(room.settings),
     rematch: buildRematchState(room, OPENID),
-    public: engine.state ? buildPublicState(engine.state) : null,
+    public: publicState,
     private: (engine.state && seat >= 0) ? buildPrivateView(engine.state, seat) : { hand: [] },
     animation: animationState(room, engine, OPENID),
   };
@@ -1232,6 +1238,34 @@ function advanceTimedOutSeat(engine, seat) {
   return false;
 }
 
+function advanceExpiredAnimationBarrier(room, engine, now = Date.now()) {
+  let barrier = syncAnimationBarrier(room, engine, now);
+  if (!barrier) return false;
+  if (barrierComplete(barrier)) {
+    engine.resumePublicEvent();
+    room.animationBarrier = null;
+    advanceUnobservedEvents(room, engine);
+    return true;
+  }
+  if (now < barrier.deadlineAt) return false;
+
+  animationMetrics(room).timeoutCount += 1;
+  const acked = new Set(barrier.ackedOpenids || []);
+  (room.players || []).forEach((player) => {
+    if ((barrier.requiredOpenids || []).indexOf(player.openid) < 0 || acked.has(player.openid)) return;
+    player.online = false;
+    if (engine.state && engine.state.seats[player.seat]) {
+      engine.state.seats[player.seat].online = false;
+    }
+  });
+  syncAnimationBarrier(room, engine, now);
+  if (!barrierComplete(room.animationBarrier)) return false;
+  engine.resumePublicEvent();
+  room.animationBarrier = null;
+  advanceUnobservedEvents(room, engine);
+  return true;
+}
+
 /**
  * 心跳：刷新本人 lastSeenAt；检测他人超时并触发托管。
  * @returns {{ ok, version, advanced }} advanced 表示是否因掉线推进了游戏
@@ -1251,41 +1285,17 @@ async function heartbeat(event, ctx) {
       player.lastSeenAt = now;
       return;
     }
-    if (player.online !== false && now - (player.lastSeenAt || room.createdAt || now) >= PLAYER_TIMEOUT_MS) {
+    if (now - (player.lastSeenAt || room.createdAt || now) < PLAYER_TIMEOUT_MS) return;
+    if (player.online !== false) {
       player.online = false;
       if (engine.state && engine.state.seats[player.seat]) {
         engine.state.seats[player.seat].online = false;
       }
-      if (!barrier) advanced = advanceTimedOutSeat(engine, player.seat) || advanced;
     }
+    if (!barrier) advanced = advanceTimedOutSeat(engine, player.seat) || advanced;
   });
   if (barrier) {
-    barrier = syncAnimationBarrier(room, engine, now);
-    if (barrierComplete(barrier)) {
-      engine.resumePublicEvent();
-      room.animationBarrier = null;
-      advanceUnobservedEvents(room, engine);
-      barrier = null;
-      advanced = true;
-    }
-  }
-  if (barrier && now >= barrier.deadlineAt) {
-    animationMetrics(room).timeoutCount += 1;
-    const acked = new Set(barrier.ackedOpenids || []);
-    (room.players || []).forEach((player) => {
-      if ((barrier.requiredOpenids || []).indexOf(player.openid) < 0 || acked.has(player.openid)) return;
-      player.online = false;
-      if (engine.state && engine.state.seats[player.seat]) {
-        engine.state.seats[player.seat].online = false;
-      }
-    });
-    syncAnimationBarrier(room, engine, now);
-    if (barrierComplete(room.animationBarrier)) {
-      engine.resumePublicEvent();
-      room.animationBarrier = null;
-      advanceUnobservedEvents(room, engine);
-      advanced = true;
-    }
+    advanced = advanceExpiredAnimationBarrier(room, engine, now) || advanced;
   }
   const version = advanced ? (room.version || 0) + 1 : (room.version || 0);
   if (advanced) {

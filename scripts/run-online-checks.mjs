@@ -969,6 +969,29 @@ if (
     responseSummary: onlineDatabus.responseSummary,
   })}`);
 }
+onlineController.lastAckedEventSeq = 8;
+onlineController.lastLocallyCompletedEventSeq = 8;
+if (!onlineController.applyServerSnapshot({
+  ...privateResponseSnapshot,
+  version: 915,
+  animation: {
+    ...privateResponseSnapshot.animation,
+    selfAcked: false,
+  },
+})) {
+  throw new Error('online controller should apply unacked private response-window snapshots');
+}
+if (
+  !onlineDatabus.animationWaiting
+  || onlineDatabus.playerActions.length !== 2
+  || onlineDatabus.pendingActions.length !== 1
+) {
+  throw new Error(`private response actions should remain visible while local animation ack is still pending: ${JSON.stringify({
+    animationWaiting: onlineDatabus.animationWaiting,
+    playerActions: onlineDatabus.playerActions.length,
+    pendingActions: onlineDatabus.pendingActions.length,
+  })}`);
+}
 onlineController.lastAckedEventSeq = 9;
 if (!onlineController.applyServerSnapshot({
   ...privateResponseSnapshot,
@@ -1169,18 +1192,50 @@ onlineController.ackRetryTimer = null;
 fakeSocketFailAck = false;
 
 let realtimeFallbackCalled = false;
-globalThis.wx.request = () => { realtimeFallbackCalled = true; };
+let realtimeFallbackPayload = null;
+globalThis.wx.request = (options) => {
+  realtimeFallbackCalled = true;
+  realtimeFallbackPayload = options.data;
+  options.success({
+    statusCode: 200,
+    data: {
+      ok: true,
+      roomId: 'animation-room',
+      version: onlineController.version + 1,
+      yourSeat: 0,
+      status: 'playing',
+      public: Object.assign({}, directSnapshot.public, {
+        phase: 'human-discard',
+        currentSeat: 0,
+        playerActions: [],
+        pendingActions: [],
+        publicEvent: null,
+      }),
+      private: { seat: 0, hand: [{ id: 'http-fallback-card', key: 'shang' }] },
+      animation: { waiting: false, selfAcked: false, currentEvent: null, latestEventSeq: onlineController.lastServerEventSeq },
+    },
+  });
+};
 fakeSocketReady = false;
 onlineController.animationWaiting = false;
 onlineController.isAnimating = false;
 await onlineController.sendOp({ kind: 'discard', cardId: 'missing-socket-card' });
-if (realtimeFallbackCalled || onlineDatabus.feedback !== '连接已断开，等待重连') {
-  throw new Error('socket disconnect should block realtime operation without cloud fallback');
+if (
+  !realtimeFallbackCalled
+  || !realtimeFallbackPayload
+  || realtimeFallbackPayload.action !== 'op'
+  || realtimeFallbackPayload.kind !== 'discard'
+  || realtimeFallbackPayload.cardId !== 'missing-socket-card'
+  || onlineDatabus.feedback === '连接已断开，等待重连'
+) {
+  throw new Error('socket disconnect should submit realtime operations through HTTPS fallback');
 }
 if (onlineController.reconnectTimer) {
   clearTimeout(onlineController.reconnectTimer);
   onlineController.reconnectTimer = null;
 }
+onlineController.stopReconnectFallbackRefresh();
+realtimeFallbackCalled = false;
 onlineController.lastAckedEventSeq = 6;
 await onlineController.sendAnimationAck(7);
 if (realtimeFallbackCalled || !onlineController.ackRetryTimer) {
@@ -1188,6 +1243,84 @@ if (realtimeFallbackCalled || !onlineController.ackRetryTimer) {
 }
 clearTimeout(onlineController.ackRetryTimer);
 onlineController.ackRetryTimer = null;
+let reconnectPullCalled = false;
+globalThis.wx.request = (options) => {
+  if (options.data && options.data.action === 'pull') {
+    reconnectPullCalled = true;
+    options.success({
+      statusCode: 200,
+      data: {
+        ok: true,
+        roomId: 'animation-room',
+        version: onlineController.version + 1,
+        yourSeat: 0,
+        status: 'playing',
+        public: Object.assign({}, directSnapshot.public, {
+          phase: 'human-response',
+          currentSeat: 0,
+          responseSummary: { active: true, sourceSeat: 1, sourceType: 'discard', cardId: 'jiu-4', waitingSeats: [0], decidedSeats: [] },
+          pendingActions: [{ type: 'peng', seat: 0, card: { id: 'jiu-4', key: 'jiu' }, priority: 3, label: '碰' }],
+          playerActions: [],
+          publicEvent: null,
+        }),
+        private: {
+          seat: 0,
+          hand: [{ id: 'jiu-hand-1', key: 'jiu' }, { id: 'jiu-hand-2', key: 'jiu' }],
+          playerActions: [{ type: 'peng', seat: 0, card: { id: 'jiu-4', key: 'jiu' }, priority: 3, label: '碰' }],
+        },
+        animation: { waiting: false, selfAcked: false, currentEvent: null, latestEventSeq: onlineController.lastServerEventSeq },
+      },
+    });
+    return;
+  }
+  options.success({ statusCode: 200, data: { ok: true } });
+};
+onlineController.active = true;
+onlineController.roomId = 'animation-room';
+onlineController.handleSocketDisconnect({ code: 'SOCKET_ABNORMAL_CLOSE' });
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (
+  !reconnectPullCalled
+  || onlineDatabus.phase !== 'human-response'
+  || !onlineDatabus.playerActions
+  || !onlineDatabus.playerActions.some((action) => action.type === 'peng')
+) {
+  throw new Error('socket reconnect fallback should pull pending response actions over HTTPS');
+}
+onlineController.stopReconnectFallbackRefresh();
+if (onlineController.reconnectTimer) {
+  clearTimeout(onlineController.reconnectTimer);
+  onlineController.reconnectTimer = null;
+}
+onlineController.active = false;
+let rematchFallbackPayload = null;
+globalThis.wx.request = (options) => {
+  rematchFallbackPayload = options.data;
+  options.success({
+    statusCode: 200,
+    data: {
+      ok: true,
+      roomId: 'animation-room',
+      version: onlineController.version,
+      rematch: { status: 'pending', active: true, agreedOpenids: ['unit-openid'], agreedCount: 1, requiredCount: 2 },
+    },
+  });
+};
+onlineController.active = true;
+fakeSocketReady = false;
+onlineDatabus.feedback = '';
+if (!(await onlineController.requestRematch(true)) || !rematchFallbackPayload || rematchFallbackPayload.action !== 'requestRematch' || rematchFallbackPayload.accept !== true) {
+  throw new Error('socket disconnect should request rematch through HTTPS fallback');
+}
+if (onlineDatabus.feedback !== '已同意，等待其他玩家') {
+  throw new Error('HTTPS rematch fallback should update local rematch feedback');
+}
+if (onlineController.reconnectTimer) {
+  clearTimeout(onlineController.reconnectTimer);
+  onlineController.reconnectTimer = null;
+}
+onlineController.stopReconnectFallbackRefresh();
+onlineController.active = false;
 fakeSocketReady = true;
 
 const require = createRequire(import.meta.url);
@@ -1886,6 +2019,39 @@ const duplicateAck = await roomFunction.ackAnimation({
 }, { db: opDb, OPENID: 'online-player' });
 if (!duplicateAck.ok || !duplicateAck.stale) {
   throw new Error('duplicate or stale animation acknowledgements should be idempotent');
+}
+
+const pullTimeoutEngine = new HuapaiEngine(DEFAULT_RULES);
+pullTimeoutEngine.load({
+  phase: 'human-discard',
+  currentSeat: 0,
+  seats: [{ isHuman: true, online: true }, {}, {}, {}],
+  eventSeq: 0,
+  publicEvent: null,
+  pendingContinuation: null,
+});
+pullTimeoutEngine.emitPublicEvent('discard', {
+  seat: 0,
+  card: { id: 'pull-timeout-card', key: 'shang' },
+});
+opDocuments.rooms['pull-timeout-room'] = {
+  _id: 'pull-timeout-room',
+  status: 'playing',
+  version: 1,
+  players: [{ seat: 0, openid: 'pull-timeout-player', online: true, lastSeenAt: 1 }],
+  state: { ...pullTimeoutEngine.state, rules: undefined },
+};
+roomFunction.syncAnimationBarrier(opDocuments.rooms['pull-timeout-room'], pullTimeoutEngine, 1).deadlineAt = Date.now() - 1;
+const pullAdvanced = await roomFunction.pull({
+  roomId: 'pull-timeout-room',
+}, { db: opDb, OPENID: 'pull-timeout-player' });
+if (
+  !pullAdvanced.ok
+  || pullAdvanced.version !== 2
+  || opDocuments.rooms['pull-timeout-room'].animationBarrier
+  || (pullAdvanced.animation && pullAdvanced.animation.waiting)
+) {
+  throw new Error('pull should advance expired animation barriers when HTTPS fallback is the only active path');
 }
 
 const timeoutEngine = new HuapaiEngine(DEFAULT_RULES);

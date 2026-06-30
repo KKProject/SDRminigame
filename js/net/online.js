@@ -5,6 +5,7 @@ import OnlineSocketTransport from './socket';
 const SEAT_COUNT = DEFAULT_RULES.seatCount;
 const ROOM_SESSION_KEY = 'huapai-online-room';
 const RECONNECT_DELAY_MS = 1500;
+const RECONNECT_HTTP_REFRESH_MS = 2000;
 const HEARTBEAT_INTERVAL_MS = 20000;
 const WAITING_REFRESH_INTERVAL_MS = 2000;
 const RESPONSE_ACTION_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'];
@@ -417,6 +418,7 @@ export default class OnlineController {
     this.currentEvent = null;
     this.lastPlayedEventSeq = 0;
     this.lastAckedEventSeq = 0;
+    this.lastLocallyCompletedEventSeq = 0;
     this.isAnimating = false;
     this.animationWaiting = false;
     this.ackRetryTimer = null;
@@ -441,6 +443,8 @@ export default class OnlineController {
     this.socketReconnecting = false;
     this.lastSocketErrorCode = '';
     this.rematchDecisionTimer = null;
+    this.reconnectFallbackTimer = null;
+    this.reconnectFallbackInFlight = false;
   }
 
   setStatus(text) {
@@ -509,6 +513,7 @@ export default class OnlineController {
     this.clearRematchDecisionTimer();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    this.stopReconnectFallbackRefresh();
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
     if (this.ackRetryTimer) clearTimeout(this.ackRetryTimer);
@@ -857,6 +862,31 @@ export default class OnlineController {
     }
   }
 
+  startReconnectFallbackRefresh() {
+    if (this.reconnectFallbackTimer) return;
+    const refreshOnce = () => {
+      if (!this.active || !this.roomId || this.socket.isReady()) {
+        this.stopReconnectFallbackRefresh();
+        return;
+      }
+      if (this.reconnectFallbackInFlight) return;
+      this.reconnectFallbackInFlight = true;
+      this.refresh()
+        .catch(() => false)
+        .finally(() => {
+          this.reconnectFallbackInFlight = false;
+        });
+    };
+    refreshOnce();
+    this.reconnectFallbackTimer = setInterval(refreshOnce, RECONNECT_HTTP_REFRESH_MS);
+  }
+
+  stopReconnectFallbackRefresh() {
+    if (this.reconnectFallbackTimer) clearInterval(this.reconnectFallbackTimer);
+    this.reconnectFallbackTimer = null;
+    this.reconnectFallbackInFlight = false;
+  }
+
   trySocketSubscribe() {
     if (!this.roomId) return false;
     const missingCode = missingSocketAuthCode(this.socketAuth);
@@ -925,6 +955,7 @@ export default class OnlineController {
       const snapshot = await this.socket.subscribe(this.roomId, this.version, this.lastServerEventSeq);
       this.socketReconnecting = false;
       this.lastSocketErrorCode = '';
+      this.stopReconnectFallbackRefresh();
       this.applySocketSnapshot(snapshot);
       this.setStatus('');
       return true;
@@ -959,6 +990,7 @@ export default class OnlineController {
     this.socketReconnecting = true;
     this.lastSocketErrorCode = (err && err.code) || 'SOCKET_CLOSED';
     this.setStatus(socketWaitingMessage(this.lastSocketErrorCode));
+    this.startReconnectFallbackRefresh();
     this.scheduleReconnect();
   }
 
@@ -1018,11 +1050,18 @@ export default class OnlineController {
     const currentEventSeq = animation.currentEvent && typeof animation.currentEvent.eventSeq === 'number'
       ? animation.currentEvent.eventSeq
       : 0;
-    const locallyAcked = currentEventSeq > 0 && currentEventSeq <= this.lastAckedEventSeq;
+    const locallyCompletedEventSeq = Math.max(this.lastAckedEventSeq, this.lastLocallyCompletedEventSeq || 0);
+    const locallyAcked = currentEventSeq > 0 && currentEventSeq <= locallyCompletedEventSeq;
     const selfAcked = Boolean(animation.selfAcked || locallyAcked);
     this.animationWaiting = Boolean((animation.waiting || animation.currentEvent) && !selfAcked);
     local.animationWaiting = this.animationWaiting;
-    if (this.animationWaiting) {
+    const hasLocalResponseActions = local.phase === 'human-response'
+      && local.currentSeat === 0
+      && local.responseSummary
+      && local.responseSummary.active
+      && Array.isArray(local.playerActions)
+      && local.playerActions.length > 0;
+    if (this.animationWaiting && !hasLocalResponseActions) {
       local.pendingActions = [];
       local.playerActions = [];
     }
@@ -1104,6 +1143,9 @@ export default class OnlineController {
   finishAnimation(eventSeq) {
     if (!this.currentEvent || this.currentEvent.eventSeq !== eventSeq) return;
     this.isAnimating = false;
+    this.animationWaiting = false;
+    this.lastLocallyCompletedEventSeq = Math.max(this.lastLocallyCompletedEventSeq || 0, eventSeq);
+    this.databus.animationWaiting = false;
     this.cancelLocalActionPreview();
     this.sendAnimationAck(eventSeq);
   }
@@ -1223,6 +1265,7 @@ export default class OnlineController {
   scheduleReconnect(delay = RECONNECT_DELAY_MS) {
     if (!this.active || this.reconnectTimer) return;
     this.setStatus('正在恢复牌桌…');
+    this.startReconnectFallbackRefresh();
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
       if (await this.reconnectSocketNow()) return;
@@ -1249,10 +1292,13 @@ export default class OnlineController {
         this.scheduleReconnect(0);
       }
     }
-    if (this.active) {
-      const error = new Error('SOCKET_NOT_CONNECTED');
-      error.code = 'SOCKET_NOT_CONNECTED';
-      throw error;
+    if (this.active && this.roomId) {
+      if (!this.socket.isReady()) this.scheduleReconnect(0);
+      return callFunction('game', Object.assign({
+        action,
+        roomId: this.roomId,
+        version: this.version,
+      }, payload));
     }
     return callFunction('game', Object.assign({ action, roomId: this.roomId }, payload));
   }
@@ -1274,8 +1320,18 @@ export default class OnlineController {
     try {
       if (!this.socket.isReady()) {
         this.socketReconnecting = true;
-        this.databus.feedback = '连接已断开，等待重连';
         this.scheduleReconnect(0);
+        const fallbackRes = await callFunction('game', Object.assign({
+          action: 'op',
+          roomId: this.roomId,
+          version: this.version,
+        }, op));
+        if (!fallbackRes || !fallbackRes.ok) {
+          this.databus.feedback = opErrorMessage(fallbackRes);
+          this.cancelLocalActionPreview();
+          return;
+        }
+        if (!this.applyServerSnapshot(fallbackRes)) await this.refresh();
         return;
       }
       const res = await this.socket.request('op', { roomId: this.roomId, version: this.version, payload: op });
@@ -1458,6 +1514,7 @@ export default class OnlineController {
     if (wx.offTouchStart) wx.offTouchStart(this.boundTouch);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    this.stopReconnectFallbackRefresh();
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
     if (this.ackRetryTimer) clearTimeout(this.ackRetryTimer);

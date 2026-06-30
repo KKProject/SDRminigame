@@ -253,8 +253,8 @@ function makeResponseEngine() {
   engine.handleResponseWindow(actions, 0);
   const publicWindow = serverEngine.buildPublicState(engine.state);
   const privateOne = serverEngine.buildPrivateView(engine.state, 1);
-  if ((publicWindow.pendingActions || []).length || (publicWindow.playerActions || []).length || !publicWindow.responseSummary) {
-    throw new Error('concurrent response public state should expose only a response summary');
+  if ((publicWindow.pendingActions || []).length !== 2 || (publicWindow.playerActions || []).length || !publicWindow.responseSummary) {
+    throw new Error('concurrent response public state should keep pending actions and expose a response summary');
   }
   if (!privateOne.playerActions || privateOne.playerActions.length !== 2) {
     throw new Error('private view should expose only the matching seat response actions plus pass');
@@ -328,6 +328,66 @@ function makeResponseEngine() {
   engine.handleResponseWindow(actions, 0);
   if (engine.state.responseWindow || engine.state.seats[1].melds[0].type !== 'peng') {
     throw new Error('AI response window seat should choose and resolve automatically');
+  }
+}
+
+{
+  const { engine, incoming } = makeResponseEngine();
+  engine.state.seats[1].online = false;
+  engine.state.seats[1].hand = takeServerCards(['shang', 'shang'], [incoming.id]);
+  const actions = [
+    { type: 'peng', seat: 1, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['shang', 'shang'], priority: serverRules.ACTION_PRIORITY.peng, label: '碰', responseIndex: 0 },
+  ];
+  engine.handleResponseWindow(actions, 0);
+  const decision = engine.state.responseWindow && engine.state.responseWindow.decisions[1];
+  const privateOne = serverEngine.buildPrivateView(engine.state, 1);
+  if (
+    !engine.state.responseWindow
+    || !decision
+    || decision.status !== 'pending'
+    || !privateOne.playerActions
+    || !privateOne.playerActions.some((action) => action.type === 'peng')
+  ) {
+    throw new Error('offline-marked human response seat should keep pending response actions');
+  }
+}
+
+{
+  const timeoutDb = new MemoryDocumentDatabase();
+  const { engine, incoming } = makeResponseEngine();
+  engine.state.seats[1].online = false;
+  engine.state.seats[1].hand = takeServerCards(['shang', 'shang'], [incoming.id]);
+  engine.handleResponseWindow([
+    { type: 'peng', seat: 1, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['shang', 'shang'], priority: serverRules.ACTION_PRIORITY.peng, label: '碰', responseIndex: 0 },
+  ], 0);
+  const oldSeenAt = Date.now() - 70000;
+  await timeoutDb.collection('rooms').doc('pending-timeout-room').set({
+    data: room.documentData({
+      _id: 'pending-timeout-room',
+      status: 'playing',
+      seatCount: 4,
+      players: [
+        { seat: 0, openid: 'test-0', nickName: '玩家0', avatarUrl: '', isHuman: true, online: true, lastSeenAt: Date.now() },
+        { seat: 1, openid: 'test-1', nickName: '玩家1', avatarUrl: '', isHuman: true, online: false, lastSeenAt: oldSeenAt },
+      ],
+      playerOpenids: ['test-0', 'test-1'],
+      settings: { maxRounds: 2 },
+      hostOpenid: 'test-0',
+      version: 3,
+      state: engine.state,
+      createdAt: oldSeenAt,
+      updatedAt: oldSeenAt,
+    }),
+  });
+  const heartbeatResult = await room.heartbeat({ roomId: 'pending-timeout-room' }, { db: timeoutDb, OPENID: 'test-0' });
+  const advancedRoom = await timeoutDb.collection('rooms').doc('pending-timeout-room').get();
+  if (
+    !heartbeatResult.ok
+    || !heartbeatResult.advanced
+    || advancedRoom.data.version !== 4
+    || (advancedRoom.data.state.responseWindow && advancedRoom.data.state.responseWindow.decisions[1].status === 'pending')
+  ) {
+    throw new Error('already offline pending response seat should still advance after heartbeat timeout');
   }
 }
 

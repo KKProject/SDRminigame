@@ -235,6 +235,7 @@ function wait(ms) {
 
 let rejectPullForB = false;
 const socketMessages = { a: [], b: [] };
+const socketConnectionEvents = [];
 const socketGame = {
   async pull(openid, roomId) {
     if (openid === 'openid-b' && rejectPullForB) return { ok: false, error: 'PULL_FAILED' };
@@ -249,7 +250,8 @@ const socketGame = {
       animation: { waiting: false, latestEventSeq: 0 },
     };
   },
-  async setConnection(openid, roomId) {
+  async setConnection(openid, roomId, online) {
+    socketConnectionEvents.push({ openid, roomId, online });
     return { ok: true, roomId, version: 1, room: { roomId, players: [] } };
   },
   async op(openid, request) {
@@ -364,6 +366,7 @@ const closeWs = new WebSocket(`ws://127.0.0.1:${socketLogPort}/ws?token=${encode
 await waitForOpen(closeWs);
 closeWs.send(JSON.stringify({ type: 'subscribe', requestId: 'log-sub', roomId: 'room-log' }));
 await waitForMessage(closeWs, (message) => message && message.requestId === 'log-sub');
+socketConnectionEvents.length = 0;
 closeWs.close(4001, 'unit close');
 await waitForCloseOrError(closeWs);
 await wait(40);
@@ -376,11 +379,16 @@ assert(
   && closeLog.detail.reason === 'unit close',
   'socket close logs should include connection context and close reason'
 );
+assert(
+  !socketConnectionEvents.some((event) => event.roomId === 'room-log' && event.openid === 'openid-a' && event.online === false),
+  'ordinary socket close should not immediately mark a player offline'
+);
 
 const timeoutWs = new WebSocket(`ws://127.0.0.1:${socketLogPort}/ws?token=${encodeURIComponent(issueSocketToken('openid-b', socketLogConfig).token)}`);
 await waitForOpen(timeoutWs);
 timeoutWs.send(JSON.stringify({ type: 'subscribe', requestId: 'timeout-sub', roomId: 'room-timeout' }));
 await waitForMessage(timeoutWs, (message) => message && message.requestId === 'timeout-sub');
+socketConnectionEvents.length = 0;
 Array.from(socketLogApp.socket.registry.byId.values()).forEach((connection) => {
   if (connection.openid === 'openid-b') connection.lastSeenAt = Date.now() - 1500;
 });
@@ -393,6 +401,10 @@ assert(
   && timeoutLog.detail.openid === 'openid-b'
   && timeoutLog.detail.timeoutMs === 1000,
   'socket heartbeat timeout should be logged with connection context'
+);
+assert(
+  socketConnectionEvents.some((event) => event.roomId === 'room-timeout' && event.openid === 'openid-b' && event.online === false),
+  'socket heartbeat timeout should mark the timed-out player offline'
 );
 timeoutWs.close();
 await waitForCloseOrError(timeoutWs);
