@@ -250,7 +250,7 @@ async function createBackendServer(options = {}) {
     sendJson(res, 404, { ok: false, error: 'NOT_FOUND' });
   });
 
-  const socket = createSocketLayer({ server, config, game });
+  const socket = createSocketLayer({ server, config, game, logger: options.logger });
   return {
     server,
     config,

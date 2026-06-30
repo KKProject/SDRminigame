@@ -198,6 +198,37 @@ function waitForOpen(ws) {
   });
 }
 
+function waitForCloseOrError(ws) {
+  return new Promise((resolve) => {
+    const done = () => resolve();
+    ws.once('close', done);
+    ws.once('error', done);
+    setTimeout(done, 120);
+  });
+}
+
+function waitForMessage(ws, predicate = () => true) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      ws.off('message', onMessage);
+      resolve(null);
+    }, 120);
+    function onMessage(raw) {
+      let parsed = null;
+      try {
+        parsed = JSON.parse(String(raw));
+      } catch (err) {
+        parsed = null;
+      }
+      if (!predicate(parsed)) return;
+      clearTimeout(timer);
+      ws.off('message', onMessage);
+      resolve(parsed);
+    }
+    ws.on('message', onMessage);
+  });
+}
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -232,8 +263,21 @@ const socketGame = {
       animation: { waiting: false, latestEventSeq: 2 },
     };
   },
+  async ackAnimation(openid, request) {
+    return {
+      ok: true,
+      roomId: request.roomId,
+      version: 3,
+      yourSeat: openid === 'openid-a' ? 0 : 1,
+      public: { seats: [], phase: 'human-response', currentSeat: 0 },
+      private: { seat: openid === 'openid-a' ? 0 : 1, playerActions: [{ type: 'pass', seat: openid === 'openid-a' ? 0 : 1 }] },
+      animation: { waiting: true, selfAcked: true, currentEvent: { eventSeq: request.eventSeq, type: 'discard' }, latestEventSeq: request.eventSeq },
+      advanced: false,
+    };
+  },
 };
-const socketApp = await createBackendServer({ config, db: new MemoryDocumentDatabase(), game: socketGame });
+const quietSocketLogger = { info() {}, warn() {} };
+const socketApp = await createBackendServer({ config, db: new MemoryDocumentDatabase(), game: socketGame, logger: quietSocketLogger });
 await socketApp.listen(0);
 const socketPort = socketApp.server.address().port;
 const wsA = new WebSocket(`ws://127.0.0.1:${socketPort}/ws?token=${encodeURIComponent(issueSocketToken('openid-a', config).token)}`);
@@ -257,8 +301,108 @@ const leakedToB = socketMessages.b.some((message) => (
   && message.payload.private.hand.some((card) => card.id === 'actor-private-card')
 ));
 assert(!leakedToB, 'socket broadcast should never fall back to another player private snapshot');
+socketMessages.a.length = 0;
+socketMessages.b.length = 0;
+wsA.send(JSON.stringify({ type: 'ackAnimation', requestId: 'ack-a', roomId: 'room-1', eventSeq: 7 }));
+await wait(80);
+const ackResponseToA = socketMessages.a.some((message) => message.type === 'ackAnimation:result' && message.requestId === 'ack-a');
+const ackBroadcastToB = socketMessages.b.some((message) => message.type === 'snapshot');
+assert(ackResponseToA, 'ackAnimation should respond to the acknowledging client');
+assert(!ackBroadcastToB, 'ackAnimation without public advancement should not broadcast stale selfAcked snapshots to peers');
 wsA.close();
 wsB.close();
 await socketApp.close();
+rejectPullForB = false;
+
+const socketLogs = [];
+const socketLogger = {
+  info(message, detail) { socketLogs.push({ level: 'info', message, detail }); },
+  warn(message, detail) { socketLogs.push({ level: 'warn', message, detail }); },
+};
+const socketLogConfig = readConfig({
+  PORT: '0',
+  PUBLIC_API_BASE_URL: 'https://api.example.com',
+  PUBLIC_SOCKET_URL: 'wss://api.example.com/ws',
+  APP_TOKEN_SECRET: 'app-secret',
+  SOCKET_TOKEN_SECRET: 'socket-secret',
+  BACKEND_DEV_OPENID: 'openid-a',
+  SOCKET_HEARTBEAT_MS: '10',
+  SOCKET_CONNECTION_TIMEOUT_MS: '1000',
+});
+const socketLogApp = await createBackendServer({
+  config: socketLogConfig,
+  db: new MemoryDocumentDatabase(),
+  game: socketGame,
+  logger: socketLogger,
+});
+await socketLogApp.listen(0);
+const socketLogPort = socketLogApp.server.address().port;
+const invalidToken = 'invalid-token-secret';
+const invalidWs = new WebSocket(`ws://127.0.0.1:${socketLogPort}/ws?token=${encodeURIComponent(invalidToken)}`);
+invalidWs.on('error', () => {});
+await waitForCloseOrError(invalidWs);
+const authLog = socketLogs.find((log) => log.message === '[socket] auth failed');
+assert(
+  authLog
+  && authLog.level === 'warn'
+  && authLog.detail
+  && authLog.detail.reason,
+  'socket auth failures should emit a diagnosable warning'
+);
+assert(!JSON.stringify(socketLogs).includes(invalidToken), 'socket auth failure logs must not include token values');
+
+const pingWs = new WebSocket(`ws://127.0.0.1:${socketLogPort}/ws?token=${encodeURIComponent(issueSocketToken('openid-a', socketLogConfig).token)}`);
+await waitForOpen(pingWs);
+const logCountBeforePing = socketLogs.length;
+pingWs.send(JSON.stringify({ type: 'ping', requestId: 'ping-log-check' }));
+await wait(8);
+assert(socketLogs.length === logCountBeforePing, 'successful ping should not create socket lifecycle logs');
+pingWs.close();
+await waitForCloseOrError(pingWs);
+
+const closeWs = new WebSocket(`ws://127.0.0.1:${socketLogPort}/ws?token=${encodeURIComponent(issueSocketToken('openid-a', socketLogConfig).token)}`);
+await waitForOpen(closeWs);
+closeWs.send(JSON.stringify({ type: 'subscribe', requestId: 'log-sub', roomId: 'room-log' }));
+await waitForMessage(closeWs, (message) => message && message.requestId === 'log-sub');
+closeWs.close(4001, 'unit close');
+await waitForCloseOrError(closeWs);
+await wait(40);
+const closeLog = socketLogs.find((log) => log.message === '[socket] connection close' && log.detail && log.detail.roomId === 'room-log');
+assert(
+  closeLog
+  && closeLog.detail.connectionId
+  && closeLog.detail.openid === 'openid-a'
+  && closeLog.detail.code === 4001
+  && closeLog.detail.reason === 'unit close',
+  'socket close logs should include connection context and close reason'
+);
+
+const timeoutWs = new WebSocket(`ws://127.0.0.1:${socketLogPort}/ws?token=${encodeURIComponent(issueSocketToken('openid-b', socketLogConfig).token)}`);
+await waitForOpen(timeoutWs);
+timeoutWs.send(JSON.stringify({ type: 'subscribe', requestId: 'timeout-sub', roomId: 'room-timeout' }));
+await waitForMessage(timeoutWs, (message) => message && message.requestId === 'timeout-sub');
+Array.from(socketLogApp.socket.registry.byId.values()).forEach((connection) => {
+  if (connection.openid === 'openid-b') connection.lastSeenAt = Date.now() - 1500;
+});
+await wait(150);
+const timeoutLog = socketLogs.find((log) => log.message === '[socket] heartbeat timeout' && log.detail && log.detail.roomId === 'room-timeout');
+assert(
+  timeoutLog
+  && timeoutLog.level === 'warn'
+  && timeoutLog.detail.connectionId
+  && timeoutLog.detail.openid === 'openid-b'
+  && timeoutLog.detail.timeoutMs === 1000,
+  'socket heartbeat timeout should be logged with connection context'
+);
+timeoutWs.close();
+await waitForCloseOrError(timeoutWs);
+await socketLogApp.close();
+const serializedSocketLogs = JSON.stringify(socketLogs);
+assert(
+  !serializedSocketLogs.includes('Authorization')
+  && !serializedSocketLogs.includes('token=')
+  && !serializedSocketLogs.includes('invalid-token-secret'),
+  'socket diagnostic logs must stay sanitized'
+);
 
 console.log('backend checks passed');

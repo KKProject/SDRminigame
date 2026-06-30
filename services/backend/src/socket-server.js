@@ -63,7 +63,27 @@ function snapshotPayload(res) {
   };
 }
 
-function createSocketLayer({ server, config, game, registry } = {}) {
+function reasonText(reason) {
+  if (!reason) return '';
+  if (Buffer.isBuffer(reason)) return reason.toString('utf8');
+  return String(reason);
+}
+
+function logSocket(logger, level, message, detail = {}) {
+  const target = logger && typeof logger[level] === 'function' ? logger[level] : null;
+  if (!target) return;
+  target.call(logger, message, detail);
+}
+
+function connectionLogDetail(connection, extra = {}) {
+  return Object.assign({
+    connectionId: connection && connection.id,
+    openid: connection && connection.openid,
+    roomId: connection && connection.roomId,
+  }, extra);
+}
+
+function createSocketLayer({ server, config, game, registry, logger = console } = {}) {
   const wss = new WebSocketServer({ noServer: true });
   const connections = registry || new ConnectionRegistry();
 
@@ -75,12 +95,21 @@ function createSocketLayer({ server, config, game, registry } = {}) {
       return;
     }
     if (!originAllowed(req, config.allowedOrigins)) {
+      logSocket(logger, 'warn', '[socket] upgrade rejected', {
+        path: tokenInfo.pathname,
+        reason: 'ORIGIN_FORBIDDEN',
+      });
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();
       return;
     }
     const verified = verifySocketToken(tokenInfo.token, config);
     if (!verified.ok) {
+      logSocket(logger, 'warn', '[socket] auth failed', {
+        path: tokenInfo.pathname,
+        reason: verified.error || 'SOCKET_UNAUTHORIZED',
+        tokenSource: tokenInfo.source || '',
+      });
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
@@ -148,7 +177,8 @@ function createSocketLayer({ server, config, game, registry } = {}) {
     const res = await handler();
     const responseType = `${request.type}:result`;
     const payload = snapshotPayload(res);
-    if (res && res.ok && request.roomId && (res.public || res.animation || res.room)) {
+    const shouldBroadcast = request.type !== 'ackAnimation' || Boolean(res && res.advanced);
+    if (shouldBroadcast && res && res.ok && request.roomId && (res.public || res.animation || res.room)) {
       await broadcastSnapshot(request.roomId, res);
     }
     if (!res || !res.ok) return failure(responseType, request, (res && res.error) || 'REQUEST_FAILED', { version: res && res.version });
@@ -178,22 +208,31 @@ function createSocketLayer({ server, config, game, registry } = {}) {
         send(connection, failure(`${parsed.value.type || 'message'}:result`, parsed.value, errorCode(err, 'HANDLER_ERROR')));
       }
     });
-    const closeConnection = async () => {
+    const closeConnection = async (event = 'close', detail = {}) => {
       const roomId = connection.roomId;
       const openid = connection.openid;
+      logSocket(logger, event === 'error' ? 'warn' : 'info', `[socket] connection ${event}`, connectionLogDetail(connection, detail));
       connections.remove(connection);
       if (!roomId || connections.hasRoomConnection(openid, roomId)) return;
       const res = await game.setConnection(openid, roomId, false).catch(() => null);
       if (res && res.ok) await broadcastSnapshot(roomId, res);
     };
-    ws.on('close', () => { closeConnection().catch(() => {}); });
-    ws.on('error', () => { closeConnection().catch(() => {}); });
+    ws.on('close', (code, reason) => {
+      closeConnection('close', { code, reason: reasonText(reason) }).catch(() => {});
+    });
+    ws.on('error', (err) => {
+      closeConnection('error', { code: errorCode(err, 'SOCKET_ERROR'), reason: err && err.message }).catch(() => {});
+    });
   });
 
   const heartbeat = setInterval(() => {
     const now = Date.now();
     Array.from(connections.byId.values()).forEach((connection) => {
       if (now - connection.lastSeenAt <= config.connectionTimeoutMs) return;
+      logSocket(logger, 'warn', '[socket] heartbeat timeout', connectionLogDetail(connection, {
+        idleMs: now - connection.lastSeenAt,
+        timeoutMs: config.connectionTimeoutMs,
+      }));
       try { connection.ws.close(4000, 'heartbeat timeout'); } catch (err) { /* ignore */ }
     });
   }, config.heartbeatMs);
@@ -204,6 +243,8 @@ function createSocketLayer({ server, config, game, registry } = {}) {
 
 module.exports = {
   createSocketLayer,
+  logSocket,
   originAllowed,
+  reasonText,
   tokenInfoFromRequest,
 };

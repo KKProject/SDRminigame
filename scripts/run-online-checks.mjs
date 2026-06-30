@@ -478,6 +478,104 @@ if (
 reconnectLobby.destroy();
 activeRoomResult = { ok: true, hasRoom: false };
 
+const expiredAuthController = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+expiredAuthController.active = true;
+expiredAuthController.roomId = 'expired-auth-room';
+expiredAuthController.mySeat = 0;
+expiredAuthController.lobbyProfile = { nickName: '刷新玩家', avatarUrl: 'avatar.png' };
+expiredAuthController.socketAuth = { url: 'ws://unit-test', token: 'expired-token', expiresAt: Date.now() - 1000 };
+let expiredConnectAuth = null;
+let expiredSubscribe = null;
+expiredAuthController.socket = {
+  isReady() { return false; },
+  connect(auth) {
+    expiredConnectAuth = auth;
+    return Promise.resolve(true);
+  },
+  subscribe(roomId, version, eventSeq) {
+    expiredSubscribe = { roomId, version, eventSeq };
+    return Promise.resolve({
+      ok: true,
+      roomId,
+      version: 11,
+      yourSeat: 0,
+      status: 'playing',
+      public: lobbyPublic,
+      private: lobbyPrivate,
+      animation: { waiting: false, currentEvent: null, selfAcked: false },
+    });
+  },
+  request() { return Promise.resolve({ ok: true }); },
+  heartbeat() { return Promise.resolve({ ok: true }); },
+  close() {},
+};
+lobbyCalls = [];
+if (!(await expiredAuthController.reconnectSocketNow())) {
+  throw new Error('expired socket auth should refresh and reconnect successfully');
+}
+if (
+  !lobbyCalls.find((call) => call.url === 'https://api.unit.test/api/auth/login')
+  || lobbyCalls.find((call) => call.data && call.data.action === 'pull')
+  || !expiredConnectAuth
+  || expiredConnectAuth.token !== 'socket-token'
+  || expiredConnectAuth.expiresAt <= Date.now()
+  || !expiredSubscribe
+  || expiredSubscribe.roomId !== 'expired-auth-room'
+) {
+  throw new Error('expired socket auth reconnect should refresh token through login and subscribe without HTTP game fallback');
+}
+expiredAuthController.destroy();
+
+const rejectedAuthController = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+rejectedAuthController.active = true;
+rejectedAuthController.roomId = 'rejected-auth-room';
+rejectedAuthController.mySeat = 0;
+rejectedAuthController.lobbyProfile = { nickName: '重试玩家', avatarUrl: 'avatar.png' };
+rejectedAuthController.socketAuth = { url: 'ws://unit-test', token: 'stale-token', expiresAt: Date.now() + 10 * 60000 };
+let rejectedConnectCount = 0;
+let rejectedSubscribe = null;
+rejectedAuthController.socket = {
+  isReady() { return false; },
+  connect() {
+    rejectedConnectCount += 1;
+    if (rejectedConnectCount === 1) {
+      const error = new Error('TOKEN_EXPIRED');
+      error.code = 'TOKEN_EXPIRED';
+      return Promise.reject(error);
+    }
+    return Promise.resolve(true);
+  },
+  subscribe(roomId, version, eventSeq) {
+    rejectedSubscribe = { roomId, version, eventSeq };
+    return Promise.resolve({
+      ok: true,
+      roomId,
+      version: 12,
+      yourSeat: 0,
+      status: 'playing',
+      public: lobbyPublic,
+      private: lobbyPrivate,
+      animation: { waiting: false, currentEvent: null, selfAcked: false },
+    });
+  },
+  request() { return Promise.resolve({ ok: true }); },
+  heartbeat() { return Promise.resolve({ ok: true }); },
+  close() {},
+};
+lobbyCalls = [];
+if (!(await rejectedAuthController.reconnectSocketNow())) {
+  throw new Error('socket auth rejection should refresh auth and retry once');
+}
+if (
+  rejectedConnectCount !== 2
+  || !lobbyCalls.find((call) => call.url === 'https://api.unit.test/api/auth/login')
+  || !rejectedSubscribe
+  || rejectedSubscribe.roomId !== 'rejected-auth-room'
+) {
+  throw new Error('auth rejection reconnect should retry with refreshed socket auth');
+}
+rejectedAuthController.destroy();
+
 let animationPlayCount = 0;
 let animationAckCount = 0;
 let completeAnimation = null;
@@ -870,6 +968,23 @@ if (
     pendingActions: onlineDatabus.pendingActions.length,
     responseSummary: onlineDatabus.responseSummary,
   })}`);
+}
+onlineController.lastAckedEventSeq = 9;
+if (!onlineController.applyServerSnapshot({
+  ...privateResponseSnapshot,
+  version: 92,
+  animation: {
+    ...privateResponseSnapshot.animation,
+    selfAcked: false,
+  },
+})) {
+  throw new Error('online controller should apply stale unacked response-window snapshots');
+}
+if (
+  onlineDatabus.animationWaiting
+  || onlineDatabus.playerActions.length !== 2
+) {
+  throw new Error('locally acked response-window snapshots should keep response actions visible even if a stale server snapshot says selfAcked=false');
 }
 const looseWaitingCard = { id: 'loose-waiting-card', key: 'ren' };
 const looseWaitingSnapshot = {

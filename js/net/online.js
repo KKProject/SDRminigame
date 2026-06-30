@@ -8,6 +8,18 @@ const RECONNECT_DELAY_MS = 1500;
 const HEARTBEAT_INTERVAL_MS = 20000;
 const WAITING_REFRESH_INTERVAL_MS = 2000;
 const RESPONSE_ACTION_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'];
+const SOCKET_AUTH_REFRESH_SKEW_MS = 60 * 1000;
+const SOCKET_AUTH_ERROR_CODES = [
+  'TOKEN_EXPIRED',
+  'TOKEN_SIGNATURE_INVALID',
+  'TOKEN_TYPE_MISMATCH',
+  'TOKEN_MALFORMED',
+  'TOKEN_PAYLOAD_INVALID',
+  'SOCKET_UNAUTHORIZED',
+  'SOCKET_TOKEN_EXPIRED',
+  'SOCKET_TOKEN_INVALID',
+  'SOCKET_CONNECT_UNAUTHORIZED',
+];
 export const LOBBY_STATES = {
   CHECKING_ROOM: 'checking-room',
   RECONNECTING: 'reconnecting',
@@ -250,6 +262,17 @@ function missingSocketAuthCode(auth = {}) {
   return '';
 }
 
+function socketAuthNeedsRefresh(auth = {}, now = Date.now()) {
+  if (!auth || !auth.token) return true;
+  if (typeof auth.expiresAt !== 'number') return false;
+  return auth.expiresAt - now <= SOCKET_AUTH_REFRESH_SKEW_MS;
+}
+
+function isSocketAuthError(err = {}) {
+  const code = String((err && (err.code || err.error || err.message)) || '');
+  return SOCKET_AUTH_ERROR_CODES.indexOf(code) >= 0 || code.indexOf('TOKEN_') === 0 || code.indexOf('UNAUTHORIZED') >= 0;
+}
+
 function socketWaitingMessage(code) {
   if (code === 'SOCKET_ENDPOINT_MISSING' || code === 'SOCKET_URL_MISSING') return 'WebSocket 未配置，等待重连…';
   if (code === 'SOCKET_SERVICE_MISSING') return 'WebSocket 未配置，等待重连…';
@@ -402,6 +425,7 @@ export default class OnlineController {
     this.pendingLocalAction = null;
     this.lobbyState = null;
     this.lobbyProfile = null;
+    this.loginProfile = {};
     this.lobbyError = '';
     this.onLobby = null;
     this.onWaitingRoom = null;
@@ -502,6 +526,7 @@ export default class OnlineController {
   async loginForLobby(profile = {}) {
     if (!ensureCloudInit()) throw new Error('BACKEND_UNSUPPORTED');
     this.setStatus('登录中…');
+    this.loginProfile = Object.assign({}, profile);
     const loginRes = await login(profile);
     if (!loginRes || !loginRes.ok) {
       const error = new Error((loginRes && loginRes.error) || 'LOGIN_FAILED');
@@ -518,6 +543,24 @@ export default class OnlineController {
       socket: socketAuthSummary(this.socketAuth),
     });
     return this.lobbyProfile;
+  }
+
+  async refreshSocketAuth(reason = 'reconnect') {
+    const profile = this.lobbyProfile || this.loginProfile || {};
+    console.info('[online] refreshing socket auth', {
+      reason,
+      roomId: this.roomId,
+      previous: socketAuthSummary(this.socketAuth),
+    });
+    const loginRes = await login(profile);
+    if (!loginRes || !loginRes.ok || !loginRes.socket || !loginRes.socket.token) {
+      const error = new Error((loginRes && loginRes.error) || 'SOCKET_TOKEN_UNAVAILABLE');
+      error.code = (loginRes && loginRes.error) || 'SOCKET_TOKEN_UNAVAILABLE';
+      throw error;
+    }
+    this.lobbyProfile = lobbyProfile(loginRes, profile);
+    this.socketAuth = loginRes.socket;
+    return this.socketAuth;
   }
 
   async enterExistingRoom(roomInfo = {}) {
@@ -849,6 +892,22 @@ export default class OnlineController {
 
   async reconnectSocketNow() {
     if (!this.roomId) return false;
+    if (socketAuthNeedsRefresh(this.socketAuth)) {
+      try {
+        await this.refreshSocketAuth(this.socketAuth && this.socketAuth.token ? 'socket-auth-expiring' : 'socket-auth-missing');
+      } catch (err) {
+        const code = (err && err.code) || 'SOCKET_TOKEN_REFRESH_FAILED';
+        this.socketReconnecting = true;
+        this.lastSocketErrorCode = code;
+        console.warn('[online] socket auth refresh failed', {
+          code,
+          roomId: this.roomId,
+          message: err && (err.errMsg || err.message),
+        });
+        this.setStatus(socketWaitingMessage(code));
+        return false;
+      }
+    }
     const missingCode = missingSocketAuthCode(this.socketAuth);
     if (missingCode) {
       this.socketReconnecting = true;
@@ -860,7 +919,7 @@ export default class OnlineController {
       this.setStatus(socketWaitingMessage(missingCode));
       return false;
     }
-    try {
+    const connectWithCurrentAuth = async () => {
       this.closeWatcher();
       await this.socket.connect(this.socketAuth);
       const snapshot = await this.socket.subscribe(this.roomId, this.version, this.lastServerEventSeq);
@@ -869,7 +928,18 @@ export default class OnlineController {
       this.applySocketSnapshot(snapshot);
       this.setStatus('');
       return true;
+    };
+    try {
+      return await connectWithCurrentAuth();
     } catch (err) {
+      if (isSocketAuthError(err)) {
+        try {
+          await this.refreshSocketAuth((err && err.code) || 'socket-auth-rejected');
+          return await connectWithCurrentAuth();
+        } catch (refreshErr) {
+          err = refreshErr;
+        }
+      }
       this.socketReconnecting = true;
       this.lastSocketErrorCode = (err && err.code) || 'SOCKET_CONNECT_FAILED';
       console.warn('[online] socket reconnect failed', {
@@ -945,7 +1015,12 @@ export default class OnlineController {
       typeof animation.latestEventSeq === 'number' ? animation.latestEventSeq : 0,
       animation.currentEvent && typeof animation.currentEvent.eventSeq === 'number' ? animation.currentEvent.eventSeq : 0
     );
-    this.animationWaiting = Boolean((animation.waiting || animation.currentEvent) && !animation.selfAcked);
+    const currentEventSeq = animation.currentEvent && typeof animation.currentEvent.eventSeq === 'number'
+      ? animation.currentEvent.eventSeq
+      : 0;
+    const locallyAcked = currentEventSeq > 0 && currentEventSeq <= this.lastAckedEventSeq;
+    const selfAcked = Boolean(animation.selfAcked || locallyAcked);
+    this.animationWaiting = Boolean((animation.waiting || animation.currentEvent) && !selfAcked);
     local.animationWaiting = this.animationWaiting;
     if (this.animationWaiting) {
       local.pendingActions = [];
