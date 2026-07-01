@@ -88,11 +88,31 @@
         "type": "folder"
       },
       {
+        "value": "services",
+        "type": "folder"
+      },
+      {
+        "value": "proto",
+        "type": "folder"
+      },
+      {
+        "value": "docs",
+        "type": "folder"
+      },
+      {
         "value": ".DS_Store",
         "type": "file"
       },
       {
         "value": "README.md",
+        "type": "file"
+      },
+      {
+        "value": "package.json",
+        "type": "file"
+      },
+      {
+        "value": "package-lock.json",
         "type": "file"
       },
       {

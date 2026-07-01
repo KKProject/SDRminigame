@@ -55,6 +55,11 @@ const {
   validateSupportPairObligations,
   validateSupportPairs,
 } = require('./evaluator');
+const {
+  actionToCode,
+  phraseCodeForId,
+  symbolCodeForKey,
+} = require('../../codec');
 
 /**
  * 花牌对局引擎。实例可 load 持久化 state 后继续推进。
@@ -687,6 +692,7 @@ class HuapaiEngine {
       seat: meldOwnerSeat >= 0 ? meldOwnerSeat : seatIndex,
       actingSeat: seatIndex,
       actionType: meld ? meld.type : label,
+      ...(meld ? transportMeldEventFields(meld) : {}),
       meld,
       meldIndex: meldOwnerSeat >= 0
         ? state.seats[meldOwnerSeat].melds.findIndex((item) => item.id === meld.id)
@@ -1276,6 +1282,28 @@ function summarizeResponseActions(actions) {
   return (actions || []).map(summarizeResponseAction);
 }
 
+function transportMeldEventFields(meld = {}) {
+  const action = meld.type || 'meld';
+  const fields = {
+    action,
+    actionCode: actionToCode(action),
+  };
+  const key = meld.key || (meld.cards && meld.cards[0] && meld.cards[0].key);
+  if ((action === 'peng' || action === 'zhao' || action === 'ta') && key) {
+    fields.symbolCode = symbolCodeForKey(key);
+  }
+  if (action === 'chi') {
+    const phraseId = (meld.cards && meld.cards[0] && meld.cards[0].phraseId) || '';
+    fields.phraseCode = phraseCodeForId(phraseId);
+    if (key) fields.incomingSymbolCode = symbolCodeForKey(key);
+  }
+  if (action === 'zhao') {
+    const count = meld.zhaoSize || (Array.isArray(meld.cards) ? meld.cards.length : 0);
+    if ([4, 5, 6].includes(count)) fields.count = count;
+  }
+  return fields;
+}
+
 function summarizeResponseDecisions(decisions) {
   return Object.keys(decisions || {}).reduce((output, seatIndex) => {
     const decision = decisions[seatIndex] || {};
@@ -1385,7 +1413,13 @@ function serializePublicEvent(event) {
     'seat',
     'actingSeat',
     'source',
+    'action',
+    'actionCode',
     'actionType',
+    'symbolCode',
+    'phraseCode',
+    'incomingSymbolCode',
+    'count',
     'appearanceResolution',
     'discardIndex',
     'meldIndex',

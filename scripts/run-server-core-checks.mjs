@@ -24,12 +24,61 @@ const serverEvaluator = require(join(root, 'services/backend/src/game/core/evalu
 const serverRules = require(join(root, 'services/backend/src/game/core/rules.js'));
 const serverAi = require(join(root, 'services/backend/src/game/core/ai.js'));
 const serverEngine = require(join(root, 'services/backend/src/game/core/engine.js'));
+const serverCodec = require(join(root, 'services/backend/src/codec.js'));
 const room = require(join(root, 'services/backend/src/game/room.js'));
 const { MemoryDocumentDatabase } = require(join(root, 'services/backend/src/db.js'));
 
 const localDeck = localCards.createDeck(localRules.DEFAULT_RULES);
 const serverDeck = serverCards.createDeck(serverRules.DEFAULT_RULES);
 if (JSON.stringify(localDeck) !== JSON.stringify(serverDeck)) throw new Error('server deck must match local deck');
+if (serverCodec.SYMBOLS.length !== serverRules.DEFAULT_RULES.cardSymbols.length || serverCodec.PHRASES.length !== serverRules.DEFAULT_RULES.phrases.length) {
+  throw new Error('server codec should match rule symbol and phrase counts');
+}
+serverRules.DEFAULT_RULES.cardSymbols.forEach((symbol, symbolCode) => {
+  const decoded = serverCodec.symbolFromCode(symbolCode);
+  if (
+    serverCodec.symbolCodeForKey(symbol.key) !== symbolCode
+    || decoded.key !== symbol.key
+    || decoded.text !== symbol.text
+    || decoded.phraseId !== symbol.phraseId
+  ) {
+    throw new Error(`server codec symbol ${symbolCode} should match DEFAULT_RULES`);
+  }
+});
+for (let cardCode = 0; cardCode < 144; cardCode++) {
+  const card = serverCodec.cardFromCode(cardCode);
+  if (serverCodec.cardToCode(card) !== cardCode || serverCodec.cardToCode({ id: card.id }) !== cardCode) {
+    throw new Error(`server codec cardCode ${cardCode} should round-trip`);
+  }
+}
+Object.keys(serverCodec.ACTION_CODES).forEach((action) => {
+  if (serverCodec.actionFromCode(serverCodec.actionToCode(action)) !== action) {
+    throw new Error(`server codec action ${action} should round-trip`);
+  }
+});
+let unknownServerActionRejected = false;
+try {
+  serverCodec.actionFromCode(999);
+} catch (err) {
+  unknownServerActionRejected = err && err.code === 'CODEC_VALUE_INVALID';
+}
+if (!unknownServerActionRejected) {
+  throw new Error('server codec should reject unknown action codes');
+}
+const compactServerPayload = serverCodec.normalizeTransportPayload({
+  actionCode: serverCodec.ACTION_CODES.zhao,
+  cardCode: 0,
+  symbolCode: 0,
+  phraseCode: 0,
+});
+if (
+  compactServerPayload.action !== 'zhao'
+  || compactServerPayload.card.id !== 'shang-0'
+  || compactServerPayload.symbol.key !== 'shang'
+  || compactServerPayload.phrase.id !== 'sdr'
+) {
+  throw new Error('server codec should expand compact payload fields at the transport boundary');
+}
 
 const localOpening = localEvaluator.dealOpeningHands(localDeck.slice(), 0, localRules.DEFAULT_RULES);
 const serverOpening = serverEvaluator.dealOpeningHands(serverDeck.slice(), 0, serverRules.DEFAULT_RULES);
@@ -267,6 +316,40 @@ function makeResponseEngine() {
   if (engine.state.responseWindow || engine.state.seats[2].melds[0].type !== 'peng') {
     throw new Error('later peng should resolve after earlier same-tier seat passes');
   }
+  const pengEvent = engine.state.publicEvent;
+  if (
+    !pengEvent
+    || pengEvent.type !== 'peng'
+    || pengEvent.action !== 'peng'
+    || pengEvent.actionCode !== serverCodec.ACTION_CODES.peng
+    || pengEvent.symbolCode !== serverCodec.symbolCodeForKey('shang')
+    || pengEvent.count !== undefined
+    || pengEvent.phraseCode !== undefined
+  ) {
+    throw new Error('authoritative peng event should expose only action and symbol code');
+  }
+}
+
+{
+  const { engine, incoming } = makeResponseEngine();
+  engine.state.seats[1].hand = takeServerCards(['da', 'ren'], [incoming.id]);
+  const actions = [
+    { type: 'chi', seat: 1, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['da', 'ren'], priority: serverRules.ACTION_PRIORITY.chi, label: '吃', responseIndex: 0 },
+  ];
+  engine.handleResponseWindow(actions, 0);
+  engine.submitResponse(1, { type: 'chi' });
+  const chiEvent = engine.state.publicEvent;
+  if (
+    !chiEvent
+    || chiEvent.type !== 'chi'
+    || chiEvent.actionCode !== serverCodec.ACTION_CODES.chi
+    || chiEvent.phraseCode !== serverCodec.phraseCodeForId('sdr')
+    || chiEvent.incomingSymbolCode !== serverCodec.symbolCodeForKey('shang')
+    || chiEvent.symbolCode !== undefined
+    || chiEvent.count !== undefined
+  ) {
+    throw new Error('authoritative chi event should expose phrase code and incoming symbol only');
+  }
 }
 
 {
@@ -281,6 +364,17 @@ function makeResponseEngine() {
   engine.submitResponse(1, { type: 'zhao', zhaoSize: 4, handKeyCount: 3 });
   if (engine.state.responseWindow || engine.state.seats[1].melds[0].type !== 'zhao') {
     throw new Error('zhao should resolve immediately when no unresolved hu can beat it');
+  }
+  const zhaoEvent = engine.state.publicEvent;
+  if (
+    !zhaoEvent
+    || zhaoEvent.type !== 'zhao'
+    || zhaoEvent.actionCode !== serverCodec.ACTION_CODES.zhao
+    || zhaoEvent.symbolCode !== serverCodec.symbolCodeForKey('shang')
+    || zhaoEvent.count !== 4
+    || zhaoEvent.phraseCode !== undefined
+  ) {
+    throw new Error('authoritative zhao event should expose symbol code and count only');
   }
 }
 

@@ -2,7 +2,7 @@ const { URL } = require('url');
 const { WebSocketServer } = require('ws');
 
 const { ConnectionRegistry } = require('./connections');
-const { envelope, failure, normalizeEnvelope, success } = require('./protocol');
+const { encodeEnvelope, envelope, failure, normalizeEnvelope, success } = require('./protocol');
 const { verifySocketToken } = require('./tokens');
 
 function tokenInfoFromRequest(req) {
@@ -24,7 +24,12 @@ function originAllowed(req, allowedOrigins) {
 
 function send(connection, message) {
   if (!connection || !connection.ws || connection.ws.readyState !== 1) return false;
-  connection.ws.send(message);
+  if (connection.protobuf && typeof message === 'string') {
+    const parsed = JSON.parse(message);
+    connection.ws.send(encodeEnvelope(parsed.type, parsed, { protobuf: true }));
+  } else {
+    connection.ws.send(message);
+  }
   return true;
 }
 
@@ -60,6 +65,58 @@ function snapshotPayload(res) {
     room: res && res.room,
     animation: res && res.animation,
     rematch: res && res.rematch,
+  };
+}
+
+function publicPatch(publicState = {}) {
+  return {
+    phase: publicState.phase,
+    currentSeat: publicState.currentSeat,
+    dealerSeat: publicState.dealerSeat,
+    nextDealerSeat: publicState.nextDealerSeat,
+    feedback: publicState.feedback || '',
+    responseSummary: publicState.responseSummary || null,
+    pendingActions: [],
+    playerActions: [],
+  };
+}
+
+function deltaForEvent(event = {}, publicState = {}) {
+  const delta = {
+    publicPatch: publicPatch(publicState),
+  };
+  if ((event.type === 'discard' || event.type === 'unclaimed') && event.card && typeof event.seat === 'number') {
+    delta.appendDiscard = {
+      seat: event.seat,
+      card: event.card,
+      index: typeof event.discardIndex === 'number' ? event.discardIndex : undefined,
+    };
+  }
+  if (event.meld && typeof event.seat === 'number' && ['chi', 'peng', 'zhao', 'ta'].indexOf(event.type) >= 0) {
+    const key = event.type === 'ta' ? 'extendMeld' : 'appendMeld';
+    delta[key] = {
+      seat: event.seat,
+      meld: event.meld,
+      index: typeof event.meldIndex === 'number' ? event.meldIndex : undefined,
+    };
+  }
+  return delta;
+}
+
+function incrementalPayload(res) {
+  if (!res || !res.ok || !res.roomId || typeof res.version !== 'number') return null;
+  const animation = res.animation || {};
+  const event = animation.currentEvent || (res.public && res.public.publicEvent) || null;
+  const eventSeq = event && typeof event.eventSeq === 'number' ? event.eventSeq : 0;
+  if (!event || !eventSeq) return null;
+  return {
+    ok: true,
+    roomId: res.roomId,
+    baseVersion: res.version - 1,
+    version: res.version,
+    eventSeq,
+    event,
+    delta: deltaForEvent(event, res.public || {}),
   };
 }
 
@@ -137,6 +194,21 @@ function createSocketLayer({ server, config, game, registry, logger = console } 
     }));
   }
 
+  async function broadcastIncremental(roomId, res) {
+    const payload = incrementalPayload(res);
+    if (!payload) return false;
+    const roomConnections = connections.roomConnections(roomId);
+    roomConnections.forEach((connection) => {
+      send(connection, envelope('delta', {
+        roomId,
+        version: payload.version,
+        eventSeq: payload.eventSeq,
+        payload,
+      }));
+    });
+    return true;
+  }
+
   async function handleMessage(connection, request) {
     if (request.type === 'ping' || request.type === 'heartbeat') {
       connections.touch(connection);
@@ -152,6 +224,12 @@ function createSocketLayer({ server, config, game, registry, logger = console } 
         return failure('subscribe:result', request, (res && res.error) || 'NOT_IN_ROOM');
       }
       connections.subscribe(connection, request.roomId);
+      connection.protobuf = Boolean(
+        config.protobufEnabled
+        && request.payload
+        && request.payload.transport
+        && request.payload.transport.protobuf
+      );
       game.setConnection(connection.openid, request.roomId, true)
         .then(async (onlineRes) => {
           if (onlineRes && onlineRes.ok) await broadcastSnapshot(request.roomId, onlineRes);
@@ -179,7 +257,8 @@ function createSocketLayer({ server, config, game, registry, logger = console } 
     const payload = snapshotPayload(res);
     const shouldBroadcast = request.type !== 'ackAnimation' || Boolean(res && res.advanced);
     if (shouldBroadcast && res && res.ok && request.roomId && (res.public || res.animation || res.room)) {
-      await broadcastSnapshot(request.roomId, res);
+      const sentIncremental = await broadcastIncremental(request.roomId, res);
+      if (!sentIncremental) await broadcastSnapshot(request.roomId, res);
     }
     if (!res || !res.ok) return failure(responseType, request, (res && res.error) || 'REQUEST_FAILED', { version: res && res.version });
     return success(responseType, request, Object.assign({}, res, payload), {
@@ -194,7 +273,7 @@ function createSocketLayer({ server, config, game, registry, logger = console } 
     ws.on('message', async (raw) => {
       const parsed = normalizeEnvelope(raw);
       if (!parsed.ok) {
-        send(connection, failure('error', {}, parsed.error));
+        send(connection, failure('error', parsed.value || {}, parsed.error));
         return;
       }
       try {

@@ -1,14 +1,15 @@
 import { DEFAULT_RULES } from '../game/rules';
 import { ensureCloudInit, callFunction, cloudErrorCode, login } from './cloud';
 import OnlineSocketTransport from './socket';
+import { phraseFromCode, symbolFromCode } from './codec';
 
 const SEAT_COUNT = DEFAULT_RULES.seatCount;
 const ROOM_SESSION_KEY = 'huapai-online-room';
 const RECONNECT_DELAY_MS = 1500;
-const RECONNECT_HTTP_REFRESH_MS = 2000;
 const HEARTBEAT_INTERVAL_MS = 20000;
 const WAITING_REFRESH_INTERVAL_MS = 2000;
 const RESPONSE_ACTION_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'];
+const MELD_ACTION_TYPES = ['chi', 'peng', 'zhao', 'ta'];
 const SOCKET_AUTH_REFRESH_SKEW_MS = 60 * 1000;
 const SOCKET_AUTH_ERROR_CODES = [
   'TOKEN_EXPIRED',
@@ -228,6 +229,7 @@ export function onlineErrorMessage(err) {
     SOCKET_ENV_MISSING: 'WebSocket 入口未配置，请设置自有 WSS 域名',
     SOCKET_TOKEN_MISSING: 'WebSocket 鉴权缺失，请检查自有服务 token 配置',
     SOCKET_UNSUPPORTED: '当前环境不支持 WebSocket，请使用微信开发者工具或真机',
+    SOCKET_NOT_CONNECTED: '连接已断开，等待重连',
     SOCKET_ABNORMAL_CLOSE: 'WebSocket 异常断开，请检查 socket 服务日志',
     SOCKET_CONNECT_FAILED: 'WebSocket 连接失败，请检查服务和域名配置',
   };
@@ -305,6 +307,45 @@ function rotatePublicEvent(event, mySeat) {
   if (typeof event.actingSeat === 'number') mapped.actingSeat = rotateSeat(event.actingSeat, mySeat);
   if (event.result) mapped.result = rotateResult(event.result, mySeat);
   return mapped;
+}
+
+function symbolKeyFromEvent(event = {}) {
+  if (event.symbol && event.symbol.key) return event.symbol.key;
+  if (typeof event.symbolCode === 'number') return symbolFromCode(event.symbolCode).key;
+  if (event.meld && event.meld.key) return event.meld.key;
+  if (event.meld && event.meld.cards && event.meld.cards[0]) return event.meld.cards[0].key;
+  if (event.card && event.card.key) return event.card.key;
+  return '';
+}
+
+function phraseKeysFromEvent(event = {}) {
+  if (event.phrase && Array.isArray(event.phrase.keys)) return event.phrase.keys;
+  if (typeof event.phraseCode === 'number') return phraseFromCode(event.phraseCode).keys;
+  if (event.meld && Array.isArray(event.meld.cards) && event.meld.cards.length) {
+    return event.meld.cards.map((card) => card.key).filter(Boolean);
+  }
+  return [];
+}
+
+function incomingKeyFromEvent(event = {}) {
+  if (event.incomingSymbol && event.incomingSymbol.key) return event.incomingSymbol.key;
+  if (typeof event.incomingSymbolCode === 'number') return symbolFromCode(event.incomingSymbolCode).key;
+  if (event.card && event.card.key) return event.card.key;
+  if (event.meld && event.meld.key) return event.meld.key;
+  return symbolKeyFromEvent(event);
+}
+
+function removeCardsByKeys(hand = [], keys = []) {
+  const remainingKeys = keys.slice();
+  const removed = [];
+  const nextHand = hand.filter((card) => {
+    const index = remainingKeys.indexOf(card.key);
+    if (index < 0) return true;
+    remainingKeys.splice(index, 1);
+    removed.push(card);
+    return false;
+  });
+  return { hand: nextHand, removed };
 }
 
 function rotateAction(action, mySeat, index = null) {
@@ -438,7 +479,9 @@ export default class OnlineController {
     this.socketAuth = null;
     this.socket = new OnlineSocketTransport();
     this.socket.onSnapshot = (snapshot) => this.applySocketSnapshot(snapshot);
+    this.socket.onDelta = (delta) => this.applySocketDelta(delta);
     this.socket.onDisconnect = (err) => this.handleSocketDisconnect(err);
+    this.socket.onProtocolMismatch = () => this.reconnectSocketNow();
     this.lastServerEventSeq = 0;
     this.socketReconnecting = false;
     this.lastSocketErrorCode = '';
@@ -854,6 +897,20 @@ export default class OnlineController {
 
   async refresh() {
     if (!this.roomId) return false;
+    if (this.active) {
+      if (!this.socket.isReady()) {
+        this.socketReconnecting = true;
+        this.scheduleReconnect(0);
+        return false;
+      }
+      try {
+        const res = await this.socket.request('pull', { roomId: this.roomId, version: this.version });
+        return this.applyServerSnapshot(res);
+      } catch (err) {
+        this.scheduleReconnect(0);
+        return false;
+      }
+    }
     try {
       const res = await callFunction('game', { action: 'pull', roomId: this.roomId });
       return this.applyServerSnapshot(res);
@@ -863,22 +920,7 @@ export default class OnlineController {
   }
 
   startReconnectFallbackRefresh() {
-    if (this.reconnectFallbackTimer) return;
-    const refreshOnce = () => {
-      if (!this.active || !this.roomId || this.socket.isReady()) {
-        this.stopReconnectFallbackRefresh();
-        return;
-      }
-      if (this.reconnectFallbackInFlight) return;
-      this.reconnectFallbackInFlight = true;
-      this.refresh()
-        .catch(() => false)
-        .finally(() => {
-          this.reconnectFallbackInFlight = false;
-        });
-    };
-    refreshOnce();
-    this.reconnectFallbackTimer = setInterval(refreshOnce, RECONNECT_HTTP_REFRESH_MS);
+    this.reconnectFallbackInFlight = false;
   }
 
   stopReconnectFallbackRefresh() {
@@ -990,7 +1032,6 @@ export default class OnlineController {
     this.socketReconnecting = true;
     this.lastSocketErrorCode = (err && err.code) || 'SOCKET_CLOSED';
     this.setStatus(socketWaitingMessage(this.lastSocketErrorCode));
-    this.startReconnectFallbackRefresh();
     this.scheduleReconnect();
   }
 
@@ -998,6 +1039,82 @@ export default class OnlineController {
     if (!snapshot) return false;
     if (snapshot.public) return this.applyServerSnapshot(Object.assign({ ok: true }, snapshot));
     if (snapshot.room) this.setWaitingRoomState(snapshot.room);
+    return true;
+  }
+
+  applySocketDelta(delta = {}) {
+    if (!delta || !this.active || !this.roomId) return false;
+    if (delta.roomId && delta.roomId !== this.roomId) return this.resyncFromDelta('room-mismatch');
+    const eventSeq = typeof delta.eventSeq === 'number'
+      ? delta.eventSeq
+      : (delta.event && typeof delta.event.eventSeq === 'number' ? delta.event.eventSeq : 0);
+    if (typeof delta.version !== 'number' || typeof delta.baseVersion !== 'number' || !eventSeq) {
+      return this.resyncFromDelta('missing-sequence');
+    }
+    if (delta.version <= this.version && eventSeq <= this.lastServerEventSeq) return true;
+    if (delta.baseVersion !== this.version) return this.resyncFromDelta('version-gap');
+    if (this.lastServerEventSeq && eventSeq > this.lastServerEventSeq + 1) {
+      return this.resyncFromDelta('event-gap');
+    }
+    const event = rotatePublicEvent(delta.event || {}, this.mySeat);
+    if (!event || event.eventSeq !== eventSeq) return this.resyncFromDelta('event-invalid');
+    if (!this.applyPublicDelta(event, delta.delta || {})) return this.resyncFromDelta('delta-rejected');
+    this.version = delta.version;
+    this.lastServerEventSeq = Math.max(this.lastServerEventSeq, eventSeq);
+    this.consumeAnimationState({
+      waiting: true,
+      selfAcked: false,
+      currentEvent: delta.event,
+      latestEventSeq: eventSeq,
+    });
+    return true;
+  }
+
+  resyncFromDelta(reason) {
+    console.warn('[online] socket delta rejected, requesting snapshot', { reason, roomId: this.roomId });
+    this.scheduleReconnect(0);
+    return false;
+  }
+
+  applyPublicDelta(event, delta = {}) {
+    if (!this.databus || !Array.isArray(this.databus.seats)) return false;
+    const appendDiscard = delta.appendDiscard || null;
+    if (appendDiscard && appendDiscard.card) {
+      const seatIndex = rotateSeat(appendDiscard.seat, this.mySeat);
+      const seat = this.databus.seats[seatIndex];
+      if (!seat || !Array.isArray(seat.discards)) return false;
+      const expectedIndex = typeof appendDiscard.index === 'number' ? appendDiscard.index : seat.discards.length;
+      const alreadyAtIndex = seat.discards[expectedIndex] && seat.discards[expectedIndex].id === appendDiscard.card.id;
+      if (!alreadyAtIndex) {
+        if (expectedIndex !== seat.discards.length) return false;
+        if (!seat.discards.some((card) => card.id === appendDiscard.card.id)) {
+          seat.discards = seat.discards.concat([appendDiscard.card]);
+        }
+      }
+    }
+
+    const appendMeld = delta.appendMeld || delta.extendMeld || null;
+    if (appendMeld && appendMeld.meld) {
+      const seatIndex = rotateSeat(appendMeld.seat, this.mySeat);
+      const seat = this.databus.seats[seatIndex];
+      if (!seat || !Array.isArray(seat.melds)) return false;
+      const expectedIndex = typeof appendMeld.index === 'number' ? appendMeld.index : seat.melds.length;
+      const existingIndex = seat.melds.findIndex((meld) => meld.id && meld.id === appendMeld.meld.id);
+      if (existingIndex >= 0) {
+        seat.melds[existingIndex] = appendMeld.meld;
+      } else {
+        if (expectedIndex !== seat.melds.length) return false;
+        seat.melds = seat.melds.concat([appendMeld.meld]);
+      }
+    }
+
+    if (delta.publicPatch) {
+      ['phase', 'currentSeat', 'dealerSeat', 'nextDealerSeat', 'feedback', 'responseSummary'].forEach((key) => {
+        if (delta.publicPatch[key] !== undefined) this.databus[key] = delta.publicPatch[key];
+      });
+      if (Array.isArray(delta.publicPatch.pendingActions)) this.databus.pendingActions = delta.publicPatch.pendingActions;
+      if (Array.isArray(delta.publicPatch.playerActions)) this.databus.playerActions = delta.publicPatch.playerActions;
+    }
     return true;
   }
 
@@ -1106,6 +1223,8 @@ export default class OnlineController {
       this.isAnimating = false;
     }
     this.lastPlayedEventSeq = event.eventSeq;
+    this.applyAuthoritativeDiscardEventToLocalHand(event);
+    this.applyAuthoritativeMeldEventToLocalHand(event);
     this.isAnimating = true;
     const hasLocalPreview = Boolean(this.pendingLocalAction && this.pendingLocalAction.localPreviewStarted);
     const usesLocalPreview = hasLocalPreview
@@ -1126,6 +1245,58 @@ export default class OnlineController {
       ? this.animator.playOnlineEvent(event, () => this.finishAnimation(event.eventSeq))
       : false);
     if (!started) this.finishAnimation(event.eventSeq);
+  }
+
+  applyAuthoritativeDiscardEventToLocalHand(event = {}) {
+    if (!event || event.type !== 'discard' || event.seat !== 0 || !event.card || !event.card.id) return false;
+    const seat = this.databus && this.databus.seats && this.databus.seats[0];
+    if (!seat || !Array.isArray(seat.hand) || !seat.hand.length) return false;
+    const nextHand = seat.hand.filter((card) => card.id !== event.card.id);
+    if (nextHand.length === seat.hand.length) return false;
+    seat.hand = nextHand;
+    if (this.databus.selectedCardId === event.card.id) this.databus.selectedCardId = null;
+    return true;
+  }
+
+  applyAuthoritativeMeldEventToLocalHand(event = {}) {
+    if (!event || event.seat !== 0 || MELD_ACTION_TYPES.indexOf(event.type) < 0) return false;
+    const seat = this.databus && this.databus.seats && this.databus.seats[0];
+    if (!seat || !Array.isArray(seat.hand) || !seat.hand.length) return false;
+
+    const meldCards = event.meld && Array.isArray(event.meld.cards) ? event.meld.cards : [];
+    if (meldCards.length) {
+      const meldCardIds = new Set(meldCards.map((card) => card.id).filter(Boolean));
+      const nextHand = seat.hand.filter((card) => !meldCardIds.has(card.id));
+      if (nextHand.length !== seat.hand.length) {
+        seat.hand = nextHand;
+        if (this.databus.selectedCardId && !nextHand.some((card) => card.id === this.databus.selectedCardId)) {
+          this.databus.selectedCardId = null;
+        }
+        return true;
+      }
+      return false;
+    }
+
+    let keysToRemove = [];
+    if (event.type === 'peng') {
+      const key = symbolKeyFromEvent(event);
+      keysToRemove = key ? [key, key] : [];
+    } else if (event.type === 'zhao') {
+      const key = symbolKeyFromEvent(event);
+      const count = [4, 5, 6].indexOf(event.count) >= 0 ? event.count : 0;
+      keysToRemove = key && count ? new Array(Math.max(0, count - 1)).fill(key) : [];
+    } else if (event.type === 'chi') {
+      const incomingKey = incomingKeyFromEvent(event);
+      keysToRemove = phraseKeysFromEvent(event).filter((key) => key !== incomingKey);
+    }
+    if (!keysToRemove.length) return false;
+    const result = removeCardsByKeys(seat.hand, keysToRemove);
+    if (!result.removed.length) return false;
+    seat.hand = result.hand;
+    if (this.databus.selectedCardId && !seat.hand.some((card) => card.id === this.databus.selectedCardId)) {
+      this.databus.selectedCardId = null;
+    }
+    return true;
   }
 
   /** 在线动作只在首次播放对应事件时发声，重复快照与回执重试不会重复播放。 */
@@ -1231,6 +1402,10 @@ export default class OnlineController {
       if (!this.applyServerSnapshot(res)) await this.refresh();
     } catch (err) {
       this.ackingEventSeq = 0;
+      if (!this.socket.isReady()) {
+        this.socketReconnecting = true;
+        this.scheduleReconnect(0);
+      }
       if (this.ackRetryTimer) return;
       this.ackRetryTimer = setTimeout(() => {
         this.ackRetryTimer = null;
@@ -1265,7 +1440,6 @@ export default class OnlineController {
   scheduleReconnect(delay = RECONNECT_DELAY_MS) {
     if (!this.active || this.reconnectTimer) return;
     this.setStatus('正在恢复牌桌…');
-    this.startReconnectFallbackRefresh();
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
       if (await this.reconnectSocketNow()) return;
@@ -1290,15 +1464,16 @@ export default class OnlineController {
         });
       } catch (err) {
         this.scheduleReconnect(0);
+        throw err;
       }
     }
     if (this.active && this.roomId) {
-      if (!this.socket.isReady()) this.scheduleReconnect(0);
-      return callFunction('game', Object.assign({
-        action,
-        roomId: this.roomId,
-        version: this.version,
-      }, payload));
+      if (!this.socket.isReady()) {
+        this.scheduleReconnect(0);
+      }
+      const error = new Error('SOCKET_NOT_CONNECTED');
+      error.code = 'SOCKET_NOT_CONNECTED';
+      throw error;
     }
     return callFunction('game', Object.assign({ action, roomId: this.roomId }, payload));
   }
@@ -1321,17 +1496,8 @@ export default class OnlineController {
       if (!this.socket.isReady()) {
         this.socketReconnecting = true;
         this.scheduleReconnect(0);
-        const fallbackRes = await callFunction('game', Object.assign({
-          action: 'op',
-          roomId: this.roomId,
-          version: this.version,
-        }, op));
-        if (!fallbackRes || !fallbackRes.ok) {
-          this.databus.feedback = opErrorMessage(fallbackRes);
-          this.cancelLocalActionPreview();
-          return;
-        }
-        if (!this.applyServerSnapshot(fallbackRes)) await this.refresh();
+        this.databus.feedback = '连接已断开，等待重连';
+        this.cancelLocalActionPreview();
         return;
       }
       const res = await this.socket.request('op', { roomId: this.roomId, version: this.version, payload: op });
@@ -1355,6 +1521,7 @@ export default class OnlineController {
       }
       if (!this.applyServerSnapshot(res)) await this.refresh();
     } catch (err) {
+      this.scheduleReconnect(0);
       this.cancelLocalActionPreview();
       this.databus.feedback = '网络异常，请重试';
     }

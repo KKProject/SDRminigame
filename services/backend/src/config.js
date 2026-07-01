@@ -36,6 +36,7 @@ function readConfig(env = process.env) {
     heartbeatMs: Number(env.SOCKET_HEARTBEAT_MS || 20000),
     connectionTimeoutMs: Number(env.SOCKET_CONNECTION_TIMEOUT_MS || 45000),
     handlerTimeoutMs: Number(env.SOCKET_HANDLER_TIMEOUT_MS || 15000),
+    protobufEnabled: String(env.SOCKET_PROTOBUF_ENABLED || env.REALTIME_PROTOBUF_ENABLED || '1') !== '0',
   };
 }
 

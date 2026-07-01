@@ -10,7 +10,14 @@ await rm(tempDir, { recursive: true, force: true });
 await mkdir(tempDir, { recursive: true });
 
 await writeFile(join(tempDir, 'cloud.mjs'), await readFile(join(root, 'js/net/cloud.js'), 'utf8'));
-await writeFile(join(tempDir, 'socket.mjs'), await readFile(join(root, 'js/net/socket.js'), 'utf8'));
+await writeFile(join(tempDir, 'codec.mjs'), await readFile(join(root, 'js/net/codec.js'), 'utf8'));
+await writeFile(join(tempDir, 'protobuf.mjs'), await readFile(join(root, 'js/net/protobuf.js'), 'utf8'));
+await writeFile(
+  join(tempDir, 'socket.mjs'),
+  (await readFile(join(root, 'js/net/socket.js'), 'utf8'))
+    .replace("from './codec'", "from './codec.mjs'")
+    .replace("from './protobuf'", "from './protobuf.mjs'")
+);
 await writeFile(join(tempDir, 'profile.mjs'), await readFile(join(root, 'js/net/profile.js'), 'utf8'));
 await writeFile(
   join(tempDir, 'online.mjs'),
@@ -18,6 +25,7 @@ await writeFile(
     .replace("from '../game/rules'", "from './rules-stub.mjs'")
     .replace("from './cloud'", "from './cloud.mjs'")
     .replace("from './socket'", "from './socket.mjs'")
+    .replace("from './codec'", "from './codec.mjs'")
 );
 await writeFile(join(tempDir, 'rules-stub.mjs'), 'export const DEFAULT_RULES = { seatCount: 4 };');
 
@@ -49,8 +57,137 @@ globalThis.wx = {
 };
 
 const cloud = await import(pathToFileURL(join(tempDir, 'cloud.mjs')));
+const codec = await import(pathToFileURL(join(tempDir, 'codec.mjs')));
+const protobuf = await import(pathToFileURL(join(tempDir, 'protobuf.mjs')));
 const online = await import(pathToFileURL(join(tempDir, 'online.mjs')));
 const profile = await import(pathToFileURL(join(tempDir, 'profile.mjs')));
+const socketModule = await import(pathToFileURL(join(tempDir, 'socket.mjs')));
+
+if (codec.SYMBOLS.length !== 24 || codec.PHRASES.length !== 8) {
+  throw new Error('client codec should define 24 symbols and 8 phrases');
+}
+codec.SYMBOLS.forEach((symbol, symbolCode) => {
+  if (codec.symbolCodeForKey(symbol.key) !== symbolCode) {
+    throw new Error(`client codec symbolCode should round-trip for ${symbol.key}`);
+  }
+  const decoded = codec.symbolFromCode(symbolCode);
+  if (decoded.key !== symbol.key || decoded.text !== symbol.text || decoded.phraseId !== symbol.phraseId) {
+    throw new Error(`client codec symbol ${symbolCode} should decode to the configured symbol`);
+  }
+});
+for (let cardCode = 0; cardCode < 144; cardCode++) {
+  const card = codec.cardFromCode(cardCode);
+  if (codec.cardToCode(card) !== cardCode || codec.cardToCode({ id: card.id }) !== cardCode) {
+    throw new Error(`client codec cardCode ${cardCode} should round-trip`);
+  }
+}
+Object.keys(codec.ACTION_CODES).forEach((action) => {
+  if (codec.actionFromCode(codec.actionToCode(action)) !== action) {
+    throw new Error(`client codec action ${action} should round-trip`);
+  }
+});
+let unknownActionRejected = false;
+try {
+  codec.actionFromCode(999);
+} catch (err) {
+  unknownActionRejected = err && err.code === 'CODEC_VALUE_INVALID';
+}
+if (!unknownActionRejected) {
+  throw new Error('client codec should reject unknown action codes');
+}
+const protobufFixture = {
+  type: 'delta',
+  codecVersion: codec.CODEC_VERSION,
+  requestId: 'pb-1',
+  roomId: 'room-pb',
+  version: 7,
+  eventSeq: 3,
+  ok: true,
+  payload: { baseVersion: 6, delta: { appendDiscard: { seat: 0, cardCode: 0 } } },
+};
+const decodedProtobufFixture = protobuf.decodeProtobufFrame(protobuf.encodeProtobufFrame(protobufFixture));
+if (
+  decodedProtobufFixture.type !== protobufFixture.type
+  || decodedProtobufFixture.codecVersion !== protobufFixture.codecVersion
+  || decodedProtobufFixture.requestId !== protobufFixture.requestId
+  || decodedProtobufFixture.roomId !== protobufFixture.roomId
+  || decodedProtobufFixture.version !== protobufFixture.version
+  || decodedProtobufFixture.eventSeq !== protobufFixture.eventSeq
+  || decodedProtobufFixture.payload.delta.appendDiscard.cardCode !== 0
+) {
+  throw new Error('client protobuf frame should preserve the JSON envelope semantics');
+}
+const compactPayload = codec.normalizeTransportPayload({
+  actionCode: codec.ACTION_CODES.peng,
+  cardCode: 0,
+  symbolCode: 0,
+  phraseCode: 0,
+});
+if (
+  compactPayload.action !== 'peng'
+  || compactPayload.card.id !== 'shang-0'
+  || compactPayload.symbol.key !== 'shang'
+  || compactPayload.phrase.id !== 'sdr'
+) {
+  throw new Error('client codec should expand compact payload fields at the transport boundary');
+}
+let sentSocketPayload = null;
+const codecSocket = new socketModule.default();
+codecSocket.connected = true;
+codecSocket.socket = {
+  send(options) {
+    sentSocketPayload = JSON.parse(options.data);
+  },
+};
+const codecRequest = codecSocket.request('ping');
+if (!sentSocketPayload || sentSocketPayload.codecVersion !== codec.CODEC_VERSION) {
+  throw new Error('socket requests should include the supported codec version');
+}
+codecSocket.handleMessage({
+  data: JSON.stringify({
+    type: 'pong',
+    codecVersion: codec.CODEC_VERSION,
+    requestId: sentSocketPayload.requestId,
+    payload: { ok: true },
+  }),
+});
+await codecRequest;
+let protocolMismatchCode = '';
+codecSocket.onProtocolMismatch = (err) => { protocolMismatchCode = err.code; };
+codecSocket.handleMessage({ data: JSON.stringify({ type: 'snapshot', codecVersion: 999, payload: {} }) });
+if (protocolMismatchCode !== 'CODEC_VERSION_UNSUPPORTED') {
+  throw new Error('socket should reject unsupported pushed codec versions');
+}
+let protobufSentPayload = null;
+const protobufSocket = new socketModule.default(globalThis.wx, { useProtobuf: true });
+protobufSocket.connected = true;
+protobufSocket.socket = {
+  send(options) {
+    protobufSentPayload = protobuf.decodeProtobufFrame(options.data);
+  },
+};
+const protobufRequest = protobufSocket.request('ping', { roomId: 'room-pb' });
+if (
+  !protobufSentPayload
+  || protobufSentPayload.type !== 'ping'
+  || protobufSentPayload.codecVersion !== codec.CODEC_VERSION
+) {
+  throw new Error('protobuf socket requests should encode the same envelope fields');
+}
+protobufSocket.handleMessage({
+  data: protobuf.encodeProtobufFrame({
+    type: 'pong',
+    codecVersion: codec.CODEC_VERSION,
+    requestId: protobufSentPayload.requestId,
+    payload: { ok: true },
+  }),
+});
+await protobufRequest;
+protobufSocket.onProtocolMismatch = (err) => { protocolMismatchCode = err.code; };
+protobufSocket.handleMessage({ data: new Uint8Array([10, 99]).buffer });
+if (protocolMismatchCode !== 'PROTOBUF_DECODE_FAILED') {
+  throw new Error('protobuf decode failures should trigger socket recovery');
+}
 
 if (online.inviteRoomIdFromOptions({ query: { roomId: '123456' } }) !== '123456') {
   throw new Error('share query parser should read roomId from launch options');
@@ -1067,6 +1204,166 @@ activeController.consumeAnimationState({ waiting: false, selfAcked: false, curre
 if (!activeController.isAnimating || !activeController.currentEvent || releaseWhileAnimatingCount !== 0) {
   throw new Error('a no-event snapshot must not cancel an authoritative appearance animation that is still playing locally');
 }
+const authorityHandDatabus = {
+  selectedCardId: 'peng-hand-1',
+  seats: [{ hand: [
+    { id: 'peng-hand-1', key: 'shang' },
+    { id: 'peng-hand-2', key: 'shang' },
+    { id: 'keep-da', key: 'da' },
+  ] }],
+};
+const authorityHandController = new online.default(authorityHandDatabus, {
+  playOnlineEvent() { return false; },
+  releaseOnlineEvent() {},
+}, null);
+authorityHandController.consumeAnimationState({
+  waiting: true,
+  selfAcked: false,
+  currentEvent: {
+    eventSeq: 41,
+    type: 'peng',
+    seat: 0,
+    symbolCode: codec.symbolCodeForKey('shang'),
+  },
+});
+if (
+  authorityHandDatabus.seats[0].hand.length !== 1
+  || authorityHandDatabus.seats[0].hand[0].id !== 'keep-da'
+  || authorityHandDatabus.selectedCardId
+) {
+  throw new Error('self authoritative peng event should remove two matching private hand cards');
+}
+authorityHandDatabus.seats[0].hand = [
+  { id: 'chi-da', key: 'da' },
+  { id: 'chi-ren', key: 'ren' },
+  { id: 'keep-shang', key: 'shang' },
+];
+authorityHandController.consumeAnimationState({
+  waiting: true,
+  selfAcked: false,
+  currentEvent: {
+    eventSeq: 42,
+    type: 'chi',
+    seat: 0,
+    phraseCode: codec.phraseCodeForId('sdr'),
+    incomingSymbolCode: codec.symbolCodeForKey('shang'),
+  },
+});
+if (authorityHandDatabus.seats[0].hand.map((card) => card.id).join(',') !== 'keep-shang') {
+  throw new Error('self authoritative chi event should remove the two non-incoming phrase cards');
+}
+authorityHandDatabus.seats[0].hand = [
+  { id: 'zhao-1', key: 'shang' },
+  { id: 'zhao-2', key: 'shang' },
+  { id: 'zhao-3', key: 'shang' },
+  { id: 'keep-ren', key: 'ren' },
+];
+authorityHandController.consumeAnimationState({
+  waiting: true,
+  selfAcked: false,
+  currentEvent: {
+    eventSeq: 43,
+    type: 'zhao',
+    seat: 0,
+    symbolCode: codec.symbolCodeForKey('shang'),
+    count: 4,
+  },
+});
+if (authorityHandDatabus.seats[0].hand.map((card) => card.id).join(',') !== 'keep-ren') {
+  throw new Error('self authoritative zhao event should remove count minus one matching cards');
+}
+authorityHandDatabus.seats[0].hand = [
+  { id: 'other-1', key: 'shang' },
+  { id: 'other-2', key: 'shang' },
+];
+authorityHandController.consumeAnimationState({
+  waiting: true,
+  selfAcked: false,
+  currentEvent: {
+    eventSeq: 44,
+    type: 'peng',
+    seat: 1,
+    symbolCode: codec.symbolCodeForKey('shang'),
+  },
+});
+if (authorityHandDatabus.seats[0].hand.length !== 2) {
+  throw new Error('other-player authoritative meld event must not remove private hand cards');
+}
+const deltaDatabus = {
+  selectedCardId: 'delta-discard',
+  feedback: '',
+  seats: [
+    { hand: [{ id: 'delta-discard', key: 'shang' }, { id: 'keep-hand', key: 'da' }], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+  ],
+};
+let deltaPlayedCount = 0;
+let deltaResyncCount = 0;
+const deltaController = new online.default(deltaDatabus, {
+  playOnlineEvent() {
+    deltaPlayedCount += 1;
+    return false;
+  },
+  releaseOnlineEvent() {},
+}, null);
+deltaController.active = true;
+deltaController.roomId = 'delta-room';
+deltaController.version = 10;
+deltaController.lastServerEventSeq = 20;
+deltaController.scheduleReconnect = () => { deltaResyncCount += 1; };
+deltaController.socket = {
+  isReady() { return true; },
+  request() { return Promise.resolve({ ok: true, version: deltaController.version }); },
+};
+if (!deltaController.applySocketDelta({
+  roomId: 'delta-room',
+  baseVersion: 10,
+  version: 11,
+  eventSeq: 21,
+  event: { eventSeq: 21, type: 'discard', seat: 0, card: { id: 'delta-discard', key: 'shang' }, discardIndex: 0 },
+  delta: {
+    appendDiscard: { seat: 0, card: { id: 'delta-discard', key: 'shang' }, index: 0 },
+    publicPatch: { phase: 'ai-thinking', currentSeat: 0, pendingActions: [], playerActions: [] },
+  },
+})) {
+  throw new Error('client should apply a continuous discard delta');
+}
+if (
+  deltaDatabus.seats[0].discards.length !== 1
+  || deltaDatabus.seats[0].hand.map((card) => card.id).join(',') !== 'keep-hand'
+  || deltaDatabus.selectedCardId
+  || deltaPlayedCount !== 1
+) {
+  throw new Error('discard delta should append public discard, remove self hand card, and play once');
+}
+if (!deltaController.applySocketDelta({
+  roomId: 'delta-room',
+  baseVersion: 11,
+  version: 12,
+  eventSeq: 22,
+  event: { eventSeq: 22, type: 'peng', seat: 1, meld: { id: 'delta-meld', type: 'peng', cards: [{ id: 'm1', key: 'shang' }] }, meldIndex: 0 },
+  delta: {
+    appendMeld: { seat: 1, meld: { id: 'delta-meld', type: 'peng', cards: [{ id: 'm1', key: 'shang' }] }, index: 0 },
+    publicPatch: { phase: 'ai-thinking', currentSeat: 1, pendingActions: [], playerActions: [] },
+  },
+})) {
+  throw new Error('client should apply a continuous meld delta');
+}
+if (deltaDatabus.seats[1].melds.length !== 1 || deltaDatabus.seats[1].melds[0].id !== 'delta-meld') {
+  throw new Error('meld delta should append to the public meld area');
+}
+if (deltaController.applySocketDelta({
+  roomId: 'delta-room',
+  baseVersion: 12,
+  version: 13,
+  eventSeq: 24,
+  event: { eventSeq: 24, type: 'discard', seat: 1, card: { id: 'gap-card', key: 'da' }, discardIndex: 0 },
+  delta: { appendDiscard: { seat: 1, card: { id: 'gap-card', key: 'da' }, index: 0 } },
+}) || deltaResyncCount !== 1) {
+  throw new Error('eventSeq gaps should reject the delta and request snapshot recovery');
+}
 onlineController.isAnimating = false;
 onlineController.lastPlayedEventSeq = 6;
 onlineController.lastAckedEventSeq = 6;
@@ -1221,14 +1518,12 @@ onlineController.animationWaiting = false;
 onlineController.isAnimating = false;
 await onlineController.sendOp({ kind: 'discard', cardId: 'missing-socket-card' });
 if (
-  !realtimeFallbackCalled
-  || !realtimeFallbackPayload
-  || realtimeFallbackPayload.action !== 'op'
-  || realtimeFallbackPayload.kind !== 'discard'
-  || realtimeFallbackPayload.cardId !== 'missing-socket-card'
-  || onlineDatabus.feedback === '连接已断开，等待重连'
+  realtimeFallbackCalled
+  || realtimeFallbackPayload
+  || onlineDatabus.feedback !== '连接已断开，等待重连'
+  || !onlineController.socketReconnecting
 ) {
-  throw new Error('socket disconnect should submit realtime operations through HTTPS fallback');
+  throw new Error('socket disconnect should not submit realtime operations through HTTPS fallback');
 }
 if (onlineController.reconnectTimer) {
   clearTimeout(onlineController.reconnectTimer);
@@ -1244,6 +1539,7 @@ if (realtimeFallbackCalled || !onlineController.ackRetryTimer) {
 clearTimeout(onlineController.ackRetryTimer);
 onlineController.ackRetryTimer = null;
 let reconnectPullCalled = false;
+const phaseBeforeDisconnect = onlineDatabus.phase;
 globalThis.wx.request = (options) => {
   if (options.data && options.data.action === 'pull') {
     reconnectPullCalled = true;
@@ -1280,12 +1576,11 @@ onlineController.roomId = 'animation-room';
 onlineController.handleSocketDisconnect({ code: 'SOCKET_ABNORMAL_CLOSE' });
 await new Promise((resolve) => setTimeout(resolve, 0));
 if (
-  !reconnectPullCalled
-  || onlineDatabus.phase !== 'human-response'
-  || !onlineDatabus.playerActions
-  || !onlineDatabus.playerActions.some((action) => action.type === 'peng')
+  reconnectPullCalled
+  || onlineDatabus.phase !== phaseBeforeDisconnect
+  || !onlineController.socketReconnecting
 ) {
-  throw new Error('socket reconnect fallback should pull pending response actions over HTTPS');
+  throw new Error('socket reconnect should wait for WebSocket recovery without HTTPS pull fallback');
 }
 onlineController.stopReconnectFallbackRefresh();
 if (onlineController.reconnectTimer) {
@@ -1309,11 +1604,11 @@ globalThis.wx.request = (options) => {
 onlineController.active = true;
 fakeSocketReady = false;
 onlineDatabus.feedback = '';
-if (!(await onlineController.requestRematch(true)) || !rematchFallbackPayload || rematchFallbackPayload.action !== 'requestRematch' || rematchFallbackPayload.accept !== true) {
-  throw new Error('socket disconnect should request rematch through HTTPS fallback');
+if ((await onlineController.requestRematch(true)) || rematchFallbackPayload) {
+  throw new Error('socket disconnect should not request rematch through HTTPS fallback');
 }
-if (onlineDatabus.feedback !== '已同意，等待其他玩家') {
-  throw new Error('HTTPS rematch fallback should update local rematch feedback');
+if (onlineDatabus.feedback !== '连接已断开，等待重连') {
+  throw new Error('socket rematch while disconnected should keep the table waiting for reconnect');
 }
 if (onlineController.reconnectTimer) {
   clearTimeout(onlineController.reconnectTimer);

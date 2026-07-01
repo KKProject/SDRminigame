@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package huapai.realtime;
+
+message SocketEnvelope {
+  string type = 1;
+  uint32 codec_version = 2;
+  string request_id = 3;
+  string room_id = 4;
+  uint32 version = 5;
+  uint32 event_seq = 6;
+  bool ok = 7;
+  string error = 8;
+  string payload_json = 15;
+}
+
+message Snapshot {
+  string room_id = 1;
+  uint32 version = 2;
+  uint32 event_seq = 3;
+  string payload_json = 15;
+}
+
+message RealtimeEvent {
+  uint32 event_seq = 1;
+  uint32 action_code = 2;
+  uint32 symbol_code = 3;
+  uint32 phrase_code = 4;
+  uint32 card_code = 5;
+  uint32 count = 6;
+  string payload_json = 15;
+}
+
+message RealtimeDelta {
+  string room_id = 1;
+  uint32 base_version = 2;
+  uint32 version = 3;
+  uint32 event_seq = 4;
+  RealtimeEvent event = 5;
+  string payload_json = 15;
+}
+
+message ClientIntent {
+  string kind = 1;
+  uint32 action_code = 2;
+  uint32 card_code = 3;
+  string payload_json = 15;
+}
+
+message AnimationAck {
+  string room_id = 1;
+  uint32 event_seq = 2;
+}

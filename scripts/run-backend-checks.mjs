@@ -6,6 +6,8 @@ const { readConfig } = require('../services/backend/src/config.js');
 const { MemoryDocumentDatabase } = require('../services/backend/src/db.js');
 const { LocalGameService } = require('../services/backend/src/game-service.js');
 const { createBackendServer } = require('../services/backend/src/server.js');
+const { CODEC_VERSION } = require('../services/backend/src/codec.js');
+const { decodeProtobufFrame, encodeProtobufFrame } = require('../services/backend/src/protobuf.js');
 const { issueAppToken, issueSocketToken, verifyAppToken, verifySocketToken } = require('../services/backend/src/tokens.js');
 const { WebSocket } = require('../services/backend/node_modules/ws');
 
@@ -28,6 +30,27 @@ assert(!verifyAppToken(appToken.token, config, { now: 7000 }).ok, 'expired app t
 const socketToken = issueSocketToken('openid-a', config, { now: 1000, ttlMs: 5000, nonce: 'socket-nonce' });
 assert(verifySocketToken(socketToken.token, config, { now: 2000 }).openid === 'openid-a', 'socket token should verify');
 assert(!verifySocketToken(socketToken.token, config, { now: 2000, openid: 'openid-b' }).ok, 'socket openid mismatch should fail');
+const protobufFixture = {
+  type: 'delta',
+  codecVersion: CODEC_VERSION,
+  requestId: 'pb-fixture',
+  roomId: 'room-pb',
+  version: 3,
+  eventSeq: 2,
+  ok: true,
+  payload: { baseVersion: 2, delta: { appendDiscard: { seat: 0, cardCode: 0 } } },
+};
+const decodedProtobufFixture = decodeProtobufFrame(encodeProtobufFrame(protobufFixture));
+assert(
+  decodedProtobufFixture.type === protobufFixture.type
+  && decodedProtobufFixture.codecVersion === protobufFixture.codecVersion
+  && decodedProtobufFixture.requestId === protobufFixture.requestId
+  && decodedProtobufFixture.roomId === protobufFixture.roomId
+  && decodedProtobufFixture.version === protobufFixture.version
+  && decodedProtobufFixture.eventSeq === protobufFixture.eventSeq
+  && decodedProtobufFixture.payload.delta.appendDiscard.cardCode === 0,
+  'server protobuf frame should preserve the JSON envelope semantics'
+);
 
 const db = new MemoryDocumentDatabase();
 await db.collection('rooms').doc('123456').set({
@@ -233,6 +256,14 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function parseSocketMessage(raw) {
+  try {
+    return JSON.parse(String(raw));
+  } catch (err) {
+    return decodeProtobufFrame(raw);
+  }
+}
+
 let rejectPullForB = false;
 const socketMessages = { a: [], b: [] };
 const socketConnectionEvents = [];
@@ -260,9 +291,19 @@ const socketGame = {
       roomId: request.roomId,
       version: 2,
       yourSeat: 0,
-      public: { seats: [], phase: 'human-discard', currentSeat: 0 },
+      public: { seats: [], phase: 'human-discard', currentSeat: 0, feedback: '已出牌' },
       private: { seat: 0, hand: [{ id: 'actor-private-card' }] },
-      animation: { waiting: false, latestEventSeq: 2 },
+      animation: {
+        waiting: true,
+        latestEventSeq: 2,
+        currentEvent: {
+          eventSeq: 2,
+          type: 'discard',
+          seat: 0,
+          card: { id: 'discard-a', key: 'shang' },
+          discardIndex: 0,
+        },
+      },
     };
   },
   async ackAnimation(openid, request) {
@@ -284,8 +325,8 @@ await socketApp.listen(0);
 const socketPort = socketApp.server.address().port;
 const wsA = new WebSocket(`ws://127.0.0.1:${socketPort}/ws?token=${encodeURIComponent(issueSocketToken('openid-a', config).token)}`);
 const wsB = new WebSocket(`ws://127.0.0.1:${socketPort}/ws?token=${encodeURIComponent(issueSocketToken('openid-b', config).token)}`);
-wsA.on('message', (raw) => socketMessages.a.push(JSON.parse(String(raw))));
-wsB.on('message', (raw) => socketMessages.b.push(JSON.parse(String(raw))));
+wsA.on('message', (raw) => socketMessages.a.push(parseSocketMessage(raw)));
+wsB.on('message', (raw) => socketMessages.b.push(parseSocketMessage(raw)));
 await Promise.all([waitForOpen(wsA), waitForOpen(wsB)]);
 wsA.send(JSON.stringify({ type: 'subscribe', requestId: 'sub-a', roomId: 'room-1' }));
 wsB.send(JSON.stringify({ type: 'subscribe', requestId: 'sub-b', roomId: 'room-1' }));
@@ -302,6 +343,19 @@ const leakedToB = socketMessages.b.some((message) => (
   && message.payload.private.hand
   && message.payload.private.hand.some((card) => card.id === 'actor-private-card')
 ));
+const deltaToB = socketMessages.b.find((message) => message.type === 'delta');
+const snapshotToB = socketMessages.b.find((message) => message.type === 'snapshot');
+assert(deltaToB, 'normal socket operation broadcast should use an incremental delta');
+assert(!snapshotToB, 'normal socket operation broadcast should not send a full snapshot to peers');
+assert(
+  deltaToB.payload
+  && deltaToB.payload.baseVersion === 1
+  && deltaToB.payload.version === 2
+  && deltaToB.payload.delta
+  && deltaToB.payload.delta.appendDiscard
+  && deltaToB.payload.delta.appendDiscard.card.id === 'discard-a',
+  'discard delta should carry baseVersion, version, eventSeq and appendDiscard'
+);
 assert(!leakedToB, 'socket broadcast should never fall back to another player private snapshot');
 socketMessages.a.length = 0;
 socketMessages.b.length = 0;
@@ -310,11 +364,73 @@ await wait(80);
 const ackResponseToA = socketMessages.a.some((message) => message.type === 'ackAnimation:result' && message.requestId === 'ack-a');
 const ackBroadcastToB = socketMessages.b.some((message) => message.type === 'snapshot');
 assert(ackResponseToA, 'ackAnimation should respond to the acknowledging client');
+assert(socketMessages.a.some((message) => message.codecVersion === CODEC_VERSION), 'socket responses should include the codec version');
 assert(!ackBroadcastToB, 'ackAnimation without public advancement should not broadcast stale selfAcked snapshots to peers');
+socketMessages.a.length = 0;
+wsA.send(JSON.stringify({ type: 'ping', requestId: 'bad-codec', codecVersion: 999 }));
+await wait(80);
+assert(
+  socketMessages.a.some((message) => (
+    message.type === 'error'
+    && message.requestId === 'bad-codec'
+    && message.error === 'CODEC_VERSION_UNSUPPORTED'
+  )),
+  'socket should reject unsupported codec versions before dispatching handlers'
+);
+const protobufMessages = [];
+const protobufRawKinds = [];
+const wsProtobuf = new WebSocket(`ws://127.0.0.1:${socketPort}/ws?token=${encodeURIComponent(issueSocketToken('openid-a', config).token)}`);
+wsProtobuf.on('message', (raw, isBinary) => {
+  protobufRawKinds.push(isBinary ? 'binary' : 'text');
+  protobufMessages.push(parseSocketMessage(raw));
+});
+await waitForOpen(wsProtobuf);
+wsProtobuf.send(encodeProtobufFrame({
+  type: 'subscribe',
+  codecVersion: CODEC_VERSION,
+  requestId: 'sub-pb',
+  roomId: 'room-1',
+  payload: { transport: { protobuf: true } },
+}));
+await wait(80);
+assert(
+  protobufRawKinds.includes('binary')
+  && protobufMessages.some((message) => message.type === 'subscribe:result' && message.requestId === 'sub-pb'),
+  'protobuf-capable subscribers should receive protobuf binary responses with JSON-equivalent semantics'
+);
+wsProtobuf.close();
 wsA.close();
 wsB.close();
 await socketApp.close();
 rejectPullForB = false;
+
+const jsonRollbackMessages = [];
+const jsonRollbackRawKinds = [];
+const jsonRollbackConfig = Object.assign({}, config, { protobufEnabled: false });
+const jsonRollbackApp = await createBackendServer({ config: jsonRollbackConfig, db: new MemoryDocumentDatabase(), game: socketGame, logger: quietSocketLogger });
+await jsonRollbackApp.listen(0);
+const jsonRollbackPort = jsonRollbackApp.server.address().port;
+const wsJsonRollback = new WebSocket(`ws://127.0.0.1:${jsonRollbackPort}/ws?token=${encodeURIComponent(issueSocketToken('openid-a', jsonRollbackConfig).token)}`);
+wsJsonRollback.on('message', (raw, isBinary) => {
+  jsonRollbackRawKinds.push(isBinary ? 'binary' : 'text');
+  jsonRollbackMessages.push(parseSocketMessage(raw));
+});
+await waitForOpen(wsJsonRollback);
+wsJsonRollback.send(encodeProtobufFrame({
+  type: 'subscribe',
+  codecVersion: CODEC_VERSION,
+  requestId: 'sub-json-rollback',
+  roomId: 'room-1',
+  payload: { transport: { protobuf: true } },
+}));
+await wait(80);
+assert(
+  jsonRollbackMessages.some((message) => message.type === 'subscribe:result' && message.requestId === 'sub-json-rollback')
+  && jsonRollbackRawKinds.every((kind) => kind === 'text'),
+  'disabling protobuf should keep JSON responses even when the client declares protobuf support'
+);
+wsJsonRollback.close();
+await jsonRollbackApp.close();
 
 const socketLogs = [];
 const socketLogger = {

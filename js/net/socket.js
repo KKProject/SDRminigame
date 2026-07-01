@@ -1,3 +1,6 @@
+import { CODEC_VERSION, isSupportedCodecVersion, normalizeTransportPayload } from './codec';
+import { decodeProtobufFrame, encodeProtobufFrame, isBinaryFrame } from './protobuf';
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 20000;
 const DEFAULT_HEARTBEAT_MS = 15000;
 
@@ -21,6 +24,13 @@ function requestId() {
 
 function parseMessage(message) {
   const data = message && typeof message.data !== 'undefined' ? message.data : message;
+  if (isBinaryFrame(data)) {
+    try {
+      return decodeProtobufFrame(data);
+    } catch (err) {
+      return { type: 'error', ok: false, error: 'PROTOBUF_DECODE_FAILED' };
+    }
+  }
   if (typeof data === 'object') return data || {};
   try {
     return JSON.parse(String(data || '{}'));
@@ -59,8 +69,11 @@ export default class OnlineSocketTransport {
     this.pending = {};
     this.heartbeatTimer = null;
     this.onSnapshot = null;
+    this.onDelta = null;
     this.onDisconnect = null;
+    this.onProtocolMismatch = null;
     this.lastAuth = null;
+    this.useProtobuf = Boolean(options.useProtobuf);
   }
 
   isSupported(auth = {}) {
@@ -117,8 +130,46 @@ export default class OnlineSocketTransport {
 
   handleMessage(message) {
     const envelope = parseMessage(message);
+    if (envelope && envelope.ok === false && envelope.error === 'PROTOBUF_DECODE_FAILED') {
+      if (typeof this.onProtocolMismatch === 'function') {
+        this.onProtocolMismatch(socketError('PROTOBUF_DECODE_FAILED'));
+      }
+      return;
+    }
+    if (!isSupportedCodecVersion(envelope.codecVersion)) {
+      const error = socketError('CODEC_VERSION_UNSUPPORTED', { codecVersion: envelope.codecVersion });
+      const requestIdValue = envelope.requestId;
+      if (requestIdValue && this.pending[requestIdValue]) {
+        const pending = this.pending[requestIdValue];
+        delete this.pending[requestIdValue];
+        clearTimeout(pending.timer);
+        pending.reject(error);
+      } else if (typeof this.onProtocolMismatch === 'function') {
+        this.onProtocolMismatch(error);
+      }
+      return;
+    }
+    try {
+      envelope.payload = normalizeTransportPayload(envelope.payload || {});
+    } catch (err) {
+      const error = socketError((err && err.code) || 'CODEC_VALUE_INVALID', err);
+      const requestIdValue = envelope.requestId;
+      if (requestIdValue && this.pending[requestIdValue]) {
+        const pending = this.pending[requestIdValue];
+        delete this.pending[requestIdValue];
+        clearTimeout(pending.timer);
+        pending.reject(error);
+      } else if (typeof this.onProtocolMismatch === 'function') {
+        this.onProtocolMismatch(error);
+      }
+      return;
+    }
     if (envelope.type === 'snapshot' && envelope.payload && typeof this.onSnapshot === 'function') {
       this.onSnapshot(envelope.payload);
+      return;
+    }
+    if ((envelope.type === 'delta' || envelope.type === 'event') && envelope.payload && typeof this.onDelta === 'function') {
+      this.onDelta(envelope.payload);
       return;
     }
     const requestIdValue = envelope.requestId;
@@ -152,6 +203,7 @@ export default class OnlineSocketTransport {
     const id = fields.requestId || requestId();
     const payload = {
       type,
+      codecVersion: CODEC_VERSION,
       requestId: id,
       roomId: fields.roomId || '',
       version: typeof fields.version === 'number' ? fields.version : undefined,
@@ -166,8 +218,9 @@ export default class OnlineSocketTransport {
         reject(error);
       }, this.requestTimeoutMs);
       this.pending[id] = { resolve, reject, timer };
+      const data = this.useProtobuf ? encodeProtobufFrame(payload) : JSON.stringify(payload);
       this.socket.send({
-        data: JSON.stringify(payload),
+        data,
         fail: (err) => {
           clearTimeout(timer);
           delete this.pending[id];
@@ -182,7 +235,11 @@ export default class OnlineSocketTransport {
       roomId,
       version,
       eventSeq,
-      payload: { version, eventSeq },
+      payload: {
+        version,
+        eventSeq,
+        transport: { protobuf: this.useProtobuf },
+      },
     });
   }
 
