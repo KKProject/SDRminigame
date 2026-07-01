@@ -291,7 +291,26 @@ const socketGame = {
       roomId: request.roomId,
       version: 2,
       yourSeat: 0,
-      public: { seats: [], phase: 'human-discard', currentSeat: 0, feedback: '已出牌' },
+      public: {
+        seats: [],
+        phase: 'human-response',
+        currentSeat: 0,
+        feedback: '等待响应',
+        responseSummary: {
+          active: true,
+          sourceSeat: 3,
+          sourceType: 'discard',
+          cardId: 'discard-a',
+          waitingSeats: [0, 1],
+          decidedSeats: [],
+        },
+        pendingActions: [
+          { type: 'zhao', label: '招4张1对', seat: 0, priority: 4, card: { id: 'discard-a', key: 'shang' } },
+          { type: 'peng', label: '碰', seat: 0, priority: 3, card: { id: 'discard-a', key: 'shang' } },
+          { type: 'peng', label: '碰', seat: 1, priority: 3, card: { id: 'discard-a', key: 'shang' } },
+        ],
+        playerActions: [],
+      },
       private: { seat: 0, hand: [{ id: 'actor-private-card' }] },
       animation: {
         waiting: true,
@@ -344,8 +363,10 @@ const leakedToB = socketMessages.b.some((message) => (
   && message.payload.private.hand.some((card) => card.id === 'actor-private-card')
 ));
 const deltaToB = socketMessages.b.find((message) => message.type === 'delta');
+const deltaToA = socketMessages.a.find((message) => message.type === 'delta');
 const snapshotToB = socketMessages.b.find((message) => message.type === 'snapshot');
 assert(deltaToB, 'normal socket operation broadcast should use an incremental delta');
+assert(deltaToA, 'normal socket operation broadcast should send a personalized delta to the actor');
 assert(!snapshotToB, 'normal socket operation broadcast should not send a full snapshot to peers');
 assert(
   deltaToB.payload
@@ -355,6 +376,26 @@ assert(
   && deltaToB.payload.delta.appendDiscard
   && deltaToB.payload.delta.appendDiscard.card.id === 'discard-a',
   'discard delta should carry baseVersion, version, eventSeq and appendDiscard'
+);
+assert(
+  deltaToA.payload.delta.privatePatch
+  && deltaToA.payload.delta.privatePatch.seat === 0
+  && deltaToA.payload.delta.privatePatch.playerActions.some((action) => action.type === 'zhao')
+  && deltaToA.payload.delta.privatePatch.playerActions.some((action) => action.type === 'pass'),
+  'actor delta should include only the actor private response actions'
+);
+assert(
+  deltaToB.payload.delta.privatePatch
+  && deltaToB.payload.delta.privatePatch.seat === 1
+  && deltaToB.payload.delta.privatePatch.playerActions.some((action) => action.type === 'peng')
+  && deltaToB.payload.delta.privatePatch.playerActions.some((action) => action.type === 'pass')
+  && !deltaToB.payload.delta.privatePatch.playerActions.some((action) => action.type === 'zhao'),
+  'peer delta should include only that peer private response actions'
+);
+assert(
+  !deltaToB.payload.delta.publicPatch.pendingActions.length
+  && !deltaToB.payload.delta.publicPatch.playerActions.length,
+  'public delta patch must not leak response action lists'
 );
 assert(!leakedToB, 'socket broadcast should never fall back to another player private snapshot');
 socketMessages.a.length = 0;

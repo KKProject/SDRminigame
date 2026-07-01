@@ -358,6 +358,29 @@ function rotateAction(action, mySeat, index = null) {
   return mapped;
 }
 
+function rotateResponseSummary(summary, mySeat) {
+  return summary ? Object.assign({}, summary, {
+    sourceSeat: rotateSeat(summary.sourceSeat, mySeat),
+    waitingSeats: (summary.waitingSeats || []).map((seat) => rotateSeat(seat, mySeat)),
+    decidedSeats: (summary.decidedSeats || []).map((seat) => rotateSeat(seat, mySeat)),
+  }) : summary;
+}
+
+function rotatePublicPatch(patch = {}, mySeat) {
+  const mapped = Object.assign({}, patch);
+  ['currentSeat', 'dealerSeat', 'nextDealerSeat'].forEach((key) => {
+    if (typeof mapped[key] === 'number') mapped[key] = rotateSeat(mapped[key], mySeat);
+  });
+  if (mapped.responseSummary) mapped.responseSummary = rotateResponseSummary(mapped.responseSummary, mySeat);
+  if (Array.isArray(mapped.pendingActions)) {
+    mapped.pendingActions = mapped.pendingActions.map((action) => rotateAction(action, mySeat));
+  }
+  if (Array.isArray(mapped.playerActions)) {
+    mapped.playerActions = mapped.playerActions.map((action, index) => rotateAction(action, mySeat, index));
+  }
+  return mapped;
+}
+
 /**
  * 把服务端公共状态 + 本人私密手牌映射成本地渲染所需的 databus 状态。
  * 旋转使「我」始终位于本地座位 0，复用既有渲染器与命中测试。
@@ -398,11 +421,7 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
   const handIds = new Set((priv.hand || []).map((c) => c.id));
   const selectedCardId = prevSelectedId && handIds.has(prevSelectedId) ? prevSelectedId : null;
 
-  const responseSummary = pub.responseSummary ? Object.assign({}, pub.responseSummary, {
-    sourceSeat: rotateSeat(pub.responseSummary.sourceSeat, mySeat),
-    waitingSeats: (pub.responseSummary.waitingSeats || []).map((seat) => rotateSeat(seat, mySeat)),
-    decidedSeats: (pub.responseSummary.decidedSeats || []).map((seat) => rotateSeat(seat, mySeat)),
-  }) : null;
+  const responseSummary = rotateResponseSummary(pub.responseSummary, mySeat);
   const pendingActions = (pub.pendingActions || []).map((action) => rotateAction(action, mySeat));
   if (responseSummary && responseSummary.active && pub.appearingCard && !pendingActions.length) {
     pendingActions.push({
@@ -1109,11 +1128,16 @@ export default class OnlineController {
     }
 
     if (delta.publicPatch) {
+      const publicPatch = rotatePublicPatch(delta.publicPatch, this.mySeat);
       ['phase', 'currentSeat', 'dealerSeat', 'nextDealerSeat', 'feedback', 'responseSummary'].forEach((key) => {
-        if (delta.publicPatch[key] !== undefined) this.databus[key] = delta.publicPatch[key];
+        if (publicPatch[key] !== undefined) this.databus[key] = publicPatch[key];
       });
-      if (Array.isArray(delta.publicPatch.pendingActions)) this.databus.pendingActions = delta.publicPatch.pendingActions;
-      if (Array.isArray(delta.publicPatch.playerActions)) this.databus.playerActions = delta.publicPatch.playerActions;
+      if (Array.isArray(publicPatch.pendingActions)) this.databus.pendingActions = publicPatch.pendingActions;
+      if (Array.isArray(publicPatch.playerActions)) this.databus.playerActions = publicPatch.playerActions;
+    }
+    if (delta.privatePatch && Array.isArray(delta.privatePatch.playerActions)) {
+      this.databus.playerActions = delta.privatePatch.playerActions
+        .map((action, index) => rotateAction(action, this.mySeat, index));
     }
     return true;
   }

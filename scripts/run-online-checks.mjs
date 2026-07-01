@@ -1354,11 +1354,72 @@ if (!deltaController.applySocketDelta({
 if (deltaDatabus.seats[1].melds.length !== 1 || deltaDatabus.seats[1].melds[0].id !== 'delta-meld') {
   throw new Error('meld delta should append to the public meld area');
 }
-if (deltaController.applySocketDelta({
+deltaDatabus.playerActions = [{ type: 'stale', seat: 0 }];
+deltaController.mySeat = 1;
+if (!deltaController.applySocketDelta({
   roomId: 'delta-room',
   baseVersion: 12,
   version: 13,
+  eventSeq: 23,
+  event: { eventSeq: 23, type: 'discard', seat: 3, card: { id: 'response-card', key: 'sheng' }, discardIndex: 0 },
+  delta: {
+    publicPatch: {
+      phase: 'human-response',
+      currentSeat: 1,
+      responseSummary: {
+        active: true,
+        sourceSeat: 3,
+        sourceType: 'discard',
+        cardId: 'response-card',
+        waitingSeats: [1, 2],
+        decidedSeats: [],
+      },
+      pendingActions: [],
+      playerActions: [],
+    },
+    privatePatch: {
+      seat: 1,
+      playerActions: [
+        { type: 'zhao', seat: 1, label: '招4张1对', card: { id: 'response-card', key: 'sheng' } },
+        { type: 'pass', seat: 1, label: '过' },
+      ],
+    },
+  },
+})) {
+  throw new Error('client should apply a response-window delta with private actions');
+}
+if (
+  deltaDatabus.phase !== 'human-response'
+  || deltaDatabus.currentSeat !== 0
+  || deltaDatabus.responseSummary.sourceSeat !== 2
+  || deltaDatabus.responseSummary.waitingSeats.join(',') !== '0,1'
+  || deltaDatabus.playerActions.length !== 2
+  || deltaDatabus.playerActions[0].type !== 'zhao'
+  || deltaDatabus.playerActions[0].seat !== 0
+) {
+  throw new Error('private delta patch should rotate and restore local response actions');
+}
+if (!deltaController.applySocketDelta({
+  roomId: 'delta-room',
+  baseVersion: 13,
+  version: 14,
   eventSeq: 24,
+  event: { eventSeq: 24, type: 'discard', seat: 2, card: { id: 'clear-card', key: 'da' }, discardIndex: 0 },
+  delta: {
+    publicPatch: { phase: 'human-discard', currentSeat: 2, pendingActions: [], playerActions: [] },
+    privatePatch: { seat: 1, playerActions: [] },
+  },
+})) {
+  throw new Error('client should apply an empty private action patch');
+}
+if (deltaDatabus.playerActions.length || deltaDatabus.currentSeat !== 1) {
+  throw new Error('empty private delta patch should clear stale response actions and rotate public seats');
+}
+if (deltaController.applySocketDelta({
+  roomId: 'delta-room',
+  baseVersion: 14,
+  version: 15,
+  eventSeq: 26,
   event: { eventSeq: 24, type: 'discard', seat: 1, card: { id: 'gap-card', key: 'da' }, discardIndex: 0 },
   delta: { appendDiscard: { seat: 1, card: { id: 'gap-card', key: 'da' }, index: 0 } },
 }) || deltaResyncCount !== 1) {
@@ -2314,6 +2375,54 @@ const duplicateAck = await roomFunction.ackAnimation({
 }, { db: opDb, OPENID: 'online-player' });
 if (!duplicateAck.ok || !duplicateAck.stale) {
   throw new Error('duplicate or stale animation acknowledgements should be idempotent');
+}
+
+const multiAckEngine = new HuapaiEngine(DEFAULT_RULES);
+multiAckEngine.load({
+  phase: 'human-discard',
+  currentSeat: 0,
+  seats: [{ isHuman: true, online: true }, { isHuman: true, online: true }, {}, {}],
+  eventSeq: 0,
+  publicEvent: null,
+  pendingContinuation: null,
+});
+multiAckEngine.emitPublicEvent('pass', { seat: 0 });
+opDocuments.rooms['multi-ack-room'] = {
+  _id: 'multi-ack-room',
+  status: 'playing',
+  version: 5,
+  players: [
+    { seat: 0, openid: 'multi-a', online: true, lastSeenAt: 1 },
+    { seat: 1, openid: 'multi-b', online: true, lastSeenAt: 1 },
+  ],
+  state: { ...multiAckEngine.state, rules: undefined },
+};
+roomFunction.syncAnimationBarrier(opDocuments.rooms['multi-ack-room'], multiAckEngine, 1);
+const multiAckSeq = opDocuments.rooms['multi-ack-room'].animationBarrier.eventSeq;
+const partialAck = await roomFunction.ackAnimation({
+  roomId: 'multi-ack-room',
+  eventSeq: multiAckSeq,
+}, { db: opDb, OPENID: 'multi-a' });
+if (
+  !partialAck.ok
+  || partialAck.advanced
+  || partialAck.version !== 5
+  || opDocuments.rooms['multi-ack-room'].version !== 5
+  || opDocuments.rooms['multi-ack-room'].animationBarrier.ackedOpenids.join(',') !== 'multi-a'
+) {
+  throw new Error('partial animation acknowledgements must not advance the public room version');
+}
+const finalAck = await roomFunction.ackAnimation({
+  roomId: 'multi-ack-room',
+  eventSeq: multiAckSeq,
+}, { db: opDb, OPENID: 'multi-b' });
+if (
+  !finalAck.ok
+  || !finalAck.advanced
+  || finalAck.version !== 6
+  || opDocuments.rooms['multi-ack-room'].version !== 6
+) {
+  throw new Error('only the final required animation acknowledgement should advance the public room version');
 }
 
 const pullTimeoutEngine = new HuapaiEngine(DEFAULT_RULES);

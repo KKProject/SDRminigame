@@ -81,6 +81,20 @@ function publicPatch(publicState = {}) {
   };
 }
 
+function privatePatch(publicState = {}, seat) {
+  if (typeof seat !== 'number' || seat < 0) return { seat: -1, playerActions: [] };
+  const summary = publicState.responseSummary || null;
+  const waitingSeats = summary && Array.isArray(summary.waitingSeats) ? summary.waitingSeats : [];
+  if (!summary || !summary.active || waitingSeats.indexOf(seat) < 0) {
+    return { seat, playerActions: [] };
+  }
+  const actions = (publicState.pendingActions || []).filter((action) => action && action.seat === seat);
+  return {
+    seat,
+    playerActions: actions.concat([{ type: 'pass', seat, label: '过' }]),
+  };
+}
+
 function deltaForEvent(event = {}, publicState = {}) {
   const delta = {
     publicPatch: publicPatch(publicState),
@@ -103,6 +117,13 @@ function deltaForEvent(event = {}, publicState = {}) {
   return delta;
 }
 
+function cloneDeltaForConnection(delta = {}, connection = {}) {
+  return Object.assign({}, delta, {
+    privatePatch: privatePatch(delta.publicState || {}, connection.seat),
+    publicState: undefined,
+  });
+}
+
 function incrementalPayload(res) {
   if (!res || !res.ok || !res.roomId || typeof res.version !== 'number') return null;
   const animation = res.animation || {};
@@ -116,7 +137,9 @@ function incrementalPayload(res) {
     version: res.version,
     eventSeq,
     event,
-    delta: deltaForEvent(event, res.public || {}),
+    delta: Object.assign(deltaForEvent(event, res.public || {}), {
+      publicState: res.public || {},
+    }),
   };
 }
 
@@ -184,6 +207,7 @@ function createSocketLayer({ server, config, game, registry, logger = console } 
       if (!fresh || !fresh.ok || typeof fresh.yourSeat !== 'number' || fresh.yourSeat < 0) {
         return;
       }
+      connection.seat = fresh.yourSeat;
       const payload = snapshotPayload(fresh);
       send(connection, envelope('snapshot', {
         roomId,
@@ -199,11 +223,14 @@ function createSocketLayer({ server, config, game, registry, logger = console } 
     if (!payload) return false;
     const roomConnections = connections.roomConnections(roomId);
     roomConnections.forEach((connection) => {
+      const connectionPayload = Object.assign({}, payload, {
+        delta: cloneDeltaForConnection(payload.delta, connection),
+      });
       send(connection, envelope('delta', {
         roomId,
-        version: payload.version,
-        eventSeq: payload.eventSeq,
-        payload,
+        version: connectionPayload.version,
+        eventSeq: connectionPayload.eventSeq,
+        payload: connectionPayload,
       }));
     });
     return true;
@@ -224,6 +251,7 @@ function createSocketLayer({ server, config, game, registry, logger = console } 
         return failure('subscribe:result', request, (res && res.error) || 'NOT_IN_ROOM');
       }
       connections.subscribe(connection, request.roomId);
+      connection.seat = res.yourSeat;
       connection.protobuf = Boolean(
         config.protobufEnabled
         && request.payload

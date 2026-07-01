@@ -1186,15 +1186,36 @@ async function ackAnimation(event, ctx) {
     barrier.ackedOpenids.push(OPENID);
   }
   let advanced = false;
-  if (barrierComplete(barrier)) {
-    const duration = Math.max(0, Date.now() - (barrier.createdAt || Date.now()));
-    room.animationMetrics.lastAckDurationMs = duration;
-    room.animationMetrics.maxAckDurationMs = Math.max(room.animationMetrics.maxAckDurationMs || 0, duration);
-    engine.resumePublicEvent();
-    room.animationBarrier = null;
-    advanceUnobservedEvents(room, engine);
-    advanced = true;
+  if (!barrierComplete(barrier)) {
+    await db.collection(ROOMS).doc(event.roomId).update({
+      data: {
+        animationBarrier: room.animationBarrier,
+        animationMetrics: room.animationMetrics,
+        updatedAt: Date.now(),
+      },
+    });
+    return {
+      ok: true,
+      roomId: event.roomId,
+      version: room.version || 0,
+      yourSeat: seatOfOpenid(room, OPENID),
+      status: room.status,
+      settings: normalizeRoomSettings(room.settings),
+      rematch: buildRematchState(room, OPENID),
+      advanced,
+      public: buildPublicState(engine.state),
+      private: buildPrivateView(engine.state, seatOfOpenid(room, OPENID)),
+      animation: animationState(room, engine, OPENID),
+    };
   }
+
+  const duration = Math.max(0, Date.now() - (barrier.createdAt || Date.now()));
+  room.animationMetrics.lastAckDurationMs = duration;
+  room.animationMetrics.maxAckDurationMs = Math.max(room.animationMetrics.maxAckDurationMs || 0, duration);
+  engine.resumePublicEvent();
+  room.animationBarrier = null;
+  advanceUnobservedEvents(room, engine);
+  advanced = true;
   if (engine.state && engine.state.phase === 'result' && !engine.state.publicEvent) settleRoomStatus(room, engine);
   const version = (room.version || 0) + 1;
   const publicState = await writeRoomState(db, event.roomId, room, engine, version);
