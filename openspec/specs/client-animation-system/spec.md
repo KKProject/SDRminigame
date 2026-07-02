@@ -274,27 +274,12 @@ TBD - created by archiving change refactor-tween-animation-system. Update Purpos
 - **AND** 客户端 MUST 暂不暴露 `pendingActions` 或 `playerActions` 给渲染层
 
 ### Requirement: 布局尺寸变化时动画安全恢复
-客户端动画系统 SHALL 在稳定屏幕指标变化时停止使用旧布局坐标，并 MUST 清理或恢复所有依赖旧动画目标的临时视觉状态。客户端动画系统 MUST NOT 将前台恢复时的相同稳定指标渲染上下文重应用视为布局尺寸变化。
+客户端动画系统 SHALL 在稳定 canonical render viewport 变化时停止使用旧布局坐标，并 MUST 清理或恢复所有依赖旧动画目标的临时视觉状态。客户端动画系统 MUST NOT 将前台恢复时的相同 canonical 视口渲染上下文重应用、或被拒绝的恢复过渡候选视为布局尺寸变化。
 
-#### Scenario: 活动动画期间稳定尺寸变化
-- **WHEN** 抓牌、出牌、归位或凑牌动画播放期间稳定屏幕指标发生变化
-- **THEN** 动画管理器 MUST 取消依赖旧布局坐标的活动 Tween 和旧完成回调
-- **AND** 客户端 MUST 使用新布局与最新牌局状态恢复必要的静态牌或等待牌
-
-#### Scenario: 等待响应牌期间稳定尺寸变化
-- **WHEN** 一张出现牌正在保留等待响应且稳定屏幕指标发生变化
-- **THEN** 客户端 MUST 移除旧坐标下的保留视觉
-- **AND** 客户端 MUST 在新布局对应玩家前方恢复该等待牌
-
-#### Scenario: 重复相同尺寸不影响动画
-- **WHEN** 客户端收到与当前稳定指标相同的重复窗口通知
-- **THEN** 动画管理器 MUST NOT 取消或重启动当前动画
-- **AND** 动画完成通知与音效 MUST NOT 因重复通知再次触发
-
-#### Scenario: 前台恢复相同指标不取消动画
-- **WHEN** 小程序恢复到前台并重新应用与当前稳定指标相同的 Canvas backing store 和 2D context 逻辑缩放
-- **THEN** 动画管理器 MUST NOT 将该恢复动作视为稳定尺寸变化
-- **AND** 当前动画、音效状态和完成通知 MUST NOT 因该恢复动作重复、取消或重启
+#### Scenario: 被拒绝的恢复候选不取消动画
+- **WHEN** 小程序前台恢复期间运行时报告的过窄横屏候选被渲染指标管理器拒绝
+- **THEN** 动画管理器 MUST NOT 取消、重启或完成当前动画
+- **AND** 动画目标 MUST 继续使用当前 canonical viewport 对应的布局坐标
 
 ### Requirement: 出现牌来源覆盖图
 客户端动画系统 SHALL 在出现牌牌面上按来源叠加对应 atlas 覆盖图。打出来的出现牌 MUST 使用 `ui_left_play_panel_da`，从牌堆摸出来的出现牌 MUST 使用 `ui_left_move_panel_ban`。
@@ -385,3 +370,4 @@ TBD - created by archiving change refactor-tween-animation-system. Update Purpos
 - **WHEN** 客户端收到消耗当前保留出现牌的权威凑牌事件
 - **THEN** 客户端 MUST 在权威凑牌动画开始时移除该出现牌的保留视觉
 - **AND** 状态补偿 MUST NOT 再播放该出现牌飞入凑牌区的动画
+

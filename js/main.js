@@ -1,4 +1,5 @@
 import {
+  beginRenderMetricsRecovery,
   ctx,
   getRenderMetrics,
   refreshRenderMetrics,
@@ -16,6 +17,7 @@ import OnlineController, {
   registerInviteRoomListener,
 } from './net/online';
 import { profileWithFallback } from './net/profile';
+import { flushClientDiagnostics, reportClientDiagnostic } from './net/diagnostics';
 
 GameGlobal.databus = new DataBus();
 GameGlobal.musicManager = new Music();
@@ -39,8 +41,10 @@ export default class Main {
     this.unsubscribeMetrics = subscribeRenderMetrics(this.boundMetricsChange);
     this.boundWindowResize = this.handleWindowResize.bind(this);
     this.boundAppShow = this.handleAppShow.bind(this);
+    this.boundAppHide = this.handleAppHide.bind(this);
     if (wx.onWindowResize) wx.onWindowResize(this.boundWindowResize);
     if (wx.onShow) wx.onShow(this.boundAppShow);
+    if (wx.onHide) wx.onHide(this.boundAppHide);
     this.bindInviteLaunch();
     const metrics = getRenderMetrics();
     if (metrics) this.handleMetricsChange(metrics);
@@ -76,20 +80,74 @@ export default class Main {
     }
   }
 
-  handleWindowResize() {
+  runtimeSnapshot(extra = {}) {
+    let windowInfo = null;
+    try {
+      windowInfo = wx.getWindowInfo ? wx.getWindowInfo() : null;
+    } catch (err) {
+      windowInfo = { error: err && err.message ? err.message : String(err) };
+    }
+    const metrics = getRenderMetrics();
+    return Object.assign({
+      mode: this.mode,
+      metricsRetryRemaining: this.metricsRetryRemaining,
+      contextRestoreRetryRemaining: this.contextRestoreRetryRemaining,
+      windowInfo,
+      renderMetrics: metrics ? {
+        width: metrics.width,
+        height: metrics.height,
+        windowRawWidth: metrics.windowRawWidth,
+        windowRawHeight: metrics.windowRawHeight,
+        screenRawWidth: metrics.screenRawWidth,
+        screenRawHeight: metrics.screenRawHeight,
+        hasScreenSize: metrics.hasScreenSize,
+        renderPixelRatio: metrics.renderPixelRatio,
+        backingStoreWidth: metrics.backingStoreWidth,
+        backingStoreHeight: metrics.backingStoreHeight,
+        safeAreaInsets: metrics.safeAreaInsets,
+      } : null,
+    }, extra);
+  }
+
+  handleWindowResize(res = {}) {
+    reportClientDiagnostic('app-window-resize', this.runtimeSnapshot({
+      resize: res && res.size ? res.size : res,
+    }));
     this.metricsRetryRemaining = 30;
     refreshRenderMetrics();
   }
 
-  handleAppShow() {
-    restoreRenderContext();
+  handleAppShow(options = {}) {
+    reportClientDiagnostic('app-show', this.runtimeSnapshot({ options }));
+    beginRenderMetricsRecovery();
     this.contextRestoreRetryRemaining = 120;
     this.metricsRetryRemaining = 120;
     refreshRenderMetrics();
   }
 
+  handleAppHide() {
+    reportClientDiagnostic('app-hide', this.runtimeSnapshot());
+    flushClientDiagnostics();
+  }
+
   handleMetricsChange(metrics, detail = {}) {
     if (!metrics) return;
+    reportClientDiagnostic('app-metrics-change', this.runtimeSnapshot({
+      detail,
+      nextMetrics: {
+        width: metrics.width,
+        height: metrics.height,
+        windowRawWidth: metrics.windowRawWidth,
+        windowRawHeight: metrics.windowRawHeight,
+        screenRawWidth: metrics.screenRawWidth,
+        screenRawHeight: metrics.screenRawHeight,
+        hasScreenSize: metrics.hasScreenSize,
+        renderPixelRatio: metrics.renderPixelRatio,
+        backingStoreWidth: metrics.backingStoreWidth,
+        backingStoreHeight: metrics.backingStoreHeight,
+        safeAreaInsets: metrics.safeAreaInsets,
+      },
+    }));
     this.metricsRetryRemaining = 0;
     this.renderer.setViewport(metrics, { forceLayout: Boolean(detail.forceLayout) });
     this.menu.handleMetricsChange();

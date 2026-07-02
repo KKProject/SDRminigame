@@ -55,6 +55,54 @@ function bearerToken(req) {
   return header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
 }
 
+function truncateString(value, max = 500) {
+  const text = String(value || '');
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function sanitizeLogValue(value, depth = 0) {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') return truncateString(value);
+  if (depth >= 5) return '[depth-limit]';
+  if (Array.isArray(value)) return value.slice(0, 50).map((item) => sanitizeLogValue(item, depth + 1));
+  if (typeof value !== 'object') return truncateString(value);
+  const result = {};
+  Object.keys(value).slice(0, 80).forEach((key) => {
+    if (/token|secret|authorization|password/i.test(key)) {
+      result[key] = '[redacted]';
+      return;
+    }
+    result[key] = sanitizeLogValue(value[key], depth + 1);
+  });
+  return result;
+}
+
+function requestIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded) return forwarded.split(',')[0].trim();
+  return req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '';
+}
+
+function logClientDiagnostics(logger, req, body = {}) {
+  const events = Array.isArray(body.events) ? body.events.slice(0, 50) : [];
+  const detail = sanitizeLogValue({
+    sessionId: body.sessionId || '',
+    source: body.source || 'client',
+    count: events.length,
+    ip: requestIp(req),
+    userAgent: req.headers['user-agent'] || '',
+    events,
+  });
+  const target = logger && typeof logger.info === 'function' ? logger : console;
+  if (target === console) {
+    target.info('[client-log] render-diagnostics', JSON.stringify(detail));
+  } else {
+    target.info('[client-log] render-diagnostics', detail);
+  }
+  return { ok: true, accepted: events.length };
+}
+
 const ADMIN_COLLECTIONS = [
   { name: 'rooms', description: '权威房间状态和玩家手牌' },
   { name: 'roomStates', description: '牌桌公共状态快照' },
@@ -115,6 +163,7 @@ async function createBackendServer(options = {}) {
   await admin.ensureDefaultAdmin();
   const auth = options.auth || new AuthService({ config, db, fetch: options.fetch });
   const game = options.game || new LocalGameService({ db });
+  const logger = options.logger || console;
 
   const server = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url || '/', 'http://localhost');
@@ -128,6 +177,15 @@ async function createBackendServer(options = {}) {
     }
     if (req.method === 'GET' && parsedUrl.pathname === '/admin') {
       sendHtml(res, 200, adminPageHtml());
+      return;
+    }
+    if (parsedUrl.pathname === '/api/client-log' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        sendJson(res, 200, logClientDiagnostics(logger, req, body));
+      } catch (err) {
+        sendJson(res, 200, { ok: false, error: err.code || err.message || 'CLIENT_LOG_FAILED' });
+      }
       return;
     }
     if (parsedUrl.pathname === '/api/admin/login' && req.method === 'POST') {
@@ -250,7 +308,7 @@ async function createBackendServer(options = {}) {
     sendJson(res, 404, { ok: false, error: 'NOT_FOUND' });
   });
 
-  const socket = createSocketLayer({ server, config, game, logger: options.logger });
+  const socket = createSocketLayer({ server, config, game, logger });
   return {
     server,
     config,
@@ -275,4 +333,5 @@ module.exports = {
   adminStatus,
   adminClear,
   verifyAdminRequest,
+  logClientDiagnostics,
 };

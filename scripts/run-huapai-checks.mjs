@@ -29,7 +29,16 @@ for (const file of ['manager', 'presets', 'targets', 'state-controller', 'contro
   );
 }
 await writeFile(join(tempDir, 'tween.mjs'), await readFile(join(root, 'js/vendor/tween/tween.esm.js'), 'utf8'));
-await writeFile(join(tempDir, 'render-runtime.mjs'), await readFile(join(root, 'js/render.js'), 'utf8'));
+await mkdir(join(tempDir, 'net'), { recursive: true });
+await writeFile(join(tempDir, 'net', 'diagnostics.mjs'), [
+  "export const CLIENT_DIAGNOSTIC_SESSION_ID = 'huapai-checks';",
+  'export function reportClientDiagnostic() {}',
+  'export function flushClientDiagnostics() {}',
+].join(' '));
+await writeFile(
+  join(tempDir, 'render-runtime.mjs'),
+  (await readFile(join(root, 'js/render.js'), 'utf8')).replace("from './net/diagnostics'", "from './net/diagnostics.mjs'")
+);
 await writeFile(join(tempDir, 'render-stub.mjs'), [
   'export const SCREEN_WIDTH = 375;',
   'export const SCREEN_HEIGHT = 667;',
@@ -240,6 +249,66 @@ if (
 ) {
   throw new Error('foreground restore should reacquire a replaced 2d context after sharing');
 }
+const beforeShareRecoveryTransformCount = renderCase.calls.setTransform.length;
+const shareRecoveryResult = renderCase.module.beginRenderMetricsRecovery(4);
+if (
+  shareRecoveryResult.status !== 'restored'
+  || renderCase.calls.setTransform.length !== beforeShareRecoveryTransformCount + 1
+  || metricsNotificationCount !== 2
+) {
+  throw new Error('foreground recovery should start by restoring the canonical render context only');
+}
+const narrowWindowWithStableScreen = {
+  windowWidth: 520,
+  windowHeight: 390,
+  screenWidth: 844,
+  screenHeight: 390,
+  pixelRatio: 3,
+  safeArea: { left: 47, top: 0, right: 844, bottom: 369 },
+};
+const narrowWindowStableScreen = renderCase.module.renderMetricsManager.consider(narrowWindowWithStableScreen);
+if (
+  narrowWindowStableScreen.status !== 'duplicate'
+  || renderCase.module.getRenderMetrics().width !== 844
+  || renderCase.module.getRenderMetrics().height !== 390
+  || renderCase.canvas.width !== 1688
+  || renderCase.canvas.height !== 780
+  || renderCase.calls.setTransform.length !== beforeShareRecoveryTransformCount + 1
+  || metricsNotificationCount !== 2
+) {
+  throw new Error('screen-sized canonical viewport should ignore a transiently narrow window after sharing');
+}
+const narrowLandscape = {
+  windowWidth: 520,
+  windowHeight: 390,
+  pixelRatio: 3,
+  safeArea: { left: 0, top: 0, right: 520, bottom: 390 },
+};
+const firstNarrowLandscape = renderCase.module.renderMetricsManager.consider(narrowLandscape);
+const secondNarrowLandscape = renderCase.module.renderMetricsManager.consider(narrowLandscape);
+if (
+  firstNarrowLandscape.status !== 'transient-canonical-shrink'
+  || secondNarrowLandscape.status !== 'transient-canonical-shrink'
+  || renderCase.module.getRenderMetrics().width !== 844
+  || renderCase.module.getRenderMetrics().height !== 390
+  || renderCase.canvas.width !== 1688
+  || renderCase.canvas.height !== 780
+  || renderCase.calls.setTransform.length !== beforeShareRecoveryTransformCount + 3
+  || metricsNotificationCount !== 2
+) {
+  throw new Error('canonical shrink guard should reject narrow landscape candidates and keep canonical layout metrics');
+}
+const recoveredAfterNarrow = renderCase.module.renderMetricsManager.consider(recoveredLandscape);
+if (
+  recoveredAfterNarrow.status !== 'recovered-duplicate'
+  || renderCase.module.getRenderMetrics().width !== 844
+  || renderCase.calls.setTransform.length !== beforeShareRecoveryTransformCount + 4
+  || metricsNotificationCount !== 3
+  || !lastMetricsDetail
+  || lastMetricsDetail.forceLayout !== true
+) {
+  throw new Error('canonical metrics after a rejected narrow candidate should force one stable layout refresh');
+}
 const safeAreaUpdate = {
   ...recoveredLandscape,
   safeArea: { left: 59, top: 0, right: 844, bottom: 369 },
@@ -248,9 +317,52 @@ renderCase.module.renderMetricsManager.consider(safeAreaUpdate);
 renderCase.module.renderMetricsManager.consider(safeAreaUpdate);
 if (
   renderCase.module.getRenderMetrics().safeAreaInsets.left !== 59
-  || metricsNotificationCount !== 3
+  || metricsNotificationCount !== 4
 ) {
   throw new Error('confirmed safe-area changes should produce one new stable metrics notification');
+}
+const transposedSafeArea = {
+  windowWidth: 844,
+  windowHeight: 390,
+  screenWidth: 844,
+  screenHeight: 390,
+  pixelRatio: 3,
+  safeArea: { left: 0, top: 59, right: 390, bottom: 390 },
+};
+const firstTransposedSafeArea = renderCase.module.renderMetricsManager.consider(transposedSafeArea);
+const secondTransposedSafeArea = renderCase.module.renderMetricsManager.consider(transposedSafeArea);
+if (
+  firstTransposedSafeArea.status !== 'duplicate'
+  || secondTransposedSafeArea.status !== 'duplicate'
+  || renderCase.module.getRenderMetrics().safeAreaInsets.left !== 59
+  || renderCase.module.getRenderMetrics().safeAreaInsets.right !== 0
+  || renderCase.module.getRenderMetrics().safeAreaInsets.top !== 0
+  || renderCase.module.getRenderMetrics().safeAreaBounds.width !== 785
+  || metricsNotificationCount !== 4
+) {
+  throw new Error('transposed portrait safe-area after sharing must not replace stable landscape safe-area metrics');
+}
+renderCase.module.beginRenderMetricsRecovery(1);
+const rejectedBeforeResize = renderCase.module.renderMetricsManager.consider(narrowLandscape);
+const realResize = {
+  windowWidth: 932,
+  windowHeight: 430,
+  pixelRatio: 3,
+  safeArea: { left: 0, top: 0, right: 932, bottom: 430 },
+};
+const firstRealResize = renderCase.module.renderMetricsManager.consider(realResize);
+const secondRealResize = renderCase.module.renderMetricsManager.consider(realResize);
+if (
+  rejectedBeforeResize.status !== 'transient-canonical-shrink'
+  || firstRealResize.status !== 'candidate'
+  || secondRealResize.status !== 'committed'
+  || renderCase.module.getRenderMetrics().width !== 932
+  || renderCase.module.getRenderMetrics().height !== 430
+  || renderCase.canvas.width !== 1864
+  || renderCase.canvas.height !== 860
+  || metricsNotificationCount !== 5
+) {
+  throw new Error('real landscape size changes should commit after the foreground shrink protection window ends');
 }
 
 renderCase = await loadRenderRuntime({ windowWidth: 375, windowHeight: 667, pixelRatio: 2 });

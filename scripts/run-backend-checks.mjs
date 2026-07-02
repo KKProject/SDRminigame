@@ -78,12 +78,49 @@ assert(ping.ok && ping.openid === 'openid-a', 'local game service should inject 
 const unknown = await game.callAction('missing', 'openid-a', {});
 assert(!unknown.ok && unknown.error === 'UNKNOWN_ACTION', 'local game service should reject unknown actions');
 
-const app = await createBackendServer({ config, db });
+const clientLogMessages = [];
+const app = await createBackendServer({
+  config,
+  db,
+  logger: {
+    info(message, detail) {
+      clientLogMessages.push({ level: 'info', message, detail });
+    },
+    warn() {},
+    error() {},
+  },
+});
 await app.listen(0);
 const address = app.server.address();
 const baseUrl = `http://127.0.0.1:${address.port}`;
 const health = await fetch(`${baseUrl}/healthz`).then((res) => res.json());
 assert(health.ok && health.service === 'huapai-backend', 'healthz should respond');
+const clientLogRes = await fetch(`${baseUrl}/api/client-log`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    sessionId: 'diag-session',
+    source: 'unit-test',
+    events: [
+      {
+        event: 'render-metrics-canonical-shrink-rejected',
+        detail: {
+          token: 'should-not-leak',
+          windowInfo: { windowWidth: 520, windowHeight: 390, screenWidth: 844, screenHeight: 390 },
+        },
+      },
+    ],
+  }),
+}).then((res) => res.json());
+assert(clientLogRes.ok && clientLogRes.accepted === 1, 'client log endpoint should accept diagnostic events');
+assert(
+  clientLogMessages.some((log) => log.message === '[client-log] render-diagnostics'
+    && log.detail
+    && log.detail.sessionId === 'diag-session'
+    && log.detail.events[0].detail.token === '[redacted]'),
+  'client log endpoint should emit sanitized render diagnostics'
+);
+assert(!JSON.stringify(clientLogMessages).includes('should-not-leak'), 'client diagnostic logs must redact token-like fields');
 const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
