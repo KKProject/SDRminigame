@@ -24,6 +24,8 @@ const handlers = {
   joinRoom: room.joinRoom,
   roomInfo: room.roomInfo,
   setReady: room.setReady,
+  requestSeatSwap: room.requestSeatSwap,
+  respondSeatSwap: room.respondSeatSwap,
   startRound: room.startRound,
   leaveRoom: room.leaveRoom,
   requestRematch: room.requestRematch,
@@ -85,6 +87,21 @@ class LocalGameService {
     return this.callAction('setReady', openid, {
       roomId: request.roomId,
       ready: request.payload ? request.payload.ready : undefined,
+    });
+  }
+
+  requestSeatSwap(openid, request) {
+    return this.callAction('requestSeatSwap', openid, {
+      roomId: request.roomId,
+      targetSeat: request.payload ? request.payload.targetSeat : request.targetSeat,
+    });
+  }
+
+  respondSeatSwap(openid, request) {
+    return this.callAction('respondSeatSwap', openid, {
+      roomId: request.roomId,
+      requestId: request.payload ? request.payload.requestId : request.requestId,
+      accept: request.payload ? request.payload.accept : request.accept,
     });
   }
 

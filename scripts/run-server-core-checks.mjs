@@ -573,5 +573,65 @@ if (!leaveResult.ok || guestActiveAfterLeave.hasRoom) {
   throw new Error('leaving a final-result room should release that player from active room lookup');
 }
 
+const waitingDb = new MemoryDocumentDatabase();
+const waitingRoomId = '991124';
+const waitingPlayers = [
+  { seat: 0, openid: 'waiting-host-openid', nickName: '房主', avatarUrl: '', isHuman: true, online: true, ready: true },
+  { seat: 1, openid: 'waiting-guest-openid', nickName: '客人', avatarUrl: '', isHuman: true, online: true, ready: false },
+];
+await waitingDb.collection('rooms').doc(waitingRoomId).set({
+  data: room.documentData({
+    _id: waitingRoomId,
+    status: 'waiting',
+    seatCount: 4,
+    players: waitingPlayers,
+    playerOpenids: waitingPlayers.map((player) => player.openid),
+    settings: { maxRounds: 2 },
+    hostOpenid: 'waiting-host-openid',
+    version: 0,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }),
+});
+const blockedStart = await room.startRound({ roomId: waitingRoomId }, { db: waitingDb, OPENID: 'waiting-host-openid' });
+if (blockedStart.ok || !blockedStart.room || blockedStart.room.canStart) {
+  throw new Error('waiting room should require all joined humans to be ready before starting');
+}
+const swapRequest = await room.requestSeatSwap(
+  { roomId: waitingRoomId, targetSeat: 1 },
+  { db: waitingDb, OPENID: 'waiting-host-openid' }
+);
+if (!swapRequest.ok || !swapRequest.room.swapRequest || swapRequest.room.swapRequest.direction !== 'outgoing') {
+  throw new Error('seat swap request should be visible to requester as outgoing');
+}
+const incomingSwap = await room.roomInfo({ roomId: waitingRoomId }, { db: waitingDb, OPENID: 'waiting-guest-openid' });
+if (!incomingSwap.ok || !incomingSwap.room.swapRequest || incomingSwap.room.swapRequest.direction !== 'incoming') {
+  throw new Error('seat swap request should be visible to target as incoming');
+}
+const acceptedSwap = await room.respondSeatSwap(
+  { roomId: waitingRoomId, requestId: incomingSwap.room.swapRequest.id, accept: true },
+  { db: waitingDb, OPENID: 'waiting-guest-openid' }
+);
+if (!acceptedSwap.ok || acceptedSwap.seat !== 0) {
+  throw new Error('accepting a seat swap should move the target player to the requester seat');
+}
+const hostAfterSwap = await room.roomInfo({ roomId: waitingRoomId }, { db: waitingDb, OPENID: 'waiting-host-openid' });
+if (!hostAfterSwap.ok || hostAfterSwap.seat !== 1 || hostAfterSwap.room.swapRequest) {
+  throw new Error('accepting a seat swap should exchange seats and clear the pending request');
+}
+await room.setReady({ roomId: waitingRoomId, ready: true }, { db: waitingDb, OPENID: 'waiting-guest-openid' });
+const hostReadyAfterSwap = await room.setReady({ roomId: waitingRoomId, ready: true }, { db: waitingDb, OPENID: 'waiting-host-openid' });
+if (!hostReadyAfterSwap.room.canStart || !hostReadyAfterSwap.room.readyToStart) {
+  throw new Error('host should be able to start once all joined humans are ready');
+}
+const guestLeaveWaiting = await room.leaveRoom({ roomId: waitingRoomId }, { db: waitingDb, OPENID: 'waiting-guest-openid' });
+if (!guestLeaveWaiting.ok || guestLeaveWaiting.closed) {
+  throw new Error('guest should be able to leave a waiting room without closing it');
+}
+const hostCloseWaiting = await room.leaveRoom({ roomId: waitingRoomId }, { db: waitingDb, OPENID: 'waiting-host-openid' });
+if (!hostCloseWaiting.ok || !hostCloseWaiting.closed) {
+  throw new Error('host leaving a waiting room should disband it');
+}
+
 await rm(tempDir, { recursive: true, force: true });
 console.log('server core checks passed');

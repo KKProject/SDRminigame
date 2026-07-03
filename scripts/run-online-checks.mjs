@@ -411,11 +411,17 @@ globalThis.wx.request = (options) => {
     return;
   }
   if (action === 'createRoom') {
+    const roomSettings = Object.assign({
+      maxRounds: options.data.maxRounds,
+      repeatRound: false,
+      washTwice: false,
+      payType: 'pihu',
+    }, options.data.settings || {});
     waitingRoomState = {
       roomId: '123456',
       status: 'waiting',
       hostOpenid: 'lobby-openid',
-      settings: { maxRounds: options.data.maxRounds },
+      settings: roomSettings,
       players: [
         { seat: 0, openid: 'lobby-openid', nickName: '大厅玩家', ready: false, online: true, isHost: true },
       ],
@@ -426,7 +432,7 @@ globalThis.wx.request = (options) => {
       yourSeat: 0,
       isHost: true,
     };
-    options.success({ statusCode: 200, data: { ok: true, roomId: '123456', seat: 0, settings: { maxRounds: options.data.maxRounds }, room: waitingRoomState } });
+    options.success({ statusCode: 200, data: { ok: true, roomId: '123456', seat: 0, settings: roomSettings, room: waitingRoomState } });
     return;
   }
   if (action === 'roomInfo') {
@@ -528,17 +534,47 @@ function attachLobbySocket(controller, seat = 0) {
 }
 attachLobbySocket(createdLobby, 0);
 lobbyCalls = [];
-const createdLobbyResult = await createdLobby.createLobbyRoom(4);
+const createdLobbyResult = await createdLobby.createLobbyRoom({
+  maxRounds: 4,
+  repeatRound: true,
+  washTwice: true,
+  payType: 'jiahu',
+});
+const createRoomCall = lobbyCalls.find((call) => call.data && call.data.action === 'createRoom');
 if (
   createdLobbyResult.entered
   || !createdLobbyResult.waiting
   || createdLobby.waitingRoom.roomId !== '123456'
   || createdLobby.waitingRoom.settings.maxRounds !== 4
-  || !lobbyCalls.find((call) => call.data && call.data.action === 'createRoom' && call.data.maxRounds === 4)
+  || createdLobby.waitingRoom.settings.repeatRound !== true
+  || createdLobby.waitingRoom.settings.washTwice !== true
+  || createdLobby.waitingRoom.settings.payType !== 'jiahu'
+  || !createRoomCall
+  || createRoomCall.data.maxRounds !== 4
+  || !createRoomCall.data.settings
+  || createRoomCall.data.settings.repeatRound !== true
+  || createRoomCall.data.settings.washTwice !== true
+  || createRoomCall.data.settings.payType !== 'jiahu'
   || lobbyCalls.find((call) => call.data && call.data.action === 'startRound')
 ) {
-  throw new Error('lobby room creation should submit selected maxRounds and enter the waiting room without auto-starting');
+  throw new Error('lobby room creation should submit selected settings and enter the waiting room without auto-starting');
 }
+const legacyLobby = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+legacyLobby.lobbyProfile = { nickName: '大厅玩家', avatarUrl: 'avatar.png' };
+attachLobbySocket(legacyLobby, 0);
+lobbyCalls = [];
+const legacyLobbyResult = await legacyLobby.createLobbyRoom(6);
+const legacyCreateRoomCall = lobbyCalls.find((call) => call.data && call.data.action === 'createRoom');
+if (
+  !legacyLobbyResult.waiting
+  || !legacyCreateRoomCall
+  || legacyCreateRoomCall.data.maxRounds !== 6
+  || legacyCreateRoomCall.data.settings.maxRounds !== 6
+  || legacyCreateRoomCall.data.settings.payType !== 'pihu'
+) {
+  throw new Error('lobby room creation should keep numeric maxRounds calls compatible');
+}
+legacyLobby.stopWaitingRefresh();
 if (!createdLobby.shareWaitingRoom() || !sharedPayload || sharedPayload.query !== 'roomId=123456&source=friendInvite') {
   throw new Error('waiting room invite should call shareAppMessage with roomId query');
 }
@@ -1758,14 +1794,23 @@ if (!missingActiveRoom.ok || missingActiveRoom.hasRoom) {
 const createRoomDbInstance = createRoomDb();
 const createdConfiguredRoom = await roomFunction.createRoom({
   profile: { nickName: '建房玩家' },
-  maxRounds: 4,
+  settings: {
+    maxRounds: 4,
+    repeatRound: true,
+    washTwice: true,
+    payType: 'changhu',
+  },
 }, { db: createRoomDbInstance, OPENID: 'creator-openid' });
 if (
   !createdConfiguredRoom.ok
   || createdConfiguredRoom.settings.maxRounds !== 4
+  || createdConfiguredRoom.settings.repeatRound !== true
+  || createdConfiguredRoom.settings.washTwice !== true
+  || createdConfiguredRoom.settings.payType !== 'changhu'
+  || createRoomDbInstance.documents.rooms[createdConfiguredRoom.roomId].settings.payType !== 'changhu'
   || !createRoomDbInstance.documents.rooms[createdConfiguredRoom.roomId].playerOpenids.includes('creator-openid')
 ) {
-  throw new Error('createRoom should save maxRounds settings and queryable playerOpenids');
+  throw new Error('createRoom should save normalized room settings and queryable playerOpenids');
 }
 const createOneRoundDbInstance = createRoomDb();
 const createdOneRoundRoom = await roomFunction.createRoom({
@@ -1779,8 +1824,14 @@ const createdDefaultRoom = await roomFunction.createRoom({
   profile: { nickName: '非法局数玩家' },
   maxRounds: 99,
 }, { db: createRoomDb(), OPENID: 'invalid-rounds-openid' });
-if (!createdDefaultRoom.ok || createdDefaultRoom.settings.maxRounds !== 2) {
-  throw new Error('createRoom should normalize unsupported maxRounds to the default test option');
+if (
+  !createdDefaultRoom.ok
+  || createdDefaultRoom.settings.maxRounds !== 2
+  || createdDefaultRoom.settings.repeatRound !== false
+  || createdDefaultRoom.settings.washTwice !== false
+  || createdDefaultRoom.settings.payType !== 'pihu'
+) {
+  throw new Error('createRoom should normalize unsupported settings to defaults');
 }
 const duplicateRoomDb = createRoomDb({
   'duplicate-room': {
@@ -1907,6 +1958,18 @@ const hostReadyAgain = await roomFunction.setReady({
 if (!hostReady.ok || !hostReadyAgain.ok || !hostReadyAgain.room.players.find((player) => player.openid === 'host-openid').ready) {
   throw new Error('setReady should idempotently mark a waiting-room player ready');
 }
+const guestNotReadyStart = await roomFunction.startRound({
+  roomId: hostRoom.roomId,
+}, { db: friendRoomDb, OPENID: 'host-openid' });
+if (guestNotReadyStart.ok || guestNotReadyStart.error !== 'PLAYERS_NOT_READY') {
+  throw new Error('startRound should reject a waiting room until every joined human is ready');
+}
+const guestReady = await roomFunction.setReady({
+  roomId: hostRoom.roomId,
+}, { db: friendRoomDb, OPENID: 'guest-openid' });
+if (!guestReady.ok || !guestReady.room.readyToStart) {
+  throw new Error('setReady should mark a guest ready and unlock host start when all humans are ready');
+}
 const readyStart = await roomFunction.startRound({
   roomId: hostRoom.roomId,
 }, { db: friendRoomDb, OPENID: 'host-openid' });
@@ -1916,7 +1979,7 @@ if (
   || !friendRoomDb.documents.roomStates[hostRoom.roomId]
   || friendRoomDb.documents.rooms[hostRoom.roomId].state.seats.length !== 4
 ) {
-  throw new Error('startRound should allow a ready host with two humans and fill empty seats with AI');
+  throw new Error('startRound should allow all-ready humans and fill empty seats with AI');
 }
 const hostOffline = await roomFunction.setPlayerConnection({
   roomId: hostRoom.roomId,
@@ -1958,8 +2021,8 @@ const unreadyRoomDb = createRoomDb({
 const unreadyStart = await roomFunction.startRound({
   roomId: 'unready-room',
 }, { db: unreadyRoomDb, OPENID: 'unready-host' });
-if (unreadyStart.ok || unreadyStart.error !== 'HOST_NOT_READY') {
-  throw new Error('startRound should reject waiting rooms when the host is not ready');
+if (unreadyStart.ok || unreadyStart.error !== 'PLAYERS_NOT_READY') {
+  throw new Error('startRound should reject waiting rooms when any joined human is not ready');
 }
 const maxRoundDb = createRoomDb({
   'max-round-room': {
@@ -2506,12 +2569,21 @@ if (!/playOnlineEvent\(event, onComplete\)/.test(animationControllerSource)) {
   throw new Error('animation controller should expose an explicit online event animation API');
 }
 const mainSource = await readFile(join(root, 'js/main.js'), 'utf8');
-if (!/this\.online\.onLobby = \(lobby\) => \{[\s\S]*?this\.mode = 'lobby';[\s\S]*?this\.menu\.show\(\);[\s\S]*?\};/.test(mainSource)) {
+if (!/bindOnlineController\(controller\)\s*\{[\s\S]*?controller\.onLobby = \(lobby\) => \{[\s\S]*?this\.mode = 'lobby';[\s\S]*?this\.menu\.show\(\);[\s\S]*?\};/.test(mainSource)) {
   throw new Error('returning to the online lobby should switch the main render mode away from the table and show the menu');
 }
 const menuSource = await readFile(join(root, 'js/ui/menu.js'), 'utf8');
 if (!/roundOptions\s*=\s*\[1,\s*2,\s*4,\s*6\]/.test(menuSource)) {
   throw new Error('online lobby should expose one, two, four, and six round room options');
+}
+if (!/authState\s*=\s*'checking'/.test(menuSource) || !/ensureStartAuthCheck\(\)/.test(menuSource)) {
+  throw new Error('start menu should check login state before enabling room creation');
+}
+if (!/onSelect\('startLogin'/.test(menuSource) || !/mode:\s*ready\s*\?\s*'start'\s*:\s*'login'/.test(menuSource)) {
+  throw new Error('start menu should require login before the start action');
+}
+if (!/确认创建/.test(menuSource) || !/onSelect\('confirmCreateRoom'/.test(menuSource)) {
+  throw new Error('create room settings should confirm creation instead of directly opening seat selection');
 }
 const rendererSource = await readFile(join(root, 'js/game/renderer.js'), 'utf8');
 const layoutSource = await readFile(join(root, 'js/game/layout.js'), 'utf8');

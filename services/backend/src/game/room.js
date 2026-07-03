@@ -36,6 +36,7 @@ const ROOM_STATES = 'roomStates';
 const QUEUE = 'matchQueue';
 const SUPPORTED_MAX_ROUNDS = [1, 2, 4, 6];
 const DEFAULT_MAX_ROUNDS = 2;
+const SUPPORTED_PAY_TYPES = ['pihu', 'jiahu', 'changhu'];
 const CLOSED_ROOM_STATUSES = ['closed'];
 /** 玩家超过此毫秒未心跳则视为掉线 */
 const PLAYER_TIMEOUT_MS = 60000;
@@ -64,8 +65,12 @@ function normalizeMaxRounds(value) {
 }
 
 function normalizeRoomSettings(settings = {}) {
+  const payType = SUPPORTED_PAY_TYPES.indexOf(settings.payType) >= 0 ? settings.payType : 'pihu';
   return {
     maxRounds: normalizeMaxRounds(settings.maxRounds),
+    repeatRound: Boolean(settings.repeatRound),
+    washTwice: Boolean(settings.washTwice),
+    payType,
   };
 }
 
@@ -128,7 +133,34 @@ function canStartWaitingRoom(room) {
   const host = players.find((player) => player.openid === room.hostOpenid);
   return room.status === 'waiting'
     && players.length >= MIN_HUMANS
+    && players.every((player) => player.ready)
     && Boolean(host && host.ready);
+}
+
+function publicWaitingPlayer(player) {
+  if (!player) return null;
+  return {
+    seat: player.seat,
+    nickName: player.nickName || '玩家',
+    avatarUrl: player.avatarUrl || '',
+    ready: Boolean(player.ready),
+    isHost: false,
+  };
+}
+
+function buildSeatSwapSnapshot(room, openid) {
+  const request = room && room.seatSwapRequest;
+  if (!request || request.status !== 'pending' || !openid) return null;
+  if (openid !== request.fromOpenid && openid !== request.toOpenid) return null;
+  return {
+    id: request.id,
+    direction: openid === request.toOpenid ? 'incoming' : 'outgoing',
+    fromSeat: request.fromSeat,
+    toSeat: request.toSeat,
+    fromPlayer: publicWaitingPlayer((room.players || []).find((player) => player.openid === request.fromOpenid)),
+    toPlayer: publicWaitingPlayer((room.players || []).find((player) => player.openid === request.toOpenid)),
+    createdAt: request.createdAt || null,
+  };
 }
 
 function buildWaitingRoomSnapshot(room, openid = null) {
@@ -161,6 +193,7 @@ function buildWaitingRoomSnapshot(room, openid = null) {
     readyToStart: canStartWaitingRoom(room),
     yourSeat: seat,
     isHost: Boolean(openid && openid === room.hostOpenid),
+    swapRequest: buildSeatSwapSnapshot(room, openid),
   };
 }
 
@@ -607,7 +640,9 @@ async function createRoom(event, ctx) {
     return Object.assign(buildActiveRoomResult(existing, OPENID), { alreadyInRoom: true });
   }
   const profile = event.profile || {};
-  const settings = normalizeRoomSettings(Object.assign({}, event.settings || {}, { maxRounds: event.maxRounds }));
+  const settingsInput = Object.assign({}, event.settings || {});
+  if (event.maxRounds !== undefined) settingsInput.maxRounds = event.maxRounds;
+  const settings = normalizeRoomSettings(settingsInput);
   const roomId = genRoomCode();
   const players = [{
     ...makeWaitingPlayer(0, OPENID, profile),
@@ -731,6 +766,96 @@ async function setReady(event, ctx) {
   };
 }
 
+async function requestSeatSwap(event, ctx) {
+  const { db, OPENID } = ctx;
+  const roomId = event.roomId;
+  const targetSeat = Number(event.targetSeat);
+  if (!roomId) return { ok: false, error: 'ROOM_NOT_FOUND' };
+  if (!Number.isInteger(targetSeat) || targetSeat < 0 || targetSeat >= SEAT_COUNT) {
+    return { ok: false, error: 'INVALID_SEAT' };
+  }
+  const room = await getRoom(db, roomId);
+  if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
+  if (room.status !== 'waiting') return { ok: false, error: 'ROOM_ALREADY_STARTED', status: room.status };
+  const fromPlayer = touchWaitingPlayer(room, OPENID);
+  if (!fromPlayer) return { ok: false, error: 'NOT_IN_ROOM' };
+  const toPlayer = (room.players || []).find((player) => player && player.seat === targetSeat && player.openid);
+  if (!toPlayer) return { ok: false, error: 'TARGET_NOT_FOUND' };
+  if (toPlayer.openid === OPENID) return { ok: false, error: 'CANNOT_SWAP_SELF' };
+  const existing = room.seatSwapRequest;
+  if (existing && existing.status === 'pending') {
+    const sameRequest = existing.fromOpenid === OPENID && existing.toOpenid === toPlayer.openid;
+    if (!sameRequest) return { ok: false, error: 'SWAP_REQUEST_PENDING' };
+  }
+  room.seatSwapRequest = {
+    id: `${Date.now()}-${fromPlayer.seat}-${targetSeat}`,
+    status: 'pending',
+    fromOpenid: OPENID,
+    fromSeat: fromPlayer.seat,
+    toOpenid: toPlayer.openid,
+    toSeat: toPlayer.seat,
+    createdAt: Date.now(),
+  };
+  await db.collection(ROOMS).doc(roomId).update({
+    data: {
+      players: room.players,
+      playerOpenids: roomPlayerOpenids(room),
+      seatSwapRequest: room.seatSwapRequest,
+      updatedAt: Date.now(),
+    },
+  });
+  return {
+    ok: true,
+    roomId,
+    seat: fromPlayer.seat,
+    room: buildWaitingRoomSnapshot(room, OPENID),
+  };
+}
+
+async function respondSeatSwap(event, ctx) {
+  const { db, OPENID } = ctx;
+  const roomId = event.roomId;
+  if (!roomId) return { ok: false, error: 'ROOM_NOT_FOUND' };
+  const room = await getRoom(db, roomId);
+  if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
+  if (room.status !== 'waiting') return { ok: false, error: 'ROOM_ALREADY_STARTED', status: room.status };
+  const request = room.seatSwapRequest;
+  if (!request || request.status !== 'pending') return { ok: false, error: 'SWAP_REQUEST_NOT_FOUND' };
+  if (event.requestId && request.id !== event.requestId) return { ok: false, error: 'SWAP_REQUEST_STALE' };
+  if (request.toOpenid !== OPENID) return { ok: false, error: 'NOT_SWAP_TARGET' };
+  touchWaitingPlayer(room, OPENID);
+  const fromPlayer = (room.players || []).find((player) => player && player.openid === request.fromOpenid);
+  const toPlayer = (room.players || []).find((player) => player && player.openid === request.toOpenid);
+  if (!fromPlayer || !toPlayer) {
+    room.seatSwapRequest = null;
+    await db.collection(ROOMS).doc(roomId).update({
+      data: { seatSwapRequest: null, players: room.players, playerOpenids: roomPlayerOpenids(room), updatedAt: Date.now() },
+    });
+    return { ok: false, error: 'SWAP_PLAYER_LEFT', room: buildWaitingRoomSnapshot(room, OPENID) };
+  }
+  if (event.accept !== false) {
+    const fromSeat = fromPlayer.seat;
+    fromPlayer.seat = toPlayer.seat;
+    toPlayer.seat = fromSeat;
+  }
+  room.seatSwapRequest = null;
+  await db.collection(ROOMS).doc(roomId).update({
+    data: {
+      players: room.players,
+      playerOpenids: roomPlayerOpenids(room),
+      seatSwapRequest: null,
+      updatedAt: Date.now(),
+    },
+  });
+  return {
+    ok: true,
+    roomId,
+    accepted: event.accept !== false,
+    seat: seatOfOpenid(room, OPENID),
+    room: buildWaitingRoomSnapshot(room, OPENID),
+  };
+}
+
 /**
  * 房主开局：空座由 AI 补位，状态变为 playing。
  * 仅 hostOpenid 可调用。
@@ -762,7 +887,6 @@ async function startRound(event, ctx) {
     };
   }
   if (room.status === 'waiting') {
-    const host = (room.players || []).find((player) => player.openid === room.hostOpenid);
     if (humanPlayers(room).length < MIN_HUMANS) {
       return {
         ok: false,
@@ -770,10 +894,10 @@ async function startRound(event, ctx) {
         room: buildWaitingRoomSnapshot(room, OPENID),
       };
     }
-    if (!host || !host.ready) {
+    if (!canStartWaitingRoom(room)) {
       return {
         ok: false,
-        error: 'HOST_NOT_READY',
+        error: 'PLAYERS_NOT_READY',
         room: buildWaitingRoomSnapshot(room, OPENID),
       };
     }
@@ -820,6 +944,36 @@ async function leaveRoom(event, ctx) {
   }
   const seat = seatOfOpenid(room, OPENID);
   if (seat < 0) return { ok: false, error: 'NOT_IN_ROOM' };
+  if (room.status === 'waiting') {
+    const hostLeavingWaiting = room.hostOpenid === OPENID;
+    if (hostLeavingWaiting) {
+      closeRoom(room);
+    } else {
+      room.players = (room.players || []).filter((player) => player.openid !== OPENID);
+      if (
+        room.seatSwapRequest
+        && (room.seatSwapRequest.fromOpenid === OPENID || room.seatSwapRequest.toOpenid === OPENID)
+      ) {
+        room.seatSwapRequest = null;
+      }
+      room.playerOpenids = roomPlayerOpenids(room);
+    }
+    await db.collection(ROOMS).doc(roomId).set({
+      data: documentData(Object.assign({}, room, {
+        playerOpenids: roomPlayerOpenids(room),
+        updatedAt: now,
+      })),
+    });
+    return {
+      ok: true,
+      roomId,
+      left: true,
+      closed: room.status === 'closed',
+      status: room.status,
+      seat,
+      room: room.status === 'waiting' ? buildWaitingRoomSnapshot(room, OPENID) : null,
+    };
+  }
   if (room.status !== 'tableResult' && room.status !== 'closed') {
     return { ok: false, error: 'ROOM_NOT_FINISHED', status: room.status };
   }
@@ -1402,6 +1556,8 @@ module.exports = {
   joinRoom,
   roomInfo,
   setReady,
+  requestSeatSwap,
+  respondSeatSwap,
   startRound,
   leaveRoom,
   requestRematch,

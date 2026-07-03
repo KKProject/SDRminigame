@@ -7,7 +7,7 @@ export const ASSET_MANIFEST = {
     avatarBorder: 'images/avatar_border.png',
     nicknameBg: 'images/nickname_bg.png',
     flowers: 'images/flwoers.png',
-    cardBack: 'images/59f115d6-519c-40fc-99d4-2204eab9e574.eff8a.png',
+    cardBack: 'images/userAction.png',
     cardFront: 'images/element.png',
     button: 'images/actions.png',
     result: 'images/element.png',

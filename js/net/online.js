@@ -22,6 +22,7 @@ const SOCKET_AUTH_ERROR_CODES = [
   'SOCKET_TOKEN_INVALID',
   'SOCKET_CONNECT_UNAUTHORIZED',
 ];
+const SUPPORTED_PAY_TYPES = ['pihu', 'jiahu', 'changhu'];
 export const LOBBY_STATES = {
   CHECKING_ROOM: 'checking-room',
   RECONNECTING: 'reconnecting',
@@ -37,6 +38,20 @@ function lobbyProfile(loginRes = {}, fallback = {}) {
     nickName: user.nickName || fallback.nickName || '玩家',
     avatarUrl: user.avatarUrl || fallback.avatarUrl || '',
     openid: loginRes.openid || user.openid || '',
+  };
+}
+
+function normalizeLobbyRoomSettings(input = {}) {
+  const source = typeof input === 'number'
+    ? { maxRounds: input }
+    : Object.assign({}, input.settings || {}, input);
+  const maxRounds = Number(source.maxRounds);
+  const payType = SUPPORTED_PAY_TYPES.indexOf(source.payType) >= 0 ? source.payType : 'pihu';
+  return {
+    maxRounds: [1, 2, 4, 6].indexOf(maxRounds) >= 0 ? maxRounds : 2,
+    repeatRound: Boolean(source.repeatRound),
+    washTwice: Boolean(source.washTwice),
+    payType,
   };
 }
 
@@ -220,6 +235,17 @@ export function onlineErrorMessage(err) {
     NOT_IN_ROOM: '当前微信账号不在这张牌桌中',
     WAITING_FOR_PLAYERS: '至少需要 2 名真人玩家才能开局',
     HOST_NOT_READY: '房主准备后才能开局',
+    PLAYERS_NOT_READY: '所有玩家准备后才能开局',
+    INVALID_SEAT: '座位信息无效，请刷新后重试',
+    TARGET_NOT_FOUND: '该座位暂无可交换玩家',
+    CANNOT_SWAP_SELF: '不能和自己交换座位',
+    SWAP_REQUEST_PENDING: '当前已有换座请求待处理',
+    SWAP_REQUEST_NOT_FOUND: '换座请求已失效',
+    SWAP_REQUEST_STALE: '换座请求已过期，请重新发起',
+    NOT_SWAP_TARGET: '该换座请求不是发给你的',
+    SWAP_PLAYER_LEFT: '对方已离开房间，换座失败',
+    SWAP_REQUEST_FAILED: '发送换座请求失败，请重试',
+    SWAP_RESPONSE_FAILED: '处理换座请求失败，请重试',
     SET_READY_FAILED: '准备状态更新失败，请重试',
     LEAVE_ROOM_FAILED: '退出牌桌失败，请重试',
     REMATCH_FAILED: '发起重开失败，请重试',
@@ -692,17 +718,19 @@ export default class OnlineController {
     }
   }
 
-  async createLobbyRoom(maxRounds = 2) {
+  async createLobbyRoom(settingsInput = 2) {
     if (this.starting) throw new Error('ONLINE_STARTING');
     this.starting = true;
     try {
       if (!ensureCloudInit()) throw new Error('BACKEND_UNSUPPORTED');
-      this.setLobbyState(LOBBY_STATES.CREATING, { maxRounds });
+      const settings = normalizeLobbyRoomSettings(settingsInput);
+      this.setLobbyState(LOBBY_STATES.CREATING, { settings, maxRounds: settings.maxRounds });
       this.setStatus('创建牌桌…');
       const created = await callFunction('game', {
         action: 'createRoom',
         profile: this.lobbyProfile || {},
-        maxRounds,
+        maxRounds: settings.maxRounds,
+        settings,
       });
       if (!created || !created.ok) {
         const error = new Error((created && created.error) || 'CREATE_ROOM_FAILED');
@@ -769,6 +797,10 @@ export default class OnlineController {
       const room = await this.fetchWaitingRoom();
       if (room && room.status !== 'waiting') {
         this.stopWaitingRefresh();
+        if (room.status === 'closed') {
+          this.setStatus('房间已解散');
+          return this.returnToLobby();
+        }
         const entered = await this.enterExistingRoom({ roomId: this.roomId, seat: this.mySeat, status: room.status });
         this.setStatus('');
         if (entered && entered.entered !== false) {
@@ -780,6 +812,11 @@ export default class OnlineController {
       this.setWaitingRoomState(room);
       return true;
     } catch (err) {
+      const code = cloudErrorCode(err);
+      if (code === 'ROOM_ENDED' || code === 'NOT_IN_ROOM') {
+        this.setStatus(code === 'ROOM_ENDED' ? '房间已解散' : '已退出房间');
+        return this.returnToLobby();
+      }
       this.setWaitingRoomState(this.waitingRoom, { error: onlineErrorMessage(err) });
       return false;
     }
@@ -827,6 +864,41 @@ export default class OnlineController {
         error.code = (res && res.error) || 'SET_READY_FAILED';
         throw error;
       }
+      this.setWaitingRoomState(res.room);
+      return true;
+    } catch (err) {
+      this.setWaitingRoomState(this.waitingRoom, { error: onlineErrorMessage(err) });
+      return false;
+    }
+  }
+
+  async requestSeatSwap(targetSeat) {
+    if (!this.roomId || typeof targetSeat !== 'number') return false;
+    try {
+      const res = await this.callGame('requestSeatSwap', { targetSeat });
+      if (!res || !res.ok) {
+        const error = new Error((res && res.error) || 'SWAP_REQUEST_FAILED');
+        error.code = (res && res.error) || 'SWAP_REQUEST_FAILED';
+        throw error;
+      }
+      this.setWaitingRoomState(res.room);
+      return true;
+    } catch (err) {
+      this.setWaitingRoomState(this.waitingRoom, { error: onlineErrorMessage(err) });
+      return false;
+    }
+  }
+
+  async respondSeatSwap(requestId, accept = true) {
+    if (!this.roomId) return false;
+    try {
+      const res = await this.callGame('respondSeatSwap', { requestId, accept });
+      if (!res || !res.ok) {
+        const error = new Error((res && res.error) || 'SWAP_RESPONSE_FAILED');
+        error.code = (res && res.error) || 'SWAP_RESPONSE_FAILED';
+        throw error;
+      }
+      if (typeof res.seat === 'number') this.mySeat = res.seat;
       this.setWaitingRoomState(res.room);
       return true;
     } catch (err) {

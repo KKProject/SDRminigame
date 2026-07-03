@@ -28,6 +28,9 @@ export default class StartMenu {
     this.createSettingsTouchActive = false;
     this.createSettingsScrollY = 0;
     this.screen = 'start';
+    this.authState = 'checking';
+    this.authCheckStarted = false;
+    this.authError = '';
     this.lobby = {
       state: '',
       profile: null,
@@ -45,7 +48,10 @@ export default class StartMenu {
       room: null,
       profile: null,
       error: '',
+      swapModal: null,
+      swapRequestId: '',
     };
+    this.waitingAvatarImages = {};
     this.avatarImage = null;
     this.avatarUrl = '';
     this.avatarLoaded = false;
@@ -59,6 +65,7 @@ export default class StartMenu {
     wx.onTouchStart(this.boundTouch);
     if (wx.onTouchMove) wx.onTouchMove(this.boundTouchMove);
     if (wx.onTouchEnd) wx.onTouchEnd(this.boundTouchEnd);
+    this.ensureStartAuthCheck();
   }
 
   hide() {
@@ -77,6 +84,44 @@ export default class StartMenu {
   setBusy(busy) {
     this.busy = Boolean(busy);
     if (this.busy) this.destroyProfileButton();
+  }
+
+  setStartAuthState(state, detail = {}) {
+    this.authState = state || 'login-required';
+    this.authError = detail.error || '';
+    if (detail.profile) this.updateStartProfile(detail.profile);
+    if (this.authState === 'ready') {
+      this.status = '';
+      this.destroyProfileButton();
+    } else if (this.authState === 'checking') {
+      this.status = '正在检查登录状态…';
+    } else if (this.authState === 'logging-in') {
+      this.status = '正在登录…';
+      this.destroyProfileButton();
+    } else if (this.authState === 'error') {
+      this.status = this.authError || '登录失败，请重试';
+    } else {
+      this.status = '请先登录后开始';
+    }
+  }
+
+  ensureStartAuthCheck() {
+    if (!this.active || this.screen !== 'start' || this.authCheckStarted) return;
+    this.authCheckStarted = true;
+    this.setStartAuthState('checking');
+    getAuthorizedProfile()
+      .then((profile) => {
+        if (profile) {
+          this.updateStartProfile(profile);
+          this.setStartAuthState('logging-in', { profile });
+          if (typeof this.onSelect === 'function') this.onSelect('startLogin', profile);
+          return;
+        }
+        this.setStartAuthState('login-required');
+      })
+      .catch(() => {
+        this.setStartAuthState('login-required');
+      });
   }
 
   showLobby(profile = {}) {
@@ -142,6 +187,24 @@ export default class StartMenu {
     if (detail.profile) this.waiting.profile = detail.profile;
     if (detail.room) this.waiting.room = detail.room;
     this.waiting.error = detail.error || '';
+    const request = this.waiting.room && this.waiting.room.swapRequest;
+    if (request && request.direction === 'incoming' && request.id !== this.waiting.swapRequestId) {
+      this.waiting.swapModal = {
+        type: 'received',
+        requestId: request.id,
+        player: request.fromPlayer || {},
+      };
+      this.waiting.swapRequestId = request.id;
+    } else if (!request) {
+      this.waiting.swapRequestId = '';
+      if (this.waiting.swapModal && this.waiting.swapModal.type === 'received') this.waiting.swapModal = null;
+    }
+    this.destroyProfileButton();
+  }
+
+  showSeatSwapReceived(player = {}) {
+    this.screen = 'room-waiting';
+    this.waiting.swapModal = { type: 'received', player };
     this.destroyProfileButton();
   }
 
@@ -178,8 +241,9 @@ export default class StartMenu {
         this.screen = 'start';
         this.status = '';
       } else if (hit.type === 'create-next' && !this.busy) {
-        this.showSeatSelection();
-        this.onSelect('createRoomNext', this.getRoomDraft());
+        this.setBusy(true);
+        this.status = '正在创建房间…';
+        this.onSelect('confirmCreateRoom', this.getRoomDraft());
       }
       return;
     }
@@ -194,9 +258,26 @@ export default class StartMenu {
       return;
     }
     if (this.screen === 'room-waiting') {
-      if (hit.type === 'ready' && !this.busy) this.onSelect('roomReady');
+      if (hit.type === 'swap-modal-cancel') {
+        this.waiting.swapModal = null;
+      } else if (hit.type === 'swap-modal-send') {
+        this.status = '已发送换座请求，等待对方确认';
+        this.onSelect('seatSwapRequest', { player: hit.player || {} });
+        this.waiting.swapModal = null;
+      } else if (hit.type === 'swap-modal-accept') {
+        this.status = '已同意换座，等待同步座位';
+        this.onSelect('seatSwapRespond', { requestId: hit.requestId || '', accept: true });
+        this.waiting.swapModal = null;
+      } else if (hit.type === 'swap-modal-reject') {
+        this.status = '已拒绝换座请求';
+        this.onSelect('seatSwapRespond', { requestId: hit.requestId || '', accept: false });
+        this.waiting.swapModal = null;
+      } else if (hit.type === 'swap-target' && !this.busy) {
+        this.waiting.swapModal = { type: 'request', player: hit.player || {} };
+      } else if (hit.type === 'ready' && !this.busy) this.onSelect('roomReady', { ready: hit.ready });
       else if (hit.type === 'invite' && !this.busy) this.onSelect('roomInvite');
       else if (hit.type === 'start-room' && !this.busy) this.onSelect('roomStart');
+      else if (hit.type === 'disband-room' && !this.busy) this.onSelect('roomDisband');
       else if (hit.type === 'waiting-retry' && !this.busy) this.onSelect('waitingRetry');
       return;
     }
@@ -215,9 +296,13 @@ export default class StartMenu {
       return;
     }
     if (this.busy) return;
-    if (hit) {
+    if (hit && hit.mode === 'start' && !hit.disabled) {
       this.showCreateRoomSettings();
       this.onSelect('openCreateRoomSettings', this.getRoomDraft());
+      return;
+    }
+    if (hit && hit.mode === 'login' && !hit.disabled) {
+      this.handleOnlineTouch();
     }
   }
 
@@ -243,12 +328,14 @@ export default class StartMenu {
   handleOnlineTouch() {
     if (this.checkingProfile) return;
     this.checkingProfile = true;
+    this.setStartAuthState('checking');
     getAuthorizedProfile()
       .then((profile) => {
         if (profile) {
           this.updateStartProfile(profile);
           this.destroyProfileButton();
-          this.onSelect('online', profile);
+          this.setStartAuthState('logging-in', { profile });
+          this.onSelect('startLogin', profile);
           return;
         }
         if (this.profileButton) {
@@ -260,13 +347,15 @@ export default class StartMenu {
             this.onSelect('online', profileWithFallback());
             return;
           }
-          this.setStatus('请点击“在线对战”并确认微信授权');
+          this.setStartAuthState('login-required');
           return;
         }
-        this.onSelect('online', profileWithFallback());
+        this.setStartAuthState('logging-in');
+        this.onSelect('startLogin', profileWithFallback());
       })
       .catch(() => {
-        this.onSelect('online', profileWithFallback());
+        this.setStartAuthState('logging-in');
+        this.onSelect('startLogin', profileWithFallback());
       })
       .finally(() => {
         this.checkingProfile = false;
@@ -286,18 +375,20 @@ export default class StartMenu {
       this.destroyProfileButton();
       return;
     }
-    const online = this.buttons.find((button) => button.mode === 'online');
-    if (!this.active || this.busy || !online) {
+    const loginButton = this.buttons.find((button) => button.mode === 'login');
+    const needsLoginButton = this.authState === 'login-required' || this.authState === 'error';
+    if (!this.active || this.busy || !needsLoginButton || !loginButton) {
       this.destroyProfileButton();
       return;
     }
-    const signature = [online.x, online.y, online.w, online.h].join(':');
+    const signature = [loginButton.x, loginButton.y, loginButton.w, loginButton.h].join(':');
     if (this.profileButton && signature === this.profileButtonSignature) return;
     this.destroyProfileButton();
-    this.profileButton = createUserProfileButton(online, (profile) => {
+    this.profileButton = createUserProfileButton(loginButton, (profile) => {
       this.updateStartProfile(profile);
       this.destroyProfileButton();
-      if (typeof this.onSelect === 'function') this.onSelect('online', profile);
+      this.setStartAuthState('logging-in', { profile });
+      if (typeof this.onSelect === 'function') this.onSelect('startLogin', profile);
     });
     this.profileButtonSignature = this.profileButton ? signature : '';
   }
@@ -350,13 +441,20 @@ export default class StartMenu {
     const flowers = this.drawStartFlowers(ctx, centerX, sloganY + sloganHeight-20, bounds, sloganSize.width * 0.8);
 
     const startButton = this.getStartButtonBounds(bounds);
-    const defs = [{ mode: 'start', label: '开始', fill: '#d92d20' }];
+    const ready = this.authState === 'ready';
+    const loading = this.authState === 'checking' || this.authState === 'logging-in';
+    const defs = [{
+      mode: ready ? 'start' : 'login',
+      label: ready ? '开始' : (loading ? '登录中' : '登录'),
+      fill: ready ? '#d92d20' : '#a34722',
+      disabled: loading,
+    }];
 
     this.buttons = defs.map((def, index) => {
       const x = centerX - startButton.width / 2;
       const y = flowers.bottom - 25 + index * startButton.height;
       this.drawStartButton(ctx, x, y, startButton.width, startButton.height, def);
-      return { mode: def.mode, x, y, w: startButton.width, h: startButton.height };
+      return { mode: def.mode, disabled: def.disabled, x, y, w: startButton.width, h: startButton.height };
     });
     this.syncProfileButton();
 
@@ -572,11 +670,21 @@ export default class StartMenu {
   drawStartButton(ctx, x, y, width, height, def) {
     const image = this.assets && this.assets.getImage ? this.assets.getImage('startButton') : null;
     if (image && image.width && image.height) {
+      ctx.save();
+      if (def.disabled) ctx.globalAlpha = 0.62;
       ctx.drawImage(image, x, y, width, height);
+      ctx.restore();
+      if (def.label && def.label !== '开始') {
+        ctx.fillStyle = '#fff6d9';
+        ctx.font = `bold ${Math.max(18, Math.round(height * 0.34))}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(def.label, x + width / 2, y + height / 2);
+      }
       return;
     }
 
-    ctx.fillStyle = def.fill;
+    ctx.fillStyle = def.disabled ? 'rgba(163, 71, 34, 0.68)' : def.fill;
     this.roundRect(ctx, x, y, width, height, 14);
     ctx.fill();
     ctx.fillStyle = '#ffffff';
@@ -857,7 +965,7 @@ export default class StartMenu {
     ));
 
     this.drawFooterButton(ctx, layout, 704, 744, 212, '返回', false, 'create-back');
-    this.drawFooterButton(ctx, layout, 938, 744, 212, '下一步', true, 'create-next');
+    this.drawFooterButton(ctx, layout, 938, 744, 212, '确认创建', true, 'create-next');
 
     if (this.status) {
       this.drawDesignText(ctx, layout, this.status, 780, 690, 18, '#ffd27a', 'normal', 'center');
@@ -1014,111 +1122,194 @@ export default class StartMenu {
   }
 
   renderWaitingRoom(ctx, metrics) {
-    const bounds = metrics.safeAreaBounds || { x: 0, y: 0, width: metrics.width, height: metrics.height };
-    const centerX = bounds.x + bounds.width / 2;
-    const top = bounds.y + 30;
+    const layout = this.getDesignLayout(metrics);
     const room = this.waiting.room || {};
     const players = Array.isArray(room.players) ? room.players : [];
-    const mine = players.find((player) => player.seat === room.yourSeat) || {};
+    const mySeat = typeof room.yourSeat === 'number' ? room.yourSeat : 0;
+    const mine = players.find((player) => player.seat === mySeat) || {};
     this.buttons = [];
     this.destroyProfileButton();
+    this.loadWaitingAvatars(players);
 
     ctx.save();
-    this.drawHallBackground(ctx, metrics, 'rgba(13, 18, 28, 0.88)');
-
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#f7f3e8';
-    ctx.font = 'bold 32px sans-serif';
-    ctx.fillText('等待好友加入', centerX, top + 20);
-
-    ctx.fillStyle = '#cbd5e1';
-    ctx.font = '21px sans-serif';
-    ctx.fillText(`房间号 ${room.roomId || '------'}`, centerX, top + 62);
-    ctx.fillText(`局数 ${room.settings && room.settings.maxRounds ? room.settings.maxRounds : 2}`, centerX, top + 94);
-
-    const listTop = top + 132;
-    const rowH = 54;
-    const listW = Math.min(360, bounds.width - 42);
-    const listX = centerX - listW / 2;
-    for (let index = 0; index < Math.max(players.length, 1); index++) {
-      const player = players[index];
-      const y = listTop + index * rowH;
-      ctx.fillStyle = 'rgba(255,255,255,0.08)';
-      this.roundRect(ctx, listX, y, listW, rowH - 8, 8);
-      ctx.fill();
-      if (!player) {
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '20px sans-serif';
-        ctx.fillText('等待玩家加入', centerX, y + rowH / 2 - 4);
-        continue;
-      }
-      ctx.textAlign = 'left';
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 21px sans-serif';
-      const tags = [player.isHost ? '房主' : '', player.online === false ? '离线' : ''].filter(Boolean).join(' ');
-      ctx.fillText(`${player.nickName || '玩家'}${tags ? ` · ${tags}` : ''}`, listX + 18, y + 20);
-      ctx.fillStyle = player.ready ? '#8ee6a7' : '#ffd27a';
-      ctx.font = '18px sans-serif';
-      ctx.fillText(player.ready ? '已准备' : '未准备', listX + 18, y + 42);
-      ctx.textAlign = 'center';
-    }
+    this.drawTableBackground(ctx, metrics);
+    this.drawWaitingHeader(ctx, layout, room, players);
+    this.drawRoomFlowPanel(ctx, layout, 532, 156, 511, 511);
+    this.drawWaitingSeatBoard(ctx, layout, room, players, mySeat);
+    this.drawWaitingActions(ctx, layout, room, mine);
 
     const errorText = this.waiting.error || '';
-    const hint = errorText || (room.canStart
-      ? '房主可以开始牌局'
-      : (room.readyToStart ? '等待房主开始' : `至少 ${room.minHumansToStart || 2} 名真人，房主准备后开局`));
-    ctx.fillStyle = errorText ? '#ffb4a8' : '#cbd5e1';
-    ctx.font = '20px sans-serif';
-    ctx.fillText(hint, centerX, bounds.y + bounds.height - 176);
+    const request = room.swapRequest || null;
+    const statusText = errorText
+      || this.status
+      || (request && request.direction === 'outgoing' ? '换座请求已发送，等待对方确认'
+        : (room.readyToStart ? '全员已准备，等待房主开局' : '微信邀请进入后自动分配空座位'));
+    this.drawDesignText(ctx, layout, statusText, 780, 824, 20, errorText ? '#ffb4a8' : '#ffd78a', '500', 'center');
 
-    const btnW = Math.min(156, (bounds.width - 54) / 2);
-    const btnH = 52;
-    const gap = 14;
-    const btnY = bounds.y + bounds.height - 132;
-    const readyDisabled = mine.ready || this.busy;
-    const readyX = centerX - btnW - gap / 2;
-    ctx.fillStyle = readyDisabled ? 'rgba(255,255,255,0.14)' : '#d92d20';
-    this.roundRect(ctx, readyX, btnY, btnW, btnH, 10);
-    ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 22px sans-serif';
-    ctx.fillText(mine.ready ? '已准备' : '准备', readyX + btnW / 2, btnY + btnH / 2);
-    this.buttons.push({ type: 'ready', x: readyX, y: btnY, w: btnW, h: btnH });
-
-    const inviteX = centerX + gap / 2;
-    ctx.fillStyle = 'rgba(255,255,255,0.16)';
-    this.roundRect(ctx, inviteX, btnY, btnW, btnH, 10);
-    ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText('微信邀请', inviteX + btnW / 2, btnY + btnH / 2);
-    this.buttons.push({ type: 'invite', x: inviteX, y: btnY, w: btnW, h: btnH });
-
-    if (room.isHost) {
-      const startW = Math.min(326, bounds.width - 42);
-      const startX = centerX - startW / 2;
-      const startY = btnY + 66;
-      ctx.fillStyle = room.canStart && !this.busy ? '#1570ef' : 'rgba(255,255,255,0.12)';
-      this.roundRect(ctx, startX, startY, startW, btnH, 10);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 22px sans-serif';
-      ctx.fillText('开始牌局', centerX, startY + btnH / 2);
-      this.buttons.push({ type: 'start-room', x: startX, y: startY, w: startW, h: btnH });
-    } else if (errorText) {
-      const retryW = Math.min(220, bounds.width - 80);
-      const retryX = centerX - retryW / 2;
-      const retryY = btnY + 66;
-      ctx.fillStyle = 'rgba(255,255,255,0.14)';
-      this.roundRect(ctx, retryX, retryY, retryW, btnH, 10);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 22px sans-serif';
-      ctx.fillText('重试', centerX, retryY + btnH / 2);
-      this.buttons.push({ type: 'waiting-retry', x: retryX, y: retryY, w: retryW, h: btnH });
-    }
+    if (this.waiting.swapModal) this.drawSeatSwapModal(ctx, layout, this.waiting.swapModal);
 
     ctx.restore();
+  }
+
+  drawWaitingHeader(ctx, layout, room, players) {
+    const settings = room.settings || {};
+    const maxRounds = settings.maxRounds || room.maxRounds || 2;
+    const payName = settings.payType === 'jiahu' ? '甲胡' : (settings.payType === 'changhu' ? '场胡' : '屁胡');
+    const ruleTags = [
+      `${maxRounds}局`,
+      settings.repeatRound ? '重场' : '',
+      settings.washTwice ? '洗两道' : '',
+      payName,
+    ].filter(Boolean).join(' · ');
+    this.drawDesignRect(ctx, layout, 430, 16, 700, 104, 8, 'rgba(49, 18, 10, 0.72)', 'rgba(217, 167, 90, 0.82)', 1.2);
+    this.drawDesignText(ctx, layout, '等待...', 780, 36, 36, '#fff2c7', 'bold', 'center');
+    this.drawDesignText(ctx, layout, `房号 ${room.roomId || '------'} · ${ruleTags || '屁胡'}`, 780, 86, 20, '#e7c17a', '500', 'center');
+  }
+
+  drawWaitingSeatBoard(ctx, layout, room, players, mySeat) {
+    const cx = this.designX(layout, 788);
+    const cy = this.designY(layout, 411);
+    ctx.strokeStyle = 'rgba(217, 167, 90, 0.58)';
+    ctx.lineWidth = Math.max(1, this.designSize(layout, 2));
+    ctx.beginPath();
+    ctx.arc(cx, cy, this.designSize(layout, 100), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(217, 167, 90, 0.34)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, this.designSize(layout, 59), 0, Math.PI * 2);
+    ctx.stroke();
+    this.drawDesignText(ctx, layout, '你的位置', 788, 390, 25, '#fff2c7', 'bold', 'center');
+    this.drawDesignText(ctx, layout, '点击座位加入', 788, 428, 16, '#e7c17a', 'normal', 'center');
+
+    const playerForLocal = (localSeat) => players.find((player) => (
+      player && typeof player.seat === 'number' && ((player.seat - mySeat + 4) % 4) === localSeat
+    ));
+    [
+      { local: 2, x: 736, y: 188, relation: '对家' },
+      { local: 3, x: 564, y: 362, relation: '下家' },
+      { local: 1, x: 907, y: 362, relation: '上家' },
+      { local: 0, x: 736, y: 538, relation: '我的位置' },
+    ].forEach((slot) => {
+      const player = playerForLocal(slot.local);
+      this.drawWaitingSeatCard(ctx, layout, Object.assign({}, slot, {
+        label: this.waitingSeatName(player && player.seat, mySeat, slot.local),
+        player,
+        isSelf: slot.local === 0,
+      }));
+    });
+  }
+
+  drawWaitingSeatCard(ctx, layout, slot) {
+    const player = slot.player || null;
+    const isReady = Boolean(player && player.ready);
+    const isEmpty = !player;
+    const avatarX = slot.x + 13;
+    const avatarY = slot.y;
+    this.drawWaitingAvatar(ctx, layout, avatarX, avatarY, player, isEmpty, slot.isSelf, isReady);
+    this.drawDesignText(ctx, layout, player ? (player.nickName || '玩家') : '空座位', slot.x + 52, slot.y + 96, 20, isEmpty ? '#d8b47b' : '#fff0be', 'bold', 'center', 'middle');
+    if (player) {
+      const statusLabel = slot.isSelf ? (isReady ? '已选择' : '未准备') : (isReady ? '已准备' : '未准备');
+      this.drawSeatStatusPill(ctx, layout, avatarX + 8, avatarY + 61, statusLabel, isReady);
+      if (player.isHost) this.drawTinyTag(ctx, layout, slot.x + 23, slot.y + 123, '房主');
+      if (!slot.isSelf) this.pushDesignButton('swap-target', layout, slot.x, slot.y, 104, 130, { player });
+    } else {
+      this.drawSeatStatusPill(ctx, layout, avatarX + 8, avatarY + 61, '待加入', false);
+    }
+  }
+
+  waitingSeatName(serverSeat, mySeat, localSeat) {
+    const names = ['东位', '南位', '西位', '北位'];
+    const index = typeof serverSeat === 'number' ? serverSeat : ((mySeat + localSeat) % 4);
+    return names[index] || '座位';
+  }
+
+  loadWaitingAvatars(players = []) {
+    if (typeof wx === 'undefined' || !wx.createImage) return;
+    players.forEach((player) => {
+      if (!player || !player.avatarUrl || this.waitingAvatarImages[player.openid]) return;
+      try {
+        const image = wx.createImage();
+        const entry = { image, loaded: false };
+        image.onload = () => { entry.loaded = true; };
+        image.onerror = () => { entry.loaded = false; };
+        image.src = player.avatarUrl;
+        this.waitingAvatarImages[player.openid] = entry;
+      } catch (err) { /* 头像加载失败时使用昵称首字 */ }
+    });
+  }
+
+  drawWaitingAvatar(ctx, layout, x, y, player, isEmpty, isSelf, isReady) {
+    const rect = this.designRect(layout, { x, y, w: isSelf ? 82 : 78, h: isSelf ? 82 : 78 });
+    const radius = this.designSize(layout, isSelf ? 12 : 18);
+    const entry = player && player.openid ? this.waitingAvatarImages[player.openid] : null;
+    ctx.save();
+    this.roundRect(ctx, rect.x, rect.y, rect.w, rect.h, radius);
+    ctx.fillStyle = isEmpty
+      ? 'rgba(107, 76, 69, 0.42)'
+      : (isReady ? '#e84d23' : 'rgba(107, 76, 69, 0.72)');
+    ctx.fill();
+    ctx.strokeStyle = isSelf || isReady ? 'rgba(255, 220, 148, 0.58)' : 'rgba(255, 220, 148, 0.24)';
+    ctx.lineWidth = Math.max(1, this.designSize(layout, 1.5));
+    ctx.stroke();
+    if (entry && entry.loaded && entry.image) {
+      ctx.clip();
+      ctx.drawImage(entry.image, rect.x, rect.y, rect.w, rect.h);
+    } else {
+      this.drawDesignText(ctx, layout, isEmpty ? '+' : (player.nickName || '玩').slice(0, 1), x + (isSelf ? 41 : 39), y + (isSelf ? 41 : 39), 28, '#ffe7ad', 'bold', 'center', 'middle');
+    }
+    ctx.restore();
+  }
+
+  drawSeatStatusPill(ctx, layout, x, y, label, ready) {
+    const width = label.length > 3 ? 66 : 58;
+    this.drawDesignRect(ctx, layout, x, y, width, 24, 12, ready ? '#e84d23' : 'rgba(117, 68, 34, 0.92)', ready ? '#ffd27a' : 'rgba(217, 167, 90, 0.35)', 1);
+    this.drawDesignText(ctx, layout, label, x + width / 2, y + 12, 12, '#fff6d9', 'bold', 'center', 'middle');
+  }
+
+  drawTinyTag(ctx, layout, x, y, label, fill = 'rgba(125, 83, 31, 0.92)') {
+    this.drawDesignRect(ctx, layout, x, y, 58, 24, 12, fill, '#dcb568', 1);
+    this.drawDesignText(ctx, layout, label, x + 29, y + 12, 14, '#fff6d9', 'bold', 'center', 'middle');
+  }
+
+  drawWaitingActions(ctx, layout, room, mine) {
+    this.drawDesignRect(ctx, layout, 1190, 184, 250, 466, 8, 'rgba(49, 18, 10, 0.86)', 'rgba(217, 167, 90, 0.36)', 1);
+    this.drawDesignText(ctx, layout, '操作', 1220, 214, 30, '#ffd78a', 'bold');
+    this.drawWaitingActionButton(ctx, layout, 1220, 278, '微信邀请好友', 'invite', true, false);
+    this.drawWaitingActionButton(ctx, layout, 1220, 356, mine.ready ? '取消准备' : '准备', 'ready', true, false, { ready: !mine.ready });
+    if (room.isHost) {
+      this.drawWaitingActionButton(ctx, layout, 1220, 434, '开始牌局', 'start-room', Boolean(room.canStart), !room.canStart);
+      this.drawDesignText(ctx, layout, room.canStart ? '全员已准备，可以开始' : '仅房主可见，全员准备后可点', 1220, 504, 16, '#e7c17a', 'normal');
+      this.drawWaitingActionButton(ctx, layout, 1220, 548, '解散房间', 'disband-room', true, false, {}, '#8f1e12');
+    } else {
+      this.drawDesignText(ctx, layout, room.readyToStart ? '等待房主开始牌局' : '准备后等待房主开始', 1220, 452, 17, '#e7c17a', 'normal');
+      this.drawWaitingActionButton(ctx, layout, 1220, 548, '退出房间', 'disband-room', true, false, {}, '#8f1e12');
+    }
+  }
+
+  drawWaitingActionButton(ctx, layout, x, y, label, type, enabled = true, disabled = false, extra = {}, fill = '#d84a22') {
+    const buttonFill = enabled && !disabled ? fill : 'rgba(255,255,255,0.12)';
+    const stroke = enabled && !disabled ? '#ffd27a' : 'rgba(217, 167, 90, 0.20)';
+    this.drawDesignRect(ctx, layout, x, y, 190, 58, 7, buttonFill, stroke, 1.5);
+    this.drawDesignText(ctx, layout, label, x + 95, y + 29, 22, enabled && !disabled ? '#fff6d9' : '#b89862', 'bold', 'center', 'middle');
+    if (enabled && !disabled) this.pushDesignButton(type, layout, x, y, 190, 58, extra);
+  }
+
+  drawSeatSwapModal(ctx, layout, modal) {
+    const player = modal.player || {};
+    const playerName = player.nickName || '该玩家';
+    this.drawDesignRect(ctx, layout, 0, 0, 1560, 878, 0, 'rgba(0, 0, 0, 0.46)');
+    this.drawDesignRect(ctx, layout, 514, 284, 532, 310, 10, 'rgba(64, 24, 12, 0.96)', '#d9a75a', 2);
+    const received = modal.type === 'received';
+    this.drawDesignText(ctx, layout, received ? '收到换座请求' : '请求交换座位', 780, 326, 31, '#fff2c7', 'bold', 'center');
+    this.drawDesignText(ctx, layout, received ? `${playerName} 想与你交换座位` : `向 ${playerName} 发送交换座位请求？`, 780, 390, 22, '#ffd78a', 'bold', 'center');
+    this.drawDesignText(ctx, layout, '对方同意后，双方位置立即互换。', 780, 430, 18, '#e7c17a', 'normal', 'center');
+    if (received) {
+      this.drawWaitingActionButton(ctx, layout, 585, 496, '拒绝', 'swap-modal-reject', true, false, { requestId: modal.requestId || '' }, 'rgba(255,255,255,0.12)');
+      this.drawWaitingActionButton(ctx, layout, 785, 496, '同意交换', 'swap-modal-accept', true, false, { requestId: modal.requestId || '' });
+    } else {
+      this.drawWaitingActionButton(ctx, layout, 585, 496, '取消', 'swap-modal-cancel', true, false, {}, 'rgba(255,255,255,0.12)');
+      this.drawWaitingActionButton(ctx, layout, 785, 496, '发送请求', 'swap-modal-send', true, false, { player });
+    }
   }
 
   roundRect(ctx, x, y, w, h, r) {

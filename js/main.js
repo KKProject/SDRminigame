@@ -29,6 +29,7 @@ export default class Main {
   online = null;
   mode = null;
   menu = null;
+  loggedInProfile = null;
   pendingInviteRoomId = '';
   cleanupInviteListener = null;
 
@@ -155,12 +156,13 @@ export default class Main {
   }
 
   handleModeSelect(mode, profile = {}) {
-    if (mode === 'openCreateRoomSettings') {
+    if (mode === 'startLogin') {
+      this.loginFromStart(profile);
+    } else if (mode === 'openCreateRoomSettings') {
       this.mode = 'room-ui';
       this.menu.setStatus('');
-    } else if (mode === 'createRoomNext') {
-      this.mode = 'room-ui';
-      this.menu.setStatus('');
+    } else if (mode === 'confirmCreateRoom') {
+      this.createOnlineRoom(profile);
     } else if (mode === 'confirmSeatSelection') {
       this.mode = 'room-ui';
       this.menu.setStatus('已选择座位，后续接入创建房间逻辑');
@@ -172,14 +174,67 @@ export default class Main {
       const retryProfile = this.online && this.online.lobbyProfile ? this.online.lobbyProfile : {};
       this.startOnline(retryProfile, this.pendingInviteRoomId);
     } else if (mode === 'roomReady') {
-      this.readyInWaitingRoom();
+      this.readyInWaitingRoom(profile && typeof profile.ready === 'boolean' ? profile.ready : true);
     } else if (mode === 'roomInvite') {
       this.inviteWaitingRoom();
     } else if (mode === 'roomStart') {
       this.startWaitingRoom();
+    } else if (mode === 'roomDisband') {
+      this.disbandWaitingRoom();
+    } else if (mode === 'seatSwapRequest') {
+      this.requestSeatSwap(profile && profile.player);
+    } else if (mode === 'seatSwapRespond') {
+      this.respondSeatSwap(profile || {});
     } else if (mode === 'waitingRetry') {
       if (this.online) this.online.refreshWaitingRoom();
     }
+  }
+
+  bindOnlineController(controller) {
+    controller.onStatus = (text) => this.menu.setStatus(text);
+    controller.onLobby = (lobby) => {
+      this.loggedInProfile = lobby.profile || this.loggedInProfile;
+      if (lobby.profile) this.menu.setStartAuthState('ready', { profile: lobby.profile });
+      if (this.mode === 'room-ui') return;
+      this.menu.showLobby(lobby.profile);
+      this.menu.setLobbyState(lobby.state, lobby);
+      this.mode = 'lobby';
+      this.menu.show();
+    };
+    controller.onWaitingRoom = (waiting) => {
+      this.menu.showWaitingRoom(waiting);
+      this.menu.setWaitingRoomState(waiting);
+    };
+    controller.onEnterTable = () => {
+      this.enterOnlineTable();
+    };
+  }
+
+  ensureOnlineController() {
+    if (!this.online) {
+      this.online = new OnlineController(GameGlobal.databus, this.renderer, GameGlobal.musicManager, this.renderer.animationController);
+      this.bindOnlineController(this.online);
+    }
+    return this.online;
+  }
+
+  loginFromStart(profile = {}) {
+    const controller = this.ensureOnlineController();
+    if (controller.starting) return;
+    this.menu.setBusy(true);
+    this.menu.setStartAuthState('logging-in', { profile });
+    controller.loginForLobby(profile)
+      .then((lobbyProfile) => {
+        this.loggedInProfile = lobbyProfile;
+        this.mode = 'start';
+        this.menu.setBusy(false);
+        this.menu.setStartAuthState('ready', { profile: lobbyProfile });
+      })
+      .catch((err) => {
+        console.error('[online] start login failed', err);
+        this.menu.setBusy(false);
+        this.menu.setStartAuthState('error', { error: onlineErrorMessage(err), profile });
+      });
   }
 
   startOnline(profile = {}, inviteRoomId = '') {
@@ -187,20 +242,7 @@ export default class Main {
     this.menu.setBusy(true);
     this.menu.setStatus('登录中…');
     this.online = new OnlineController(GameGlobal.databus, this.renderer, GameGlobal.musicManager, this.renderer.animationController);
-    this.online.onStatus = (text) => this.menu.setStatus(text);
-    this.online.onLobby = (lobby) => {
-      if (lobby.profile) this.menu.showLobby(lobby.profile);
-      this.menu.setLobbyState(lobby.state, lobby);
-      this.mode = 'lobby';
-      this.menu.show();
-    };
-    this.online.onWaitingRoom = (waiting) => {
-      this.menu.showWaitingRoom(waiting);
-      this.menu.setWaitingRoomState(waiting);
-    };
-    this.online.onEnterTable = () => {
-      this.enterOnlineTable();
-    };
+    this.bindOnlineController(this.online);
     this.online.startLobby(profile, { inviteRoomId })
       .then((result) => {
         if (result && result.entered) {
@@ -221,9 +263,12 @@ export default class Main {
       });
   }
 
-  createOnlineRoom(maxRounds = 2) {
-    if (!this.online || this.online.starting) return;
-    this.online.createLobbyRoom(maxRounds)
+  createOnlineRoom(settings = {}) {
+    const controller = this.ensureOnlineController();
+    if (controller.starting) return;
+    this.menu.setBusy(true);
+    this.menu.setStatus('正在创建房间…');
+    controller.createLobbyRoom(settings)
       .then((result) => {
         if (result && result.entered) {
           this.enterOnlineTable();
@@ -231,6 +276,7 @@ export default class Main {
         }
         this.mode = 'waiting';
         this.menu.setBusy(false);
+        this.menu.showWaitingRoom(result);
       })
       .catch((err) => {
         console.error('[online] create room failed', err);
@@ -239,10 +285,10 @@ export default class Main {
       });
   }
 
-  readyInWaitingRoom() {
+  readyInWaitingRoom(ready = true) {
     if (!this.online) return;
     this.menu.setBusy(true);
-    this.online.setReady(true).finally(() => {
+    this.online.setReady(ready).finally(() => {
       this.menu.setBusy(false);
     });
   }
@@ -261,6 +307,33 @@ export default class Main {
         if (!entered) return;
         this.enterOnlineTable();
       })
+      .finally(() => {
+        this.menu.setBusy(false);
+      });
+  }
+
+  disbandWaitingRoom() {
+    if (!this.online) return;
+    this.menu.setBusy(true);
+    this.online.leaveTable()
+      .finally(() => {
+        this.menu.setBusy(false);
+      });
+  }
+
+  requestSeatSwap(player = {}) {
+    if (!this.online || typeof player.seat !== 'number') return;
+    this.menu.setBusy(true);
+    this.online.requestSeatSwap(player.seat)
+      .finally(() => {
+        this.menu.setBusy(false);
+      });
+  }
+
+  respondSeatSwap(detail = {}) {
+    if (!this.online) return;
+    this.menu.setBusy(true);
+    this.online.respondSeatSwap(detail.requestId, detail.accept !== false)
       .finally(() => {
         this.menu.setBusy(false);
       });
