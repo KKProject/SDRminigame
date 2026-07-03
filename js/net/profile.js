@@ -142,11 +142,11 @@ export function createUserProfileButton(bounds, onProfile, runtime = wx) {
         width: bounds.w,
         height: bounds.h,
         lineHeight: bounds.h,
-        backgroundColor: '#d92d20',
-        color: '#ffffff',
+        backgroundColor: 'rgba(0,0,0,0)',
+        color: 'rgba(0,0,0,0)',
         textAlign: 'center',
-        fontSize: 28,
-        borderRadius: 14,
+        fontSize: 1,
+        borderRadius: 0,
       },
     });
   } catch (err) {

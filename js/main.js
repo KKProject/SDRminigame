@@ -34,7 +34,7 @@ export default class Main {
 
   constructor() {
     this.assets.loadImages();
-    this.menu = new StartMenu(this.handleModeSelect.bind(this));
+    this.menu = new StartMenu(this.handleModeSelect.bind(this), this.assets);
     this.metricsRetryRemaining = 120;
     this.contextRestoreRetryRemaining = 0;
     this.boundMetricsChange = this.handleMetricsChange.bind(this);
@@ -155,7 +155,16 @@ export default class Main {
   }
 
   handleModeSelect(mode, profile = {}) {
-    if (mode === 'online') {
+    if (mode === 'openCreateRoomSettings') {
+      this.mode = 'room-ui';
+      this.menu.setStatus('');
+    } else if (mode === 'createRoomNext') {
+      this.mode = 'room-ui';
+      this.menu.setStatus('');
+    } else if (mode === 'confirmSeatSelection') {
+      this.mode = 'room-ui';
+      this.menu.setStatus('已选择座位，后续接入创建房间逻辑');
+    } else if (mode === 'online') {
       this.startOnline(profile, this.pendingInviteRoomId);
     } else if (mode === 'createRoom') {
       this.createOnlineRoom(profile.maxRounds);
