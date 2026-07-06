@@ -1104,11 +1104,15 @@ const privateResponseSnapshot = {
     pendingActions: [],
     responseSummary: {
       active: true,
+      id: 'response-window-1',
       sourceSeat: 1,
       sourceType: 'discard',
       cardId: responseDiscardCard.id,
+      candidateSeats: [0, 2],
       waitingSeats: [0, 2],
       decidedSeats: [],
+      blockingSeats: [0, 2],
+      currentBest: null,
     },
     appearingCard: {
       card: responseDiscardCard,
@@ -1120,6 +1124,8 @@ const privateResponseSnapshot = {
   private: {
     hand: [{ id: 'response-hand-card', key: 'da' }],
     playerActions: [{ type: 'peng', seat: 0, card: responseDiscardCard }, { type: 'pass', seat: 0 }],
+    responseWindowId: 'response-window-1',
+    actionState: 'available',
   },
   animation: {
     ...responseDiscardSnapshot.animation,
@@ -1132,7 +1138,9 @@ if (!onlineController.applyServerSnapshot(privateResponseSnapshot)) {
 if (
   onlineDatabus.animationWaiting
   || onlineDatabus.playerActions.length !== 2
-  || onlineDatabus.pendingActions.length !== 1
+  || onlineDatabus.pendingActions.length !== 0
+  || onlineDatabus.responseWindowId !== 'response-window-1'
+  || onlineDatabus.actionState !== 'available'
   || !onlineDatabus.responseSummary
 ) {
   throw new Error(`private response actions should be visible while public state only exposes a response summary: ${JSON.stringify({
@@ -1157,7 +1165,7 @@ if (!onlineController.applyServerSnapshot({
 if (
   !onlineDatabus.animationWaiting
   || onlineDatabus.playerActions.length !== 2
-  || onlineDatabus.pendingActions.length !== 1
+  || onlineDatabus.pendingActions.length !== 0
 ) {
   throw new Error(`private response actions should remain visible while local animation ack is still pending: ${JSON.stringify({
     animationWaiting: onlineDatabus.animationWaiting,
@@ -1179,6 +1187,7 @@ if (!onlineController.applyServerSnapshot({
 if (
   onlineDatabus.animationWaiting
   || onlineDatabus.playerActions.length !== 2
+  || onlineDatabus.pendingActions.length !== 0
 ) {
   throw new Error('locally acked response-window snapshots should keep response actions visible even if a stale server snapshot says selfAcked=false');
 }

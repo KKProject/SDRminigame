@@ -22,6 +22,9 @@ export default class DataBus {
   recentDiscard = null;
   pendingActions = [];
   playerActions = [];
+  responseSummary = null;
+  responseWindowId = null;
+  actionState = 'closed';
   feedback = '';
   result = null;
   muted = false;
@@ -61,6 +64,9 @@ export default class DataBus {
       recentDiscard: null,
       pendingActions: [],
       playerActions: [],
+      responseSummary: null,
+      responseWindowId: null,
+      actionState: 'closed',
       feedback: '',
       result: null,
       muted: this.muted,

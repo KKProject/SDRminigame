@@ -755,18 +755,11 @@ class HuapaiEngine {
   }
 
   bestSelectedResponse(window) {
-    return Object.keys(window.decisions || {})
-      .map((seat) => window.decisions[seat])
-      .filter((decision) => decision && decision.status === 'action' && decision.action)
-      .map((decision) => decision.action)
-      .sort((a, b) => this.actionCompare(a, b))[0] || null;
+    return bestSelectedResponse(window);
   }
 
   unresolvedActionsThatBeat(window, best) {
-    return (window.actions || []).filter((action) => {
-      const decision = window.decisions[action.seat];
-      return decision && decision.status === 'pending' && (!best || this.actionBeats(action, best));
-    });
+    return unresolvedActionsThatBeat(window, best);
   }
 
   pendingResponseSeats(window) {
@@ -1222,7 +1215,14 @@ class HuapaiEngine {
     if (state.phase !== PHASES.HUMAN_RESPONSE || !window || !window.decisions[seatIndex]) {
       return { ok: false, reason: '现在不能响应' };
     }
+    if (ref.responseWindowId && ref.responseWindowId !== window.id) {
+      return { ok: false, reason: '动作已失效' };
+    }
     if (window.decisions[seatIndex].status !== 'pending') {
+      return { ok: false, reason: '动作已失效' };
+    }
+    const privateView = buildPrivateResponseView(state, seatIndex);
+    if (privateView.actionState !== 'available') {
       return { ok: false, reason: '动作已失效' };
     }
     const action = this.findPlayerAction(seatIndex, ref);
@@ -1275,6 +1275,126 @@ function summarizeResponseAction(action) {
     priority: action.priority,
     forced: Boolean(action.forced),
     cardId: action.card && action.card.id ? action.card.id : null,
+  };
+}
+
+function publicResponseActionSummary(action) {
+  if (!action) return null;
+  return {
+    seat: action.seat,
+    type: action.type,
+    priority: action.priority,
+    responseIndex: typeof action.responseIndex === 'number' ? action.responseIndex : 0,
+  };
+}
+
+function responseActionCompare(a, b) {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  if (b.priority !== a.priority) return b.priority - a.priority;
+  if ((a.responseIndex || 0) !== (b.responseIndex || 0)) return (a.responseIndex || 0) - (b.responseIndex || 0);
+  return a.seat - b.seat;
+}
+
+function responseActionBeats(candidate, best) {
+  return responseActionCompare(candidate, best) < 0;
+}
+
+function bestSelectedResponse(window) {
+  return Object.keys((window && window.decisions) || {})
+    .map((seat) => window.decisions[seat])
+    .filter((decision) => decision && decision.status === 'action' && decision.action)
+    .map((decision) => decision.action)
+    .sort(responseActionCompare)[0] || null;
+}
+
+function unresolvedActionsThatBeat(window, best) {
+  return ((window && window.actions) || []).filter((action) => {
+    const decision = window.decisions && window.decisions[action.seat];
+    return decision && decision.status === 'pending' && (!best || responseActionBeats(action, best));
+  });
+}
+
+function uniqueSeats(actions = []) {
+  return actions.reduce((seats, action) => {
+    if (action && typeof action.seat === 'number' && seats.indexOf(action.seat) < 0) seats.push(action.seat);
+    return seats;
+  }, []);
+}
+
+function buildResponseSummary(state) {
+  const responseWindow = state && state.responseWindow;
+  if (!responseWindow) return null;
+  const decisions = responseWindow.decisions || {};
+  const best = bestSelectedResponse(responseWindow);
+  const blockers = unresolvedActionsThatBeat(responseWindow, best);
+  const waitingSeats = (responseWindow.candidateSeats || []).filter((seat) => (
+    decisions[seat] && decisions[seat].status === 'pending'
+  ));
+  const decidedSeats = (responseWindow.candidateSeats || []).filter((seat) => (
+    decisions[seat] && decisions[seat].status !== 'pending'
+  ));
+  return {
+    active: true,
+    id: responseWindow.id,
+    sourceSeat: responseWindow.sourceSeat,
+    sourceType: responseWindow.sourceType,
+    cardId: responseWindow.cardId,
+    candidateSeats: (responseWindow.candidateSeats || []).slice(),
+    waitingSeats,
+    decidedSeats,
+    blockingSeats: uniqueSeats(blockers),
+    currentBest: publicResponseActionSummary(best),
+    closedReason: null,
+  };
+}
+
+function buildPrivateResponseView(state, seatIndex) {
+  const window = state && state.responseWindow;
+  if (!window || typeof seatIndex !== 'number' || seatIndex < 0) {
+    return {
+      seat: seatIndex,
+      responseWindowId: window ? window.id : null,
+      playerActions: [],
+      actionState: 'closed',
+    };
+  }
+  const decision = window.decisions && window.decisions[seatIndex];
+  if (!decision) {
+    return {
+      seat: seatIndex,
+      responseWindowId: window.id,
+      playerActions: [],
+      actionState: 'closed',
+    };
+  }
+  if (decision.status !== 'pending') {
+    return {
+      seat: seatIndex,
+      responseWindowId: window.id,
+      playerActions: [],
+      actionState: 'waiting',
+    };
+  }
+  const best = bestSelectedResponse(window);
+  const seatActions = window.actionsBySeat && window.actionsBySeat[seatIndex]
+    ? window.actionsBySeat[seatIndex]
+    : [];
+  const canAffectResult = !best || seatActions.some((action) => responseActionBeats(action, best));
+  if (!canAffectResult) {
+    return {
+      seat: seatIndex,
+      responseWindowId: window.id,
+      playerActions: [],
+      actionState: 'superseded',
+    };
+  }
+  return {
+    seat: seatIndex,
+    responseWindowId: window.id,
+    playerActions: seatActions.concat([{ type: 'pass', seat: seatIndex, label: ACTION_LABELS.pass }]),
+    actionState: 'available',
   };
 }
 
@@ -1332,30 +1452,14 @@ function logResponseWindowDebug(message, detail = {}) {
 function buildPublicState(state) {
   if (!state) return null;
   const responseWindow = state.responseWindow || null;
-  const responseSummary = responseWindow ? {
-    active: true,
-    sourceSeat: responseWindow.sourceSeat,
-    sourceType: responseWindow.sourceType,
-    cardId: responseWindow.cardId,
-    waitingSeats: (responseWindow.candidateSeats || []).filter((seat) => (
-      responseWindow.decisions
-      && responseWindow.decisions[seat]
-      && responseWindow.decisions[seat].status === 'pending'
-    )),
-    decidedSeats: (responseWindow.candidateSeats || []).filter((seat) => (
-      responseWindow.decisions
-      && responseWindow.decisions[seat]
-      && responseWindow.decisions[seat].status !== 'pending'
-    )),
-  } : null;
+  const responseSummary = buildResponseSummary(state);
   if (responseWindow) {
     logResponseWindowDebug('build-public-state', {
       id: responseWindow.id,
       phase: state.phase,
       currentSeat: state.currentSeat,
       responseSummary,
-      pendingActions: summarizeResponseActions(state.pendingActions || []),
-      playerActions: summarizeResponseActions(state.playerActions || []),
+      candidateCount: (state.pendingActions || []).length,
     });
   }
   return {
@@ -1373,8 +1477,8 @@ function buildPublicState(state) {
     deckCount: Array.isArray(state.deck) ? state.deck.length : 0,
     recentDiscard: state.recentDiscard || null,
     appearingCard: state.appearingCard || null,
-    pendingActions: state.pendingActions || [],
-    playerActions: state.playerActions || [],
+    pendingActions: responseWindow ? [] : (state.pendingActions || []),
+    playerActions: responseWindow ? [] : (state.playerActions || []),
     responseSummary,
     eventSeq: typeof state.eventSeq === 'number' ? state.eventSeq : 0,
     publicEvent: serializePublicEvent(state.publicEvent),
@@ -1437,24 +1541,21 @@ function serializePublicEvent(event) {
 function buildPrivateView(state, seatIndex) {
   if (!state || !state.seats || !state.seats[seatIndex]) return { hand: [] };
   const seat = state.seats[seatIndex];
-  const window = state.responseWindow;
-  const responseActions = window
-    && window.decisions
-    && window.decisions[seatIndex]
-    && window.decisions[seatIndex].status === 'pending'
-    ? (window.actionsBySeat[seatIndex] || []).concat([{ type: 'pass', seat: seatIndex, label: ACTION_LABELS.pass }])
-    : [];
+  const responseView = buildPrivateResponseView(state, seatIndex);
   return {
     seat: seatIndex,
     hand: seat.hand || [],
     drawnCard: state.drawnCard || null,
-    playerActions: responseActions,
-    responseWindowId: window ? window.id : null,
+    playerActions: responseView.playerActions,
+    responseWindowId: responseView.responseWindowId,
+    actionState: responseView.actionState,
   };
 }
 
 module.exports = {
   HuapaiEngine,
+  buildResponseSummary,
+  buildPrivateResponseView,
   buildPublicState,
   buildPrivateView,
   serializePublicEvent,

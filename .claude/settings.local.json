@@ -5,7 +5,8 @@
       "Bash(git add:*)",
       "Bash(git push:*)",
       "Bash(mv:*)",
-      "Bash(npm run upload:*)"
+      "Bash(npm run upload:*)",
+      "Bash(/opt/homebrew/Cellar/node@20/20.19.4/bin/node *)"
     ],
     "deny": [],
     "ask": []

@@ -24,6 +24,11 @@ function inferAppearanceResolution(event, renderer) {
   const cardId = event.card.id;
   const actions = (state.pendingActions || []).concat(state.playerActions || []);
   const hasResponseAction = actions.some((action) => isResponseActionForCard(action, cardId));
+  const responseSummaryMatches = Boolean(
+    state.responseSummary
+    && state.responseSummary.active
+    && state.responseSummary.cardId === cardId
+  );
   const sameAppearingDraw = Boolean(
     state.appearingCard
     && state.appearingCard.card
@@ -45,13 +50,13 @@ function inferAppearanceResolution(event, renderer) {
     && !state.recentDiscard.unclaimed
     && !state.recentDiscard.resolved;
   const shouldInferAwaitResponse = event.type === 'draw'
-    ? typeof event.discardIndex !== 'number' && (sameDraw || sameAppearingDraw || hasResponseAction)
-    : (hasResponseAction || unresolvedRecentDiscard);
+    ? typeof event.discardIndex !== 'number' && (sameDraw || sameAppearingDraw || hasResponseAction || responseSummaryMatches)
+    : (hasResponseAction || responseSummaryMatches || unresolvedRecentDiscard);
 
   if (!shouldInferAwaitResponse) return event;
   const reason = event.type === 'draw'
-    ? (hasResponseAction ? 'draw-response-action' : 'draw-visible-state')
-    : (hasResponseAction ? 'discard-response-action' : 'discard-unresolved-state');
+    ? (hasResponseAction ? 'draw-response-action' : (responseSummaryMatches ? 'draw-response-summary' : 'draw-visible-state'))
+    : (hasResponseAction ? 'discard-response-action' : (responseSummaryMatches ? 'discard-response-summary' : 'discard-unresolved-state'));
   return {
     ...event,
     appearanceResolution: 'await-response',

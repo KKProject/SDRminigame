@@ -302,10 +302,17 @@ function makeResponseEngine() {
   engine.handleResponseWindow(actions, 0);
   const publicWindow = serverEngine.buildPublicState(engine.state);
   const privateOne = serverEngine.buildPrivateView(engine.state, 1);
-  if ((publicWindow.pendingActions || []).length !== 2 || (publicWindow.playerActions || []).length || !publicWindow.responseSummary) {
-    throw new Error('concurrent response public state should keep pending actions and expose a response summary');
+  if (
+    (publicWindow.pendingActions || []).length
+    || (publicWindow.playerActions || []).length
+    || !publicWindow.responseSummary
+    || !publicWindow.responseSummary.id
+    || publicWindow.responseSummary.candidateSeats.join(',') !== '1,2'
+    || publicWindow.responseSummary.blockingSeats.join(',') !== '1,2'
+  ) {
+    throw new Error('concurrent response public state should expose only a non-leaking response summary');
   }
-  if (!privateOne.playerActions || privateOne.playerActions.length !== 2) {
+  if (!privateOne.playerActions || privateOne.playerActions.length !== 2 || privateOne.actionState !== 'available' || !privateOne.responseWindowId) {
     throw new Error('private view should expose only the matching seat response actions plus pass');
   }
   engine.submitResponse(2, { type: 'peng' });

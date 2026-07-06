@@ -82,16 +82,31 @@ function publicPatch(publicState = {}) {
 }
 
 function privatePatch(publicState = {}, seat) {
-  if (typeof seat !== 'number' || seat < 0) return { seat: -1, playerActions: [] };
+  if (typeof seat !== 'number' || seat < 0) {
+    return { seat: -1, playerActions: [], responseWindowId: null, actionState: 'closed' };
+  }
   const summary = publicState.responseSummary || null;
-  const waitingSeats = summary && Array.isArray(summary.waitingSeats) ? summary.waitingSeats : [];
-  if (!summary || !summary.active || waitingSeats.indexOf(seat) < 0) {
-    return { seat, playerActions: [] };
+  if (!summary || !summary.active) {
+    return { seat, playerActions: [], responseWindowId: null, actionState: 'closed' };
+  }
+  const waitingSeats = Array.isArray(summary.waitingSeats) ? summary.waitingSeats : [];
+  const blockingSeats = Array.isArray(summary.blockingSeats) ? summary.blockingSeats : [];
+  const decidedSeats = Array.isArray(summary.decidedSeats) ? summary.decidedSeats : [];
+  if (decidedSeats.indexOf(seat) >= 0) {
+    return { seat, playerActions: [], responseWindowId: summary.id || null, actionState: 'waiting' };
+  }
+  if (waitingSeats.indexOf(seat) < 0) {
+    return { seat, playerActions: [], responseWindowId: summary.id || null, actionState: 'closed' };
+  }
+  if (summary.currentBest && blockingSeats.indexOf(seat) < 0) {
+    return { seat, playerActions: [], responseWindowId: summary.id || null, actionState: 'superseded' };
   }
   const actions = (publicState.pendingActions || []).filter((action) => action && action.seat === seat);
   return {
     seat,
+    responseWindowId: summary.id || null,
     playerActions: actions.concat([{ type: 'pass', seat, label: '过' }]),
+    actionState: actions.length ? 'available' : 'waiting',
   };
 }
 
@@ -118,9 +133,12 @@ function deltaForEvent(event = {}, publicState = {}) {
 }
 
 function cloneDeltaForConnection(delta = {}, connection = {}) {
+  const privateBySeat = delta.privateViewsBySeat || {};
+  const privateForSeat = privateBySeat[connection.seat];
   return Object.assign({}, delta, {
-    privatePatch: privatePatch(delta.publicState || {}, connection.seat),
+    privatePatch: privateForSeat || privatePatch(delta.publicState || {}, connection.seat),
     publicState: undefined,
+    privateViewsBySeat: undefined,
   });
 }
 
@@ -129,7 +147,25 @@ function incrementalPayload(res) {
   const animation = res.animation || {};
   const event = animation.currentEvent || (res.public && res.public.publicEvent) || null;
   const eventSeq = event && typeof event.eventSeq === 'number' ? event.eventSeq : 0;
-  if (!event || !eventSeq) return null;
+  if (!event || !eventSeq) {
+    if (!res.public || res.advanced === false) return null;
+    const latestEventSeq = typeof animation.latestEventSeq === 'number'
+      ? animation.latestEventSeq
+      : ((res.public && typeof res.public.eventSeq === 'number') ? res.public.eventSeq : 0);
+    return {
+      ok: true,
+      roomId: res.roomId,
+      baseVersion: res.version - 1,
+      version: res.version,
+      eventSeq: latestEventSeq,
+      stateOnly: true,
+      delta: {
+        publicPatch: publicPatch(res.public || {}),
+        publicState: res.public || {},
+        privateViewsBySeat: res.privateViewsBySeat || {},
+      },
+    };
+  }
   return {
     ok: true,
     roomId: res.roomId,
@@ -139,6 +175,7 @@ function incrementalPayload(res) {
     event,
     delta: Object.assign(deltaForEvent(event, res.public || {}), {
       publicState: res.public || {},
+      privateViewsBySeat: res.privateViewsBySeat || {},
     }),
   };
 }

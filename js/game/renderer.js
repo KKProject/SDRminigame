@@ -503,6 +503,11 @@ export default class TableRenderer {
   shouldHoldRecentDiscard(state, sourceSeat) {
     if (!state.recentDiscard || state.recentDiscard.seat !== sourceSeat) return false;
     if (state.drawnCard && state.drawnCard.id !== state.recentDiscard.card.id) return false;
+    if (
+      state.responseSummary
+      && state.responseSummary.active
+      && state.responseSummary.cardId === state.recentDiscard.card.id
+    ) return true;
     const isRecentDiscardAction = (action) => (
       ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'].indexOf(action.type) >= 0
       && (!action.card || action.card.id === state.recentDiscard.card.id)
@@ -515,6 +520,11 @@ export default class TableRenderer {
 
   shouldHoldDrawnCard(state) {
     if (!state.drawnCard || typeof state.currentSeat !== 'number') return false;
+    if (
+      state.responseSummary
+      && state.responseSummary.active
+      && state.responseSummary.cardId === state.drawnCard.id
+    ) return true;
     return Boolean(
       (state.pendingActions && state.pendingActions.some((action) => action.card && action.card.id === state.drawnCard.id))
       || (state.playerActions && state.playerActions.some((action) => (

@@ -38,6 +38,14 @@ const SUPPORTED_MAX_ROUNDS = [1, 2, 4, 6];
 const DEFAULT_MAX_ROUNDS = 2;
 const SUPPORTED_PAY_TYPES = ['pihu', 'jiahu', 'changhu'];
 const CLOSED_ROOM_STATUSES = ['closed'];
+
+function buildPrivateViewsBySeat(state) {
+  if (!state || !Array.isArray(state.seats)) return {};
+  return state.seats.reduce((output, seat, seatIndex) => {
+    output[seatIndex] = buildPrivateView(state, seatIndex);
+    return output;
+  }, {});
+}
 /** 玩家超过此毫秒未心跳则视为掉线 */
 const PLAYER_TIMEOUT_MS = 60000;
 /** 单个公开动作等待客户端动画回执的最长时间 */
@@ -1257,6 +1265,7 @@ async function op(event, ctx) {
     rematch: buildRematchState(room, OPENID),
     public: publicState,
     private: buildPrivateView(engine.state, seat),
+    privateViewsBySeat: buildPrivateViewsBySeat(engine.state),
     animation: animationState(room, engine, OPENID),
   };
 }
@@ -1359,6 +1368,7 @@ async function ackAnimation(event, ctx) {
       advanced,
       public: buildPublicState(engine.state),
       private: buildPrivateView(engine.state, seatOfOpenid(room, OPENID)),
+      privateViewsBySeat: buildPrivateViewsBySeat(engine.state),
       animation: animationState(room, engine, OPENID),
     };
   }
@@ -1384,6 +1394,7 @@ async function ackAnimation(event, ctx) {
     advanced,
     public: publicState,
     private: buildPrivateView(engine.state, seatOfOpenid(room, OPENID)),
+    privateViewsBySeat: buildPrivateViewsBySeat(engine.state),
     animation: animationState(room, engine, OPENID),
   };
 }

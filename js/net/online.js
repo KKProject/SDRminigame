@@ -385,11 +385,20 @@ function rotateAction(action, mySeat, index = null) {
 }
 
 function rotateResponseSummary(summary, mySeat) {
-  return summary ? Object.assign({}, summary, {
+  if (!summary) return summary;
+  const mapped = Object.assign({}, summary, {
     sourceSeat: rotateSeat(summary.sourceSeat, mySeat),
+    candidateSeats: (summary.candidateSeats || []).map((seat) => rotateSeat(seat, mySeat)),
     waitingSeats: (summary.waitingSeats || []).map((seat) => rotateSeat(seat, mySeat)),
     decidedSeats: (summary.decidedSeats || []).map((seat) => rotateSeat(seat, mySeat)),
-  }) : summary;
+    blockingSeats: (summary.blockingSeats || []).map((seat) => rotateSeat(seat, mySeat)),
+  });
+  if (summary.currentBest && typeof summary.currentBest.seat === 'number') {
+    mapped.currentBest = Object.assign({}, summary.currentBest, {
+      seat: rotateSeat(summary.currentBest.seat, mySeat),
+    });
+  }
+  return mapped;
 }
 
 function rotatePublicPatch(patch = {}, mySeat) {
@@ -435,7 +444,10 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
     ? pub.appearingCard.card
     : null;
 
-  const privateActions = Array.isArray(priv.playerActions) && priv.playerActions.length
+  const hasPrivateResponseProtocol = priv.responseWindowId
+    || priv.actionState
+    || (pub.responseSummary && pub.responseSummary.active);
+  const privateActions = Array.isArray(priv.playerActions) && (hasPrivateResponseProtocol || priv.playerActions.length)
     ? priv.playerActions
     : (pub.currentSeat === mySeat ? (pub.playerActions || []) : []);
   const myTurnActions = privateActions.map((action, index) => rotateAction(action, mySeat, index));
@@ -449,13 +461,6 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
 
   const responseSummary = rotateResponseSummary(pub.responseSummary, mySeat);
   const pendingActions = (pub.pendingActions || []).map((action) => rotateAction(action, mySeat));
-  if (responseSummary && responseSummary.active && pub.appearingCard && !pendingActions.length) {
-    pendingActions.push({
-      type: 'pass',
-      seat: responseSummary.sourceSeat,
-      card: pub.appearingCard.card,
-    });
-  }
 
   return {
     rules: DEFAULT_RULES,
@@ -477,6 +482,8 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
     pendingActions,
     playerActions: myTurnActions,
     responseSummary,
+    responseWindowId: priv.responseWindowId || null,
+    actionState: priv.actionState || (responseSummary && responseSummary.active ? 'closed' : 'closed'),
     feedback: pub.feedback || '',
     result: rotateResult(pub.result, mySeat),
     muted: false,
@@ -1139,11 +1146,17 @@ export default class OnlineController {
     const eventSeq = typeof delta.eventSeq === 'number'
       ? delta.eventSeq
       : (delta.event && typeof delta.event.eventSeq === 'number' ? delta.event.eventSeq : 0);
-    if (typeof delta.version !== 'number' || typeof delta.baseVersion !== 'number' || !eventSeq) {
+    if (typeof delta.version !== 'number' || typeof delta.baseVersion !== 'number' || (!eventSeq && !delta.stateOnly)) {
       return this.resyncFromDelta('missing-sequence');
     }
     if (delta.version <= this.version && eventSeq <= this.lastServerEventSeq) return true;
     if (delta.baseVersion !== this.version) return this.resyncFromDelta('version-gap');
+    if (delta.stateOnly) {
+      if (!this.applyPublicDelta(null, delta.delta || {})) return this.resyncFromDelta('delta-rejected');
+      this.version = delta.version;
+      if (eventSeq) this.lastServerEventSeq = Math.max(this.lastServerEventSeq, eventSeq);
+      return true;
+    }
     if (this.lastServerEventSeq && eventSeq > this.lastServerEventSeq + 1) {
       return this.resyncFromDelta('event-gap');
     }
@@ -1210,6 +1223,11 @@ export default class OnlineController {
     if (delta.privatePatch && Array.isArray(delta.privatePatch.playerActions)) {
       this.databus.playerActions = delta.privatePatch.playerActions
         .map((action, index) => rotateAction(action, this.mySeat, index));
+      this.databus.responseWindowId = delta.privatePatch.responseWindowId || null;
+      this.databus.actionState = delta.privatePatch.actionState || 'closed';
+      if (!this.databus.responseWindowId || this.databus.actionState !== 'available') {
+        this.clearPendingResponseIntent(this.databus.responseWindowId);
+      }
     }
     return true;
   }
@@ -1269,9 +1287,9 @@ export default class OnlineController {
     this.animationWaiting = Boolean((animation.waiting || animation.currentEvent) && !selfAcked);
     local.animationWaiting = this.animationWaiting;
     const hasLocalResponseActions = local.phase === 'human-response'
-      && local.currentSeat === 0
       && local.responseSummary
       && local.responseSummary.active
+      && local.actionState === 'available'
       && Array.isArray(local.playerActions)
       && local.playerActions.length > 0;
     if (this.animationWaiting && !hasLocalResponseActions) {
@@ -1279,6 +1297,9 @@ export default class OnlineController {
       local.playerActions = [];
     }
     this.databus.setRoundState(local);
+    if (!local.responseWindowId || local.actionState !== 'available') {
+      this.clearPendingResponseIntent(local.responseWindowId);
+    }
     this.consumeAnimationState(animation);
     this.setStatus('');
     return true;
@@ -1430,6 +1451,9 @@ export default class OnlineController {
     this.localActionPreviewType = animationActionType(action.type);
     this.pendingLocalAction = {
       identity,
+      responseWindowId: RESPONSE_ACTION_TYPES.indexOf(animationActionType(action.type)) >= 0
+        ? (this.databus.responseWindowId || null)
+        : null,
       localAnimationCompleted: false,
       authoritativeEventConfirmed: false,
       eventSeq: null,
@@ -1471,6 +1495,13 @@ export default class OnlineController {
     pending.finishing = true;
     this.finishAnimation(pending.eventSeq);
     return true;
+  }
+
+  clearPendingResponseIntent(responseWindowId = null) {
+    const pending = this.pendingLocalAction;
+    if (!pending || !pending.responseWindowId) return;
+    if (responseWindowId && pending.responseWindowId === responseWindowId && this.databus.actionState === 'available') return;
+    this.cancelLocalActionPreview();
   }
 
   cancelLocalActionPreview() {
@@ -1696,6 +1727,15 @@ export default class OnlineController {
       this.requestRematch(false);
       return;
     }
+    if (
+      RESPONSE_ACTION_TYPES.indexOf(animationActionType(action.type)) >= 0
+      && this.databus.responseWindowId
+      && this.databus.actionState
+      && this.databus.actionState !== 'available'
+    ) {
+      this.databus.feedback = '动作已失效';
+      return;
+    }
     this.startLocalActionPreview(action);
     if (action.type === 'acceptTakeover') {
       this.sendOp({ kind: 'takeover', accept: true });
@@ -1712,6 +1752,7 @@ export default class OnlineController {
         type: action.type,
         zhaoSize: action.zhaoSize,
         handKeyCount: action.handKeyCount,
+        responseWindowId: this.databus.responseWindowId || null,
       },
     });
   }

@@ -121,6 +121,12 @@ export default class StateAnimationController {
 
     const { event } = active;
     const cardId = event.card.id;
+    const responseSummaryMatches = Boolean(
+      state.responseSummary
+      && state.responseSummary.active
+      && state.responseSummary.cardId === cardId
+    );
+    if (responseSummaryMatches) return false;
 
     // 如果存在对这张牌的 pending 响应动作，先不处理，等待响应完成。
     const actions = (state.pendingActions || []).concat(state.playerActions || []);
