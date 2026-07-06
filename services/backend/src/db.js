@@ -303,9 +303,25 @@ class MongoDocumentDatabase {
 }
 
 async function createDatabase(config = {}) {
+  const driver = String(config.databaseDriver || 'mongodb').trim().toLowerCase();
+  if (driver === 'memory') return new MemoryDocumentDatabase();
+  if (driver === 'file') {
+    if (!config.fileDbPath) {
+      const error = new Error('FILE_DB_PATH_REQUIRED');
+      error.code = 'FILE_DB_PATH_REQUIRED';
+      throw error;
+    }
+    return FileDocumentDatabase.open(config.fileDbPath);
+  }
+  if (driver !== 'mongodb') {
+    const error = new Error('DATABASE_DRIVER_UNSUPPORTED');
+    error.code = 'DATABASE_DRIVER_UNSUPPORTED';
+    throw error;
+  }
   if (!config.mongodbUri) {
-    if (config.fileDbPath) return FileDocumentDatabase.open(config.fileDbPath);
-    return new MemoryDocumentDatabase();
+    const error = new Error('MONGODB_URI_REQUIRED');
+    error.code = 'MONGODB_URI_REQUIRED';
+    throw error;
   }
   const { MongoClient } = require('mongodb');
   const client = new MongoClient(config.mongodbUri);

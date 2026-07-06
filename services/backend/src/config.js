@@ -7,6 +7,12 @@ function cleanUrl(value) {
   return String(value || '').replace(/\/+$/, '');
 }
 
+function normalizeDatabaseDriver(env = {}) {
+  const explicit = String(env.DATABASE_DRIVER || env.DB_DRIVER || '').trim().toLowerCase();
+  if (explicit) return explicit;
+  return 'mongodb';
+}
+
 function readConfig(env = process.env) {
   const apiBaseUrl = cleanUrl(env.PUBLIC_API_BASE_URL || env.BACKEND_API_BASE_URL || '');
   const socketUrl = env.PUBLIC_SOCKET_URL
@@ -30,6 +36,7 @@ function readConfig(env = process.env) {
     appTokenTtlMs: Number(env.APP_TOKEN_TTL_MS || DEFAULT_APP_TOKEN_TTL_MS),
     socketTokenTtlMs: Number(env.SOCKET_TOKEN_TTL_MS || DEFAULT_SOCKET_TOKEN_TTL_MS),
     adminSessionTtlMs: Number(env.ADMIN_SESSION_TTL_MS || DEFAULT_ADMIN_SESSION_TTL_MS),
+    databaseDriver: normalizeDatabaseDriver(env),
     mongodbUri: env.MONGODB_URI || '',
     mongodbDb: env.MONGODB_DB || 'huapai',
     fileDbPath: env.FILE_DB_PATH || '',
@@ -44,5 +51,6 @@ module.exports = {
   DEFAULT_ADMIN_SESSION_TTL_MS,
   DEFAULT_APP_TOKEN_TTL_MS,
   DEFAULT_SOCKET_TOKEN_TTL_MS,
+  normalizeDatabaseDriver,
   readConfig,
 };

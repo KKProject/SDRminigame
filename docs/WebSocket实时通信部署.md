@@ -24,9 +24,12 @@ WECHAT_APPID=你的小游戏 AppID
 WECHAT_SECRET=你的小游戏 AppSecret
 APP_TOKEN_SECRET=一串固定长密钥
 SOCKET_TOKEN_SECRET=另一串固定长密钥
+DATABASE_DRIVER=mongodb
 MONGODB_URI=mongodb://127.0.0.1:27017
 MONGODB_DB=huapai
 ```
+
+生产服务默认使用 MongoDB。若未提供 `MONGODB_URI`，服务会启动失败，避免静默回退到文件数据库。
 
 本地联调可临时配置：
 

@@ -3,6 +3,7 @@
     "miniprogram-ci": "^2.1.31"
   },
   "scripts": {
+    "deploy:backend": "bash scripts/deploy-backend.sh",
     "upload": "node scripts/upload.js"
   }
 }

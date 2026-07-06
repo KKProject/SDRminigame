@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { AuthService } = require('../services/backend/src/auth-service.js');
 const { readConfig } = require('../services/backend/src/config.js');
-const { MemoryDocumentDatabase } = require('../services/backend/src/db.js');
+const { createDatabase, MemoryDocumentDatabase } = require('../services/backend/src/db.js');
 const { LocalGameService } = require('../services/backend/src/game-service.js');
 const { createBackendServer } = require('../services/backend/src/server.js');
 const { CODEC_VERSION } = require('../services/backend/src/codec.js');
@@ -23,6 +23,15 @@ const config = readConfig({
   SOCKET_TOKEN_SECRET: 'socket-secret',
   BACKEND_DEV_OPENID: 'openid-a',
 });
+assert(config.databaseDriver === 'mongodb', 'backend should default to MongoDB storage');
+
+let missingMongoUriRejected = false;
+try {
+  await createDatabase(config);
+} catch (err) {
+  missingMongoUriRejected = err && err.code === 'MONGODB_URI_REQUIRED';
+}
+assert(missingMongoUriRejected, 'MongoDB storage should require MONGODB_URI');
 
 const appToken = issueAppToken('openid-a', config, { now: 1000, ttlMs: 5000, nonce: 'app-nonce' });
 assert(verifyAppToken(appToken.token, config, { now: 2000 }).openid === 'openid-a', 'app token should verify');

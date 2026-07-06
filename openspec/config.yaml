@@ -19,6 +19,9 @@ context: |
   - systemd 服务: `huapai-backend.service`
   - systemd unit: `/etc/systemd/system/huapai-backend.service`
   - 环境变量文件: `/etc/huapai-backend.env`（含密钥，查看时不要输出 secret/token/uri 明文）
+  - 数据库: 同机 Docker MongoDB，容器 `huapai-mongo`，仅监听 `127.0.0.1:27017`
+  - MongoDB 数据目录: `/var/lib/huapai-mongo`
+  - MongoDB 本机密钥目录: `/etc/huapai-mongo`（含 root/app 密码，严禁输出）
   - 对外 API: `https://www.wangyouk.cn`
   - 对外 WSS: `wss://www.wangyouk.cn/ws`
   - 本地监听端口: `8080`
@@ -26,18 +29,26 @@ context: |
     - `ssh aliyun 'curl -fsS http://127.0.0.1:8080/healthz'`
     - `curl -fsS https://www.wangyouk.cn/healthz`
   - 部署后端:
-    1. 本地先跑回归：`node scripts/run-server-core-checks.mjs && node scripts/run-online-checks.mjs && node scripts/run-backend-checks.mjs`
-    2. 同步代码：`rsync -az --delete --exclude node_modules --exclude .env --exclude '*.log' services/backend/ aliyun:/opt/huapai-backend/services/backend/`
-    3. 安装并重启：`ssh aliyun 'set -e; cd /opt/huapai-backend/services/backend; npm install --omit=dev; systemctl restart huapai-backend.service; sleep 2; systemctl status huapai-backend.service --no-pager -l | sed -n "1,80p"; curl -fsS http://127.0.0.1:8080/healthz'`
+    1. 推荐一键部署：`bash scripts/deploy-backend.sh`
+    2. 快速部署（跳过本地回归）：`bash scripts/deploy-backend.sh --skip-checks`
+    3. 仅运行本地回归：`bash scripts/deploy-backend.sh --only-checks`
+    4. 脚本会执行：本地回归、同步 `services/backend`、远程 `npm install --omit=dev`、重启 `huapai-backend.service`、检查 MongoDB 状态、本机健康检查和公网健康检查。
   - 查看状态:
     - `ssh aliyun 'systemctl status huapai-backend.service --no-pager -l'`
   - 查看日志:
     - `ssh aliyun 'journalctl -u huapai-backend.service -n 100 --no-pager'`
     - `ssh aliyun 'journalctl -u huapai-backend.service -f'`
   - 查看公网配置（脱敏）:
-    - `ssh aliyun 'grep -E "^(PORT|PUBLIC_API_BASE_URL|PUBLIC_SOCKET_URL|MONGODB_DB)=" /etc/huapai-backend.env'`
+    - `ssh aliyun 'grep -E "^(PORT|PUBLIC_API_BASE_URL|PUBLIC_SOCKET_URL|DATABASE_DRIVER|MONGODB_DB)=" /etc/huapai-backend.env; grep -q "^MONGODB_URI=" /etc/huapai-backend.env && echo MONGODB_URI=present'`
+  - 查看 MongoDB 状态:
+    - `ssh aliyun 'docker ps --filter name=huapai-mongo --format "{{.Names}} {{.Status}} {{.Ports}}"; ss -lntp | grep ":27017"'`
+  - 统计 MongoDB 业务集合（不输出数据内容）:
+    - `ssh aliyun 'APP_PASSWORD=$(cat /etc/huapai-mongo/app_password); MONGODB_URI="mongodb://huapai_app:${APP_PASSWORD}@127.0.0.1:27017/huapai?authSource=huapai"; cd /opt/huapai-backend/services/backend; MONGODB_URI="$MONGODB_URI" node -e "const { MongoClient } = require(\"mongodb\"); (async () => { const c = new MongoClient(process.env.MONGODB_URI); await c.connect(); const db = c.db(\"huapai\"); for (const n of [\"users\", \"rooms\", \"roomStates\", \"matchQueue\", \"adminUsers\"]) console.log(n + \":\" + await db.collection(n).countDocuments({})); await c.close(); })().catch((e) => { console.error(e.message); process.exit(1); });"'`
+  - MongoDB 备份建议:
+    - 生产已从文件库迁移到 MongoDB；`FILE_DB_PATH` 不再作为后端数据源。
+    - 定期使用 `mongodump --archive` 或等价方式备份 `huapai` 数据库，备份文件不得包含在仓库或 OpenSpec 归档中。
   - Nginx 对外监听 `80/443`，后端由 nginx 反代到本机 `8080`。
-  - 注意：部署时只同步 `services/backend`，不要覆盖 `/etc/huapai-backend.env`，不要把密钥写入 OpenSpec 或日志输出。
+  - 注意：部署时只同步 `services/backend`，不要覆盖 `/etc/huapai-backend.env`，不要把密钥、MongoDB URI、MongoDB 密码写入 OpenSpec 或日志输出。
 
   CMS/后台管理页速查：
   - CMS 不是独立前端应用，而是内嵌在同一个后端 Node 服务中，跟随后端一起部署和重启。
