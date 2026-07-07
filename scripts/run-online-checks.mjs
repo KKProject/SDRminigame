@@ -1019,6 +1019,186 @@ reconnectController.consumeAnimationState({ ...animationSnapshot, selfAcked: tru
 if (animationPlayCount !== 2 || reconnectController.lastAckedEventSeq !== 5) {
   throw new Error('a reconnecting client that already acknowledged the current event should align without replaying it');
 }
+const timelineDatabus = {
+  feedback: '',
+  selectedCardId: null,
+  seats: [
+    { hand: [{ id: 'timeline-hand', key: 'shang' }], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+  ],
+  setRoundState(state) { Object.assign(this, state); },
+};
+const timelineCallbacks = {};
+let timelinePlayCount = 0;
+let timelineAckCount = 0;
+const timelineController = new online.default(timelineDatabus, {
+  playOnlineEvent(event, onComplete) {
+    timelinePlayCount += 1;
+    timelineCallbacks[event.eventSeq] = onComplete;
+    return true;
+  },
+  releaseOnlineEvent() {},
+}, null);
+timelineController.roomId = 'timeline-room';
+timelineController.mySeat = 0;
+timelineController.socket = {
+  isReady() { return true; },
+  request(type, payload = {}) {
+    if (type === 'ackAnimation') timelineAckCount += 1;
+    return Promise.resolve({ ok: true, version: timelineController.version, animation: { waiting: false, selfAcked: false, currentEvent: null } });
+  },
+};
+timelineController.consumeAnimationState({
+  waiting: true,
+  selfAcked: false,
+  currentEvent: { eventSeq: 30, type: 'discard', seat: 1, card: { id: 'timeline-30', key: 'shang' } },
+});
+timelineController.consumeAnimationState({
+  waiting: true,
+  selfAcked: false,
+  currentEvent: { eventSeq: 31, type: 'peng', seat: 2 },
+});
+timelineController.consumeAnimationState({
+  waiting: true,
+  selfAcked: false,
+  currentEvent: { eventSeq: 31, type: 'peng', seat: 2 },
+});
+if (
+  timelinePlayCount !== 1
+  || !timelineController.isAnimating
+  || !timelineController.timelineCurrent
+  || timelineController.timelineCurrent.event.eventSeq !== 30
+  || timelineController.timelineQueue.length !== 1
+) {
+  throw new Error('timeline should queue newer events while the current authoritative event is still playing');
+}
+timelineCallbacks[30]({ eventSeq: 30 });
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (
+  timelinePlayCount !== 2
+  || !timelineController.isAnimating
+  || !timelineController.timelineCurrent
+  || timelineController.timelineCurrent.event.eventSeq !== 31
+  || timelineController.timelineQueue.length !== 0
+  || timelineAckCount !== 1
+) {
+  throw new Error('timeline should acknowledge the completed event and then play the next queued event exactly once');
+}
+timelineCallbacks[31]({ eventSeq: 31 });
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (timelineAckCount !== 2 || timelineController.timelineCurrent) {
+  throw new Error('timeline should complete and acknowledge the final queued event');
+}
+const gatedDatabus = {
+  feedback: '',
+  selectedCardId: null,
+  phase: 'human-discard',
+  currentSeat: 0,
+  result: null,
+  seats: [
+    { hand: [{ id: 'gated-hand', key: 'da' }], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+  ],
+  setRoundState(state) { Object.assign(this, state); },
+};
+let gatedComplete = null;
+let gatedPlayCount = 0;
+const gatedController = new online.default(gatedDatabus, {
+  playOnlineEvent(event, onComplete) {
+    gatedPlayCount += 1;
+    gatedComplete = onComplete;
+    return true;
+  },
+  releaseOnlineEvent() {},
+}, null);
+gatedController.roomId = 'gated-room';
+gatedController.mySeat = 0;
+let gatedAckCount = 0;
+gatedController.socket = {
+  isReady() { return true; },
+  request(type) {
+    if (type === 'ackAnimation') gatedAckCount += 1;
+    return Promise.resolve({ ok: true, version: gatedController.version, animation: { waiting: false, selfAcked: false, currentEvent: null } });
+  },
+};
+if (!gatedController.applyServerSnapshot({
+  ok: true,
+  version: 40,
+  yourSeat: 0,
+  public: {
+    seats: [
+      { id: 0, nickName: '我', handCount: 1, melds: [], discards: [] },
+      { id: 1, nickName: '下家', handCount: 0, melds: [], discards: [] },
+      { id: 2, nickName: '对家', handCount: 0, melds: [], discards: [] },
+      { id: 3, nickName: '上家', handCount: 0, melds: [], discards: [] },
+    ],
+    phase: 'result',
+    currentSeat: 0,
+    dealerSeat: 0,
+    result: { type: 'win', winner: 0, summary: '胡牌结算' },
+    playerActions: [],
+    pendingActions: [],
+  },
+  private: { hand: [{ id: 'gated-hand', key: 'da' }] },
+  animation: {
+    waiting: true,
+    selfAcked: false,
+    currentEvent: { eventSeq: 40, type: 'hu', seat: 0, card: { id: 'gated-hu-card', key: 'da' } },
+  },
+})) {
+  throw new Error('result snapshots with a hu event should be accepted');
+}
+if (gatedPlayCount !== 1 || gatedDatabus.phase === 'result' || gatedDatabus.result) {
+  throw new Error('result display should be gated until the causing hu animation completes');
+}
+gatedComplete({ eventSeq: 40 });
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (gatedDatabus.phase !== 'result' || !gatedDatabus.result || gatedDatabus.result.type !== 'win' || gatedAckCount !== 1) {
+  throw new Error('result display checkpoint should commit after the hu animation completes and acknowledges');
+}
+const skippedDatabus = {
+  feedback: '',
+  selectedCardId: null,
+  seats: [
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+  ],
+  setRoundState(state) { Object.assign(this, state); },
+};
+let skippedPlayCount = 0;
+let skippedAckCount = 0;
+const skippedController = new online.default(skippedDatabus, {
+  playOnlineEvent() {
+    skippedPlayCount += 1;
+    return true;
+  },
+  releaseOnlineEvent() {},
+}, null);
+skippedController.roomId = 'skipped-room';
+skippedController.mySeat = 0;
+skippedController.socketReconnecting = true;
+skippedController.socket = {
+  isReady() { return true; },
+  request(type) {
+    if (type === 'ackAnimation') skippedAckCount += 1;
+    return Promise.resolve({ ok: true, version: skippedController.version, animation: { waiting: false, selfAcked: false, currentEvent: null } });
+  },
+};
+skippedController.consumeAnimationState({
+  waiting: true,
+  selfAcked: false,
+  currentEvent: { eventSeq: 50, type: 'unclaimed', seat: 1, card: { id: 'skip-card', key: 'shang' } },
+}, { source: 'reconnect' });
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (skippedPlayCount !== 0 || skippedAckCount !== 1 || skippedController.timelineCurrent || skippedController.isAnimating) {
+  throw new Error('recovering clients should skip observational timeline events and still acknowledge them');
+}
 const selfAckPreviewController = new online.default(onlineDatabus, onlineRenderer, onlineMusic);
 selfAckPreviewController.mySeat = 0;
 const selfAckPreviewCancelBaseline = localPreviewCancelCount;
@@ -2650,8 +2830,8 @@ if (!/async function writeRoomState[\s\S]*?collection\(ROOMS\)\.doc\(roomId\)\.s
   throw new Error('authoritative room state must use document.set to safely replace null and nested object fields');
 }
 const animationControllerSource = await readFile(join(root, 'js/game/animation/controller.js'), 'utf8');
-if (!/playOnlineEvent\(event, onComplete\)/.test(animationControllerSource)) {
-  throw new Error('animation controller should expose an explicit online event animation API');
+if (!/playOnlineEvent\(event, onComplete, options = \{\}\)/.test(animationControllerSource)) {
+  throw new Error('animation controller should expose an explicit online event animation API with playback options');
 }
 const mainSource = await readFile(join(root, 'js/main.js'), 'utf8');
 if (!/bindOnlineController\(controller\)\s*\{[\s\S]*?controller\.onLobby = \(lobby\) => \{[\s\S]*?this\.mode = 'lobby';[\s\S]*?this\.menu\.show\(\);[\s\S]*?\};/.test(mainSource)) {

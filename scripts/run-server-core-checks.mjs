@@ -173,6 +173,66 @@ if (publicState.seats.some((seat) => 'hand' in seat)) throw new Error('public st
     throw new Error('animation state should mark a required seat self-acked after its ack is recorded');
   }
 }
+{
+  const card = serverDeck[1];
+  const offlineBarrierRoom = {
+    players: [
+      { seat: 0, openid: 'online-viewer', online: true },
+      { seat: 1, openid: 'offline-viewer', online: false },
+    ],
+  };
+  const observationalEngine = {
+    state: {
+      eventSeq: 20,
+      publicEvent: { eventSeq: 20, type: 'unclaimed', seat: 0, card, appearanceResolution: 'auto-discard' },
+      pendingContinuation: { type: 'next-draw', sourceSeat: 0 },
+    },
+  };
+  const observationalBarrier = room.syncAnimationBarrier(offlineBarrierRoom, observationalEngine, 3);
+  if (!observationalBarrier || observationalBarrier.requiredOpenids.join(',') !== 'online-viewer') {
+    throw new Error('offline players should not be required for non-critical observational animation barriers');
+  }
+
+  const resultEngine = {
+    state: {
+      eventSeq: 21,
+      publicEvent: { eventSeq: 21, type: 'hu', seat: 0, card },
+      pendingContinuation: null,
+    },
+  };
+  const resultBarrier = room.syncAnimationBarrier(offlineBarrierRoom, resultEngine, 4);
+  if (!resultBarrier || resultBarrier.requiredOpenids.join(',') !== 'online-viewer') {
+    throw new Error('result animation barriers should retain online viewers and exclude offline players');
+  }
+
+  const removalRoom = {
+    players: [
+      { seat: 0, openid: 'ack-viewer', online: true },
+      { seat: 1, openid: 'drop-viewer', online: true },
+    ],
+  };
+  const removalEngine = {
+    state: {
+      eventSeq: 22,
+      publicEvent: { eventSeq: 22, type: 'pass', seat: 1 },
+      pendingContinuation: null,
+    },
+  };
+  const removalBarrier = room.syncAnimationBarrier(removalRoom, removalEngine, 5);
+  if (!removalBarrier || removalBarrier.requiredOpenids.length !== 2) {
+    throw new Error('current online viewers should initially be required for an observational animation');
+  }
+  removalBarrier.ackedOpenids.push('ack-viewer');
+  removalRoom.players[1].online = false;
+  const refreshedBarrier = room.syncAnimationBarrier(removalRoom, removalEngine, 6);
+  if (
+    !refreshedBarrier
+    || refreshedBarrier.requiredOpenids.join(',') !== 'ack-viewer'
+    || !room.barrierComplete(refreshedBarrier)
+  ) {
+    throw new Error('offline removal should refresh the current barrier and allow remaining acks to complete it');
+  }
+}
 const sanitizedEvent = serverEngine.serializePublicEvent({
   eventSeq: 7,
   type: 'discard',

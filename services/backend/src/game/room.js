@@ -344,6 +344,25 @@ function onlineAnimationOpenids(room) {
     .filter(Boolean);
 }
 
+function animationEventType(event = {}) {
+  return event && event.type ? event.type : '';
+}
+
+function isResponseCriticalAnimationEvent(event = {}) {
+  const type = animationEventType(event);
+  return (type === 'draw' || type === 'discard') && event.appearanceResolution === 'await-response';
+}
+
+function isResultAnimationEvent(event = {}) {
+  return ['hu', 'circle-loss', 'draw-round'].indexOf(animationEventType(event)) >= 0;
+}
+
+function isObservationalAnimationEvent(event = {}) {
+  const type = animationEventType(event);
+  return ['pass', 'settlement', 'unclaimed'].indexOf(type) >= 0
+    || ((type === 'draw' || type === 'discard') && event.appearanceResolution !== 'await-response');
+}
+
 function playerOpenidAtSeat(room, seat) {
   const player = (room.players || []).find((item) => item && item.seat === seat);
   return player && player.openid ? player.openid : '';
@@ -413,6 +432,9 @@ function animationBarrierDebug(room, engine, barrier = null) {
     roomId: roomDebugId(room),
     eventSeq: event.eventSeq || (currentBarrier && currentBarrier.eventSeq) || null,
     eventType: event.type || '',
+    eventCriticality: isResponseCriticalAnimationEvent(event)
+      ? 'response'
+      : (isResultAnimationEvent(event) ? 'result' : (isObservationalAnimationEvent(event) ? 'observational' : 'behavior')),
     eventSeat: typeof event.seat === 'number' ? event.seat : null,
     eventAppearanceResolution: event.appearanceResolution || '',
     continuationType: continuation.type || '',
@@ -420,6 +442,10 @@ function animationBarrierDebug(room, engine, barrier = null) {
     continuationActionSeats: responseContinuationSeats(continuation),
     requiredSeats: currentBarrier ? seatsForOpenids(room, currentBarrier.requiredOpenids || []) : [],
     ackedSeats: currentBarrier ? seatsForOpenids(room, currentBarrier.ackedOpenids || []) : [],
+    waitingSeats: currentBarrier ? seatsForOpenids(
+      room,
+      (currentBarrier.requiredOpenids || []).filter((openid) => (currentBarrier.ackedOpenids || []).indexOf(openid) < 0)
+    ) : [],
     deadlineAt: currentBarrier ? currentBarrier.deadlineAt : null,
     responseWindow: responseWindowDebug(state.responseWindow),
   };
@@ -439,8 +465,10 @@ function responseContinuationSeats(continuation = {}) {
 
 function requiredAnimationOpenids(room, engine) {
   const state = engine && engine.state ? engine.state : {};
+  const event = state.publicEvent || {};
   const continuation = state.pendingContinuation || {};
   const allOnline = onlineAnimationOpenids(room);
+  if (!event) return [];
   if (continuation.type === 'draw-response-window' && continuation.actions) {
     const sourceSeat = typeof continuation.sourceSeat === 'number' ? continuation.sourceSeat : null;
     const seats = responseContinuationSeats(continuation)
@@ -451,6 +479,7 @@ function requiredAnimationOpenids(room, engine) {
     const seats = responseContinuationSeats(continuation);
     return requiredOpenidsForSeats(room, seats.length ? seats : [responseContinuationSeat(continuation)]);
   }
+  if (isResultAnimationEvent(event)) return allOnline;
   if (continuation.type === 'after-grouping' && typeof continuation.seatIndex === 'number') {
     return requiredOpenidsForSeats(room, [continuation.seatIndex]);
   }
@@ -492,6 +521,12 @@ function syncAnimationBarrier(room, engine, now = Date.now()) {
     const beforeAcked = current.ackedOpenids || [];
     current.requiredOpenids = (current.requiredOpenids || []).filter((openid) => online.has(openid));
     current.ackedOpenids = (current.ackedOpenids || []).filter((openid) => current.requiredOpenids.indexOf(openid) >= 0);
+    const removedOpenids = beforeRequired.filter((openid) => current.requiredOpenids.indexOf(openid) < 0);
+    if (removedOpenids.length) {
+      logResponseFlowDebug('barrier-remove-offline', Object.assign(animationBarrierDebug(room, engine, current), {
+        removedSeats: seatsForOpenids(room, removedOpenids),
+      }));
+    }
     if (!sameOpenidList(beforeRequired, current.requiredOpenids) || !sameOpenidList(beforeAcked, current.ackedOpenids)) {
       logResponseFlowDebug('barrier-update', animationBarrierDebug(room, engine, current));
     }
@@ -522,6 +557,9 @@ function advanceUnobservedEvents(room, engine) {
   let guard = 0;
   let barrier = syncAnimationBarrier(room, engine);
   while (barrier && barrierComplete(barrier) && guard < 64) {
+    logResponseFlowDebug('barrier-auto-skip', Object.assign(animationBarrierDebug(room, engine, barrier), {
+      reason: (barrier.requiredOpenids || []).length ? 'all-acked' : 'no-required-viewers',
+    }));
     engine.resumePublicEvent();
     barrier = syncAnimationBarrier(room, engine);
     guard += 1;

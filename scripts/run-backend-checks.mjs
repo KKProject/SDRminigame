@@ -583,8 +583,8 @@ assert(
   'socket close logs should include connection context and close reason'
 );
 assert(
-  !socketConnectionEvents.some((event) => event.roomId === 'room-log' && event.openid === 'openid-a' && event.online === false),
-  'ordinary socket close should not immediately mark a player offline'
+  socketConnectionEvents.some((event) => event.roomId === 'room-log' && event.openid === 'openid-a' && event.online === false),
+  'ordinary socket close should refresh connection state and mark the player offline when no room connection remains'
 );
 
 const timeoutWs = new WebSocket(`ws://127.0.0.1:${socketLogPort}/ws?token=${encodeURIComponent(issueSocketToken('openid-b', socketLogConfig).token)}`);

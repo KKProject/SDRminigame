@@ -11,6 +11,10 @@ const HEARTBEAT_INTERVAL_MS = 20000;
 const WAITING_REFRESH_INTERVAL_MS = 2000;
 const RESPONSE_ACTION_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'];
 const MELD_ACTION_TYPES = ['chi', 'peng', 'zhao', 'ta'];
+const RESULT_EVENT_TYPES = ['hu', 'circle-loss', 'draw-round', 'settlement'];
+const BEHAVIOR_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'circle-loss', 'draw-round'];
+const OBSERVATIONAL_EVENT_TYPES = ['pass', 'settlement', 'unclaimed'];
+const TIMELINE_FAST_QUEUE_THRESHOLD = 2;
 const SOCKET_AUTH_REFRESH_SKEW_MS = 60 * 1000;
 const SOCKET_AUTH_ERROR_CODES = [
   'TOKEN_EXPIRED',
@@ -65,6 +69,38 @@ function animationActionType(type) {
 function shouldPlayOptimisticLocalPreview(action = {}) {
   const type = animationActionType(action.type);
   return RESPONSE_ACTION_TYPES.indexOf(type) < 0;
+}
+
+function clonePlain(value) {
+  if (value == null) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function isResultEvent(event = {}) {
+  return event && RESULT_EVENT_TYPES.indexOf(event.type) >= 0;
+}
+
+function isResponseCriticalEvent(event = {}) {
+  return event
+    && (event.type === 'draw' || event.type === 'discard')
+    && event.appearanceResolution === 'await-response';
+}
+
+function timelineEventCategory(event = {}) {
+  if (isResponseCriticalEvent(event)) return 'response-critical';
+  if (BEHAVIOR_EVENT_TYPES.indexOf(event.type) >= 0) return 'behavior';
+  if (OBSERVATIONAL_EVENT_TYPES.indexOf(event.type) >= 0) return 'observational';
+  if ((event.type === 'draw' || event.type === 'discard') && event.appearanceResolution === 'auto-discard') return 'observational';
+  return 'normal';
+}
+
+function timelinePlaybackMode(event = {}, queueLength = 0, recovering = false) {
+  const category = timelineEventCategory(event);
+  if (category === 'response-critical') return 'full';
+  if (recovering && category === 'observational') return 'skip';
+  if (queueLength >= TIMELINE_FAST_QUEUE_THRESHOLD && category === 'observational') return 'skip';
+  if (queueLength >= TIMELINE_FAST_QUEUE_THRESHOLD && category === 'behavior') return 'fast';
+  return 'full';
 }
 
 function isResponseAction(action = {}) {
@@ -581,6 +617,10 @@ export default class OnlineController {
     this.lastPlayedEventSeq = 0;
     this.lastAckedEventSeq = 0;
     this.lastLocallyCompletedEventSeq = 0;
+    this.timelineQueue = [];
+    this.timelineCurrent = null;
+    this.timelineConsumedEventSeqs = new Set();
+    this.authoritativeState = null;
     this.isAnimating = false;
     this.animationWaiting = false;
     this.ackRetryTimer = null;
@@ -639,6 +679,11 @@ export default class OnlineController {
       lastAckedEventSeq: this.lastAckedEventSeq,
       lastLocallyCompletedEventSeq: this.lastLocallyCompletedEventSeq,
       ackingEventSeq: this.ackingEventSeq || 0,
+      timelineQueueLength: this.timelineQueue ? this.timelineQueue.length : 0,
+      timelineCurrentEventSeq: this.timelineCurrent && this.timelineCurrent.event
+        ? this.timelineCurrent.event.eventSeq
+        : null,
+      timelineCurrentMode: this.timelineCurrent ? (this.timelineCurrent.mode || '') : '',
       socketReady: Boolean(this.socket && this.socket.isReady && this.socket.isReady()),
     }, extra);
     console.info(`[online:diagnostic] ${event}`, detail);
@@ -701,6 +746,10 @@ export default class OnlineController {
     this.version = -1;
     this.lastServerEventSeq = 0;
     this.currentEvent = null;
+    this.timelineQueue = [];
+    this.timelineCurrent = null;
+    this.timelineConsumedEventSeqs.clear();
+    this.authoritativeState = null;
     this.isAnimating = false;
     this.animationWaiting = false;
     this.ackingEventSeq = 0;
@@ -1269,6 +1318,8 @@ export default class OnlineController {
       selfAcked: false,
       currentEvent: delta.event,
       latestEventSeq: eventSeq,
+    }, {
+      source: 'delta',
     });
     return true;
   }
@@ -1331,6 +1382,206 @@ export default class OnlineController {
     return true;
   }
 
+  shouldGateDisplayState(local = {}, event = {}, animation = {}) {
+    if (!local || local.phase !== 'result') return false;
+    if (!isResultEvent(event)) return false;
+    return !animation.selfAcked;
+  }
+
+  buildDeferredDisplayState(local = {}) {
+    const display = clonePlain(local);
+    const current = this.databus || {};
+    if (current && Array.isArray(current.seats)) {
+      if (current.phase && current.phase !== 'result') display.phase = current.phase;
+      else display.phase = 'ai-thinking';
+      display.result = current.phase === 'result' ? (current.result || null) : null;
+      display.tableFinished = false;
+      display.tableStatus = current.tableStatus || '';
+    }
+    display.playerActions = local.playerActions || [];
+    display.pendingActions = local.pendingActions || [];
+    display.responseSummary = local.responseSummary || null;
+    display.responseWindowId = local.responseWindowId || null;
+    display.actionState = local.actionState || 'closed';
+    display.feedback = local.feedback || '';
+    display.animationWaiting = local.animationWaiting;
+    return display;
+  }
+
+  commitTimelineDisplayState(displayState, reason = 'timeline-display-commit', event = null) {
+    if (!displayState || !this.databus || !this.databus.setRoundState) return false;
+    this.databus.setRoundState(clonePlain(displayState));
+    this.reportOnlineDiagnostic('online-timeline-display-commit', {
+      reason,
+      event: diagnosticEvent(event),
+      committedPhase: displayState.phase || '',
+      committedResultType: displayState.result ? (displayState.result.type || '') : '',
+    });
+    return true;
+  }
+
+  enqueueTimelineEvent(event, animation = {}, options = {}) {
+    if (!event || typeof event.eventSeq !== 'number') return false;
+    if (this.timelineCurrent && !this.isAnimating) {
+      this.reportOnlineDiagnostic('online-timeline-release-stale-current', {
+        event: diagnosticEvent(this.timelineCurrent.event),
+        nextEvent: diagnosticEvent(event),
+      });
+      this.timelineCurrent = null;
+    }
+    const eventSeq = event.eventSeq;
+    const existingCurrent = this.timelineCurrent
+      && this.timelineCurrent.event
+      && this.timelineCurrent.event.eventSeq === eventSeq;
+    if (existingCurrent) {
+      if (options.displayCommit) this.timelineCurrent.displayCommit = options.displayCommit;
+      this.reportOnlineDiagnostic('online-timeline-dedupe', {
+        event: diagnosticEvent(event),
+        location: 'current',
+      });
+      return true;
+    }
+    const existingQueued = this.timelineQueue.find((entry) => entry.event && entry.event.eventSeq === eventSeq);
+    if (existingQueued) {
+      if (options.displayCommit) existingQueued.displayCommit = options.displayCommit;
+      this.reportOnlineDiagnostic('online-timeline-dedupe', {
+        event: diagnosticEvent(event),
+        location: 'queue',
+      });
+      return true;
+    }
+    if (eventSeq <= this.lastAckedEventSeq) {
+      this.reportOnlineDiagnostic('online-timeline-dedupe', {
+        event: diagnosticEvent(event),
+        location: 'consumed',
+      });
+      if (options.displayCommit) this.commitTimelineDisplayState(options.displayCommit, 'consumed-event-commit', event);
+      return true;
+    }
+    const mode = timelinePlaybackMode(event, this.timelineQueue.length + (this.timelineCurrent ? 1 : 0), this.socketReconnecting);
+    const entry = {
+      event,
+      animation,
+      displayCommit: options.displayCommit || null,
+      mode,
+      category: timelineEventCategory(event),
+      source: options.source || 'animation-state',
+      enqueuedAt: Date.now(),
+    };
+    this.timelineQueue.push(entry);
+    this.timelineQueue.sort((left, right) => left.event.eventSeq - right.event.eventSeq);
+    this.reportOnlineDiagnostic('online-timeline-enqueue', {
+      event: diagnosticEvent(event),
+      mode,
+      category: entry.category,
+      source: entry.source,
+      queueLength: this.timelineQueue.length,
+    });
+    this.pumpAnimationTimeline();
+    return true;
+  }
+
+  pumpAnimationTimeline() {
+    if (this.timelineCurrent || this.isAnimating || !this.timelineQueue.length) return false;
+    const entry = this.timelineQueue.shift();
+    if (!entry || !entry.event) return false;
+    this.timelineCurrent = entry;
+    this.playTimelineEntry(entry);
+    return true;
+  }
+
+  playTimelineEntry(entry) {
+    const event = entry.event;
+    if (!event || typeof event.eventSeq !== 'number') {
+      this.timelineCurrent = null;
+      this.pumpAnimationTimeline();
+      return;
+    }
+    if (event.eventSeq <= this.lastPlayedEventSeq && !this.isAnimating) {
+      this.reportOnlineDiagnostic('online-timeline-skip', {
+        event: diagnosticEvent(event),
+        reason: 'already-played',
+      });
+      this.completeTimelineEvent(event.eventSeq, 'already-played');
+      this.lastAckedEventSeq = Math.min(this.lastAckedEventSeq, event.eventSeq - 1);
+      this.sendAnimationAck(event.eventSeq);
+      return;
+    }
+    if (this.lastPlayedEventSeq && event.eventSeq > this.lastPlayedEventSeq + 1) {
+      console.warn('[online] animation event gap, aligning to current authoritative event', {
+        previous: this.lastPlayedEventSeq,
+        current: event.eventSeq,
+      });
+      this.cancelLocalActionPreview();
+      if (this.animator.releaseOnlineEvent) this.animator.releaseOnlineEvent();
+      this.isAnimating = false;
+    }
+    this.currentEvent = event;
+    this.lastPlayedEventSeq = Math.max(this.lastPlayedEventSeq, event.eventSeq);
+    if (entry.mode === 'skip') {
+      this.reportOnlineDiagnostic('online-timeline-skip', {
+        event: diagnosticEvent(event),
+        reason: 'playback-mode-skip',
+        category: entry.category,
+      });
+      this.isAnimating = false;
+      this.animationWaiting = false;
+      if (this.databus) this.databus.animationWaiting = false;
+      this.lastLocallyCompletedEventSeq = Math.max(this.lastLocallyCompletedEventSeq || 0, event.eventSeq);
+      this.completeTimelineEvent(event.eventSeq, 'skipped');
+      this.sendAnimationAck(event.eventSeq);
+      return;
+    }
+    this.applyAuthoritativeDiscardEventToLocalHand(event);
+    this.applyAuthoritativeMeldEventToLocalHand(event);
+    this.isAnimating = true;
+    this.reportOnlineDiagnostic('online-animation-start', {
+      event: diagnosticEvent(event),
+      animationWaitingFromServer: Boolean(entry.animation && entry.animation.waiting),
+      animationSelfAcked: Boolean(entry.animation && entry.animation.selfAcked),
+      playbackMode: entry.mode,
+      category: entry.category,
+    });
+    const hasLocalPreview = Boolean(this.pendingLocalAction && this.pendingLocalAction.localPreviewStarted);
+    const usesLocalPreview = hasLocalPreview
+      && localActionMatchesEvent(this.pendingLocalAction, event)
+      && this.animator.confirmLocalActionPreview
+      && this.animator.confirmLocalActionPreview(event, () => this.markLocalAnimationComplete());
+    if (usesLocalPreview) {
+      this.pendingLocalAction.authoritativeEventConfirmed = true;
+      this.pendingLocalAction.eventSeq = event.eventSeq;
+      this.pendingLocalAction.event = event;
+      this.tryFinishLocalAction();
+    }
+    if (!usesLocalPreview) {
+      this.cancelLocalActionPreview();
+      this.playEventSound(event);
+    }
+    const started = usesLocalPreview || (this.animator.playOnlineEvent
+      ? this.animator.playOnlineEvent(event, () => this.finishAnimation(event.eventSeq), { mode: entry.mode })
+      : false);
+    if (!started) {
+      this.reportOnlineDiagnostic('online-animation-not-started', {
+        event: diagnosticEvent(event),
+      });
+      this.finishAnimation(event.eventSeq);
+    }
+  }
+
+  completeTimelineEvent(eventSeq, reason = 'completed') {
+    const entry = this.timelineCurrent
+      && this.timelineCurrent.event
+      && this.timelineCurrent.event.eventSeq === eventSeq
+      ? this.timelineCurrent
+      : null;
+    if (entry && entry.displayCommit) {
+      this.commitTimelineDisplayState(entry.displayCommit, reason, entry.event);
+    }
+    this.timelineConsumedEventSeqs.add(eventSeq);
+    this.timelineCurrent = null;
+    this.pumpAnimationTimeline();
+  }
+
   /** 立即应用一次服务端裁决附带的完整快照，避免再次 pull 时错过短暂动作事件。 */
   applyServerSnapshot(res) {
     if (res && res.ok && (res.left || res.closed || res.declined || res.status === 'closed')) {
@@ -1366,6 +1617,7 @@ export default class OnlineController {
     local.tableSettings = res.settings || {};
     local.tableFinished = res.status === 'tableResult';
     local.tableRematch = res.rematch || null;
+    this.authoritativeState = clonePlain(local);
     this.scheduleRematchDecisionTimer(local.tableRematch);
     const animation = res.animation || {
       currentEvent: res.public.publicEvent || null,
@@ -1395,12 +1647,15 @@ export default class OnlineController {
       local.pendingActions = [];
       local.playerActions = [];
     }
-    this.databus.setRoundState(local);
     const serverEvent = animation.currentEvent || res.public.publicEvent || null;
+    const gateDisplay = this.shouldGateDisplayState(local, serverEvent, { ...animation, selfAcked });
+    const displayLocal = gateDisplay ? this.buildDeferredDisplayState(local) : local;
+    this.databus.setRoundState(displayLocal);
     if (
       hasLocalResponseActions
       || (local.responseSummary && local.responseSummary.active)
       || (serverEvent && serverEvent.appearanceResolution === 'await-response')
+      || gateDisplay
     ) {
       this.reportOnlineDiagnostic('online-response-snapshot', {
         incomingVersion: res.version,
@@ -1411,17 +1666,21 @@ export default class OnlineController {
         serverRequiredSeats: Array.isArray(animation.requiredSeats) ? animation.requiredSeats.slice() : [],
         serverAckedSeats: Array.isArray(animation.ackedSeats) ? animation.ackedSeats.slice() : [],
         serverDeadlineAt: animation.deadlineAt || null,
+        displayGated: gateDisplay,
       });
     }
     if (!local.responseWindowId || local.actionState !== 'available') {
       this.clearPendingResponseIntent(local.responseWindowId);
     }
-    this.consumeAnimationState(animation);
+    this.consumeAnimationState({ ...animation, selfAcked }, {
+      displayCommit: gateDisplay ? local : null,
+      source: 'snapshot',
+    });
     this.setStatus('');
     return true;
   }
 
-  consumeAnimationState(animation = {}) {
+  consumeAnimationState(animation = {}, options = {}) {
     const event = rotatePublicEvent(animation.currentEvent, this.mySeat);
     if (!event) {
       if (this.isAnimating && this.currentEvent) {
@@ -1436,6 +1695,8 @@ export default class OnlineController {
         }
       }
       if (this.animator.releaseOnlineEvent) this.animator.releaseOnlineEvent();
+      this.timelineCurrent = null;
+      this.timelineQueue = [];
       this.currentEvent = null;
       this.isAnimating = false;
       this.animationWaiting = false;
@@ -1443,8 +1704,8 @@ export default class OnlineController {
       this.cancelLocalActionPreview();
       return;
     }
-    this.currentEvent = event;
     if (animation.selfAcked) {
+      this.currentEvent = event;
       this.reportOnlineDiagnostic('online-animation-self-acked', {
         event: diagnosticEvent(event),
         clearingLocalPreview: Boolean(this.localActionPreviewType || this.pendingLocalAction),
@@ -1454,62 +1715,23 @@ export default class OnlineController {
       this.isAnimating = false;
       if (this.animator.restoreHeldAppearance) this.animator.restoreHeldAppearance(event);
       this.cancelLocalActionPreview();
+      if (options.displayCommit) this.commitTimelineDisplayState(options.displayCommit, 'self-acked', event);
+      this.timelineConsumedEventSeqs.add(event.eventSeq);
+      this.pumpAnimationTimeline();
       return;
     }
-    if (event.eventSeq <= this.lastPlayedEventSeq || this.isAnimating) {
+    if (event.eventSeq <= this.lastPlayedEventSeq && !this.isAnimating) {
       this.reportOnlineDiagnostic('online-animation-consume-skipped', {
         event: diagnosticEvent(event),
-        reason: this.isAnimating ? 'is-animating' : 'already-played',
+        reason: 'already-played',
       });
-      if (!this.isAnimating && event.eventSeq <= this.lastPlayedEventSeq) {
-        // 多客户端并发全量写可能覆盖单个回执；权威状态仍未记录本人时主动幂等补发。
-        this.lastAckedEventSeq = Math.min(this.lastAckedEventSeq, event.eventSeq - 1);
-        this.sendAnimationAck(event.eventSeq);
-      }
+      if (options.displayCommit) this.commitTimelineDisplayState(options.displayCommit, 'already-played', event);
+      // 多客户端并发全量写可能覆盖单个回执；权威状态仍未记录本人时主动幂等补发。
+      this.lastAckedEventSeq = Math.min(this.lastAckedEventSeq, event.eventSeq - 1);
+      this.sendAnimationAck(event.eventSeq);
       return;
     }
-    if (this.lastPlayedEventSeq && event.eventSeq > this.lastPlayedEventSeq + 1) {
-      console.warn('[online] animation event gap, aligning to current authoritative event', {
-        previous: this.lastPlayedEventSeq,
-        current: event.eventSeq,
-      });
-      this.cancelLocalActionPreview();
-      if (this.animator.releaseOnlineEvent) this.animator.releaseOnlineEvent();
-      this.isAnimating = false;
-    }
-    this.lastPlayedEventSeq = event.eventSeq;
-    this.applyAuthoritativeDiscardEventToLocalHand(event);
-    this.applyAuthoritativeMeldEventToLocalHand(event);
-    this.isAnimating = true;
-    this.reportOnlineDiagnostic('online-animation-start', {
-      event: diagnosticEvent(event),
-      animationWaitingFromServer: Boolean(animation.waiting),
-      animationSelfAcked: Boolean(animation.selfAcked),
-    });
-    const hasLocalPreview = Boolean(this.pendingLocalAction && this.pendingLocalAction.localPreviewStarted);
-    const usesLocalPreview = hasLocalPreview
-      && localActionMatchesEvent(this.pendingLocalAction, event)
-      && this.animator.confirmLocalActionPreview
-      && this.animator.confirmLocalActionPreview(event, () => this.markLocalAnimationComplete());
-    if (usesLocalPreview) {
-      this.pendingLocalAction.authoritativeEventConfirmed = true;
-      this.pendingLocalAction.eventSeq = event.eventSeq;
-      this.pendingLocalAction.event = event;
-      this.tryFinishLocalAction();
-    }
-    if (!usesLocalPreview) {
-      this.cancelLocalActionPreview();
-      this.playEventSound(event);
-    }
-    const started = usesLocalPreview || (this.animator.playOnlineEvent
-      ? this.animator.playOnlineEvent(event, () => this.finishAnimation(event.eventSeq))
-      : false);
-    if (!started) {
-      this.reportOnlineDiagnostic('online-animation-not-started', {
-        event: diagnosticEvent(event),
-      });
-      this.finishAnimation(event.eventSeq);
-    }
+    this.enqueueTimelineEvent(event, animation, options);
   }
 
   applyAuthoritativeDiscardEventToLocalHand(event = {}) {
@@ -1587,6 +1809,7 @@ export default class OnlineController {
     this.lastLocallyCompletedEventSeq = Math.max(this.lastLocallyCompletedEventSeq || 0, eventSeq);
     this.databus.animationWaiting = false;
     this.cancelLocalActionPreview();
+    this.completeTimelineEvent(eventSeq, 'animation-finished');
     this.sendAnimationAck(eventSeq);
   }
 

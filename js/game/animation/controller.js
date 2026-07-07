@@ -3,6 +3,23 @@ import { eventPlan } from './presets';
 // 属于“吃碰杠”类型的动作，本地预览和网络事件都会用到。
 const MELD_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta'];
 const RESPONSE_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'];
+const FAST_PLAYBACK_DURATION_SCALE = 0.35;
+
+function scaleAnimationStepDuration(step, scale) {
+  if (!step) return;
+  if (typeof step.duration === 'number') {
+    step.duration = Math.max(0, Math.round(step.duration * scale));
+  }
+  if (Array.isArray(step.steps)) {
+    step.steps.forEach((child) => scaleAnimationStepDuration(child, scale));
+  }
+}
+
+function scaleAnimationPlanDuration(plan, scale) {
+  if (!plan || !Array.isArray(plan.steps) || !scale || scale === 1) return plan;
+  plan.steps.forEach((step) => scaleAnimationStepDuration(step, scale));
+  return plan;
+}
 
 function isResponseActionForCard(action, cardId) {
   return action
@@ -128,7 +145,7 @@ export default class TableAnimationController {
    * @param {function} onComplete 动画完成后的回调
    * @returns {boolean} 是否成功开始播放
    */
-  playOnlineEvent(event, onComplete) {
+  playOnlineEvent(event, onComplete, options = {}) {
     // 必须是带 eventSeq 的网络事件。
     if (!event || typeof event.eventSeq !== 'number') return false;
 
@@ -204,7 +221,10 @@ export default class TableAnimationController {
       };
     }
 
-    const plan = eventPlan(event, context);
+    const plan = scaleAnimationPlanDuration(
+      eventPlan(event, context),
+      options.mode === 'fast' ? FAST_PLAYBACK_DURATION_SCALE : 1
+    );
     return this.manager.play(plan, () => {
       if (!this.onlinePlayback || this.onlinePlayback.eventSeq !== event.eventSeq) return;
       if (
