@@ -22,6 +22,41 @@ import { flushClientDiagnostics, reportClientDiagnostic } from './net/diagnostic
 GameGlobal.databus = new DataBus();
 GameGlobal.musicManager = new Music();
 
+const APP_MODES = {
+  HALL: 'start',
+  CREATE_ROOM: 'create-room',
+  WAITING_ROOM: 'waiting',
+  GAME_TABLE: 'online',
+  START: 'start',
+};
+
+const INVITE_START_HOME_ERROR_CODES = new Set([
+  'ROOM_NOT_FOUND',
+  'ROOM_ENDED',
+  'ROOM_ALREADY_STARTED',
+  'ROOM_NOT_JOINABLE',
+  'ROOM_FULL',
+]);
+
+function errorCodeOf(err) {
+  return (err && (err.code || err.message)) || '';
+}
+
+function shouldReturnInviteToStart(err) {
+  return INVITE_START_HOME_ERROR_CODES.has(errorCodeOf(err));
+}
+
+function inviteStartMessage(err) {
+  const code = errorCodeOf(err);
+  if (code === 'ROOM_NOT_FOUND' || code === 'ROOM_ENDED') return '房间不存在或已结束';
+  return onlineErrorMessage(err);
+}
+
+function showToast(message) {
+  if (!message || typeof wx === 'undefined' || !wx.showToast) return;
+  wx.showToast({ title: message, icon: 'none', duration: 2000 });
+}
+
 export default class Main {
   aniId = 0;
   assets = new AssetLoader();
@@ -68,15 +103,15 @@ export default class Main {
     this.pendingInviteRoomId = roomId;
     if (this.menu) this.menu.setStatus('收到房间邀请，正在进入…');
     if (this.online && this.online.starting) return;
-    if (this.mode === 'online' && this.online && this.online.active) {
+    if (this.mode === APP_MODES.GAME_TABLE && this.online && this.online.active) {
       this.menu.setStatus('你已有进行中的牌桌');
       return;
     }
-    if (this.mode === 'waiting' && this.online && this.online.roomId === roomId) {
+    if (this.mode === APP_MODES.WAITING_ROOM && this.online && this.online.roomId === roomId) {
       this.online.refreshWaitingRoom();
       return;
     }
-    if (autoStart || this.mode === 'lobby' || this.mode === null) {
+    if (autoStart || this.mode === APP_MODES.HALL || this.mode === null) {
       this.startOnline(this.online && this.online.lobbyProfile ? this.online.lobbyProfile : profileWithFallback(), roomId);
     }
   }
@@ -159,17 +194,17 @@ export default class Main {
     if (mode === 'startLogin') {
       this.loginFromStart(profile);
     } else if (mode === 'openCreateRoomSettings') {
-      this.mode = 'room-ui';
+      this.mode = APP_MODES.CREATE_ROOM;
       this.menu.setStatus('');
     } else if (mode === 'confirmCreateRoom') {
       this.createOnlineRoom(profile);
-    } else if (mode === 'confirmSeatSelection') {
-      this.mode = 'room-ui';
-      this.menu.setStatus('已选择座位，后续接入创建房间逻辑');
     } else if (mode === 'online') {
       this.startOnline(profile, this.pendingInviteRoomId);
+    } else if (mode === 'returnStartHome') {
+      this.mode = APP_MODES.HALL;
     } else if (mode === 'createRoom') {
-      this.createOnlineRoom(profile.maxRounds);
+      this.mode = APP_MODES.CREATE_ROOM;
+      this.menu.showCreateRoomSettings();
     } else if (mode === 'lobbyRetry') {
       const retryProfile = this.online && this.online.lobbyProfile ? this.online.lobbyProfile : {};
       this.startOnline(retryProfile, this.pendingInviteRoomId);
@@ -195,15 +230,24 @@ export default class Main {
     controller.onLobby = (lobby) => {
       this.loggedInProfile = lobby.profile || this.loggedInProfile;
       if (lobby.profile) this.menu.setStartAuthState('ready', { profile: lobby.profile });
-      if (this.mode === 'room-ui') return;
-      this.menu.showLobby(lobby.profile);
+      if (this.mode === APP_MODES.CREATE_ROOM && lobby.state !== 'idle') return;
+      const lobbyProfile = lobby.profile || this.loggedInProfile || controller.lobbyProfile || {};
+      if (lobby.state === 'idle') {
+        this.menu.showStartHome(lobbyProfile);
+        this.mode = APP_MODES.HALL;
+        this.menu.show();
+        return;
+      }
+      this.menu.showLobby(lobbyProfile);
       this.menu.setLobbyState(lobby.state, lobby);
-      this.mode = 'lobby';
+      this.mode = APP_MODES.HALL;
       this.menu.show();
     };
     controller.onWaitingRoom = (waiting) => {
+      this.mode = APP_MODES.WAITING_ROOM;
       this.menu.showWaitingRoom(waiting);
       this.menu.setWaitingRoomState(waiting);
+      this.menu.show();
     };
     controller.onEnterTable = () => {
       this.enterOnlineTable();
@@ -226,7 +270,7 @@ export default class Main {
     controller.loginForLobby(profile)
       .then((lobbyProfile) => {
         this.loggedInProfile = lobbyProfile;
-        this.mode = 'start';
+        this.mode = APP_MODES.START;
         this.menu.setBusy(false);
         this.menu.setStartAuthState('ready', { profile: lobbyProfile });
       })
@@ -249,15 +293,25 @@ export default class Main {
           this.enterOnlineTable();
         } else if (result && result.waiting) {
           this.pendingInviteRoomId = '';
-          this.mode = 'waiting';
+          this.mode = APP_MODES.WAITING_ROOM;
           this.menu.setBusy(false);
         } else {
-          this.mode = 'lobby';
+          this.mode = APP_MODES.HALL;
           this.menu.setBusy(false);
         }
       })
       .catch((err) => {
         console.error('[online] start failed', err);
+        if (inviteRoomId && shouldReturnInviteToStart(err)) {
+          const message = inviteStartMessage(err);
+          const homeProfile = (this.online && this.online.lobbyProfile) || this.loggedInProfile || profileWithFallback();
+          this.pendingInviteRoomId = '';
+          this.mode = APP_MODES.HALL;
+          this.menu.showStartHome(homeProfile);
+          this.menu.setBusy(false);
+          showToast(message);
+          return;
+        }
         this.menu.setBusy(false);
         this.menu.setStatus(onlineErrorMessage(err));
       });
@@ -266,6 +320,7 @@ export default class Main {
   createOnlineRoom(settings = {}) {
     const controller = this.ensureOnlineController();
     if (controller.starting) return;
+    this.mode = APP_MODES.CREATE_ROOM;
     this.menu.setBusy(true);
     this.menu.setStatus('正在创建房间…');
     controller.createLobbyRoom(settings)
@@ -274,12 +329,14 @@ export default class Main {
           this.enterOnlineTable();
           return;
         }
-        this.mode = 'waiting';
+        this.mode = APP_MODES.WAITING_ROOM;
         this.menu.setBusy(false);
         this.menu.showWaitingRoom(result);
       })
       .catch((err) => {
         console.error('[online] create room failed', err);
+        this.mode = APP_MODES.CREATE_ROOM;
+        if (this.menu.screen !== 'create-room-settings') this.menu.showCreateRoomSettings();
         this.menu.setBusy(false);
         this.menu.setStatus(onlineErrorMessage(err));
       });
@@ -343,7 +400,7 @@ export default class Main {
     if (!this.online) return;
     this.pendingInviteRoomId = '';
     this.menu.hide();
-    this.mode = 'online';
+    this.mode = APP_MODES.GAME_TABLE;
     this.online.enableInput();
   }
 
@@ -354,7 +411,7 @@ export default class Main {
 
   render() {
     if (!getRenderMetrics()) return;
-    if (this.mode === 'online' && this.hasRenderableState()) {
+    if (this.mode === APP_MODES.GAME_TABLE && this.hasRenderableState()) {
       this.renderer.render(ctx, GameGlobal.databus);
     }
     if (this.menu) {

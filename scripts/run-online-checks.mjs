@@ -456,6 +456,21 @@ globalThis.wx.request = (options) => {
     return;
   }
   if (action === 'joinRoom') {
+    if (options.data.roomId === '999000') {
+      options.success({ statusCode: 200, data: { ok: false, error: 'ROOM_NOT_FOUND' } });
+      return;
+    }
+    if (options.data.roomId === '888000') {
+      options.success({
+        statusCode: 200,
+        data: {
+          ok: false,
+          error: 'ALREADY_IN_ROOM',
+          existing: { roomId: '888000', seat: 1, status: 'playing', version: 7, settings: { maxRounds: 2 } },
+        },
+      });
+      return;
+    }
     waitingRoomState = {
       roomId: options.data.roomId,
       status: 'waiting',
@@ -637,6 +652,41 @@ if (
   throw new Error('guest waiting room refresh should enter the online table through socket after the host starts');
 }
 inviteLobby.destroy();
+
+activeRoomResult = { ok: true, hasRoom: false };
+lobbyCalls = [];
+const missingInviteLobby = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+const missingInviteStates = [];
+missingInviteLobby.onLobby = (state) => { missingInviteStates.push(state.state); };
+let missingInviteRejected = false;
+try {
+  await missingInviteLobby.startLobby({ nickName: '授权大厅' }, { inviteRoomId: '999000' });
+} catch (err) {
+  missingInviteRejected = err && err.code === 'ROOM_NOT_FOUND';
+}
+if (
+  !missingInviteRejected
+  || missingInviteStates.join(',') !== `${online.LOBBY_STATES.CHECKING_ROOM},${online.LOBBY_STATES.JOINING_INVITE}`
+  || !lobbyCalls.find((call) => call.data && call.data.action === 'joinRoom' && call.data.roomId === '999000')
+) {
+  throw new Error(`missing invite room should reject without pushing the old lobby error page: rejected=${missingInviteRejected} states=${missingInviteStates.join(',')} joined=${Boolean(lobbyCalls.find((call) => call.data && call.data.action === 'joinRoom' && call.data.roomId === '999000'))}`);
+}
+missingInviteLobby.destroy();
+
+activeRoomResult = { ok: true, hasRoom: false };
+lobbyCalls = [];
+const playingInviteLobby = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+attachLobbySocket(playingInviteLobby, 1);
+const playingInviteResult = await playingInviteLobby.startLobby({ nickName: '授权大厅' }, { inviteRoomId: '888000' });
+if (
+  !playingInviteResult.entered
+  || playingInviteResult.roomId !== '888000'
+  || !playingInviteLobby.active
+  || !lobbySocketSubscribes.find((call) => call.roomId === '888000')
+) {
+  throw new Error('invite to a started room should enter the table when the player already belongs to that room');
+}
+playingInviteLobby.destroy();
 
 activeRoomResult = { ok: true, hasRoom: true, roomId: 'active-room', seat: 0, status: 'playing', version: 3, settings: { maxRounds: 6 } };
 lobbyCalls = [];
@@ -2203,6 +2253,18 @@ const startedJoin = await roomFunction.joinRoom({
 if (startedJoin.ok || startedJoin.error !== 'ROOM_ALREADY_STARTED') {
   throw new Error('joinRoom should reject rooms that have already started');
 }
+const startedExistingJoin = await roomFunction.joinRoom({
+  roomId: 'active-room',
+}, { db: activeRoomDb, OPENID: 'active-player' });
+if (
+  startedExistingJoin.ok
+  || startedExistingJoin.error !== 'ALREADY_IN_ROOM'
+  || !startedExistingJoin.existing
+  || startedExistingJoin.existing.roomId !== 'active-room'
+  || startedExistingJoin.existing.seat !== 2
+) {
+  throw new Error('joinRoom should return reconnect info when an existing room player opens a started-room invite');
+}
 const singleHumanDb = createRoomDb();
 const singleHumanRoom = await roomFunction.createRoom({
   profile: { nickName: '单人房主' },
@@ -2834,12 +2896,33 @@ if (!/playOnlineEvent\(event, onComplete, options = \{\}\)/.test(animationContro
   throw new Error('animation controller should expose an explicit online event animation API with playback options');
 }
 const mainSource = await readFile(join(root, 'js/main.js'), 'utf8');
-if (!/bindOnlineController\(controller\)\s*\{[\s\S]*?controller\.onLobby = \(lobby\) => \{[\s\S]*?this\.mode = 'lobby';[\s\S]*?this\.menu\.show\(\);[\s\S]*?\};/.test(mainSource)) {
-  throw new Error('returning to the online lobby should switch the main render mode away from the table and show the menu');
+if (!/APP_MODES\s*=\s*\{[\s\S]*?HALL:\s*'start'[\s\S]*?CREATE_ROOM:\s*'create-room'[\s\S]*?WAITING_ROOM:\s*'waiting'[\s\S]*?GAME_TABLE:\s*'online'/.test(mainSource)) {
+  throw new Error('main page flow should use explicit constants for hall, create room, waiting room, and game table states');
+}
+if (/this\.mode === 'room-ui'\)\s*return/.test(mainSource)) {
+  throw new Error('online lobby callbacks must not keep the legacy room-ui guard that blocks returning to the hall');
+}
+if (!/bindOnlineController\(controller\)\s*\{[\s\S]*?controller\.onLobby = \(lobby\) => \{[\s\S]*?if \(lobby\.state === 'idle'\) \{[\s\S]*?this\.menu\.showStartHome\(lobbyProfile\);[\s\S]*?this\.mode = APP_MODES\.HALL;[\s\S]*?this\.menu\.show\(\);[\s\S]*?return;[\s\S]*?\}/.test(mainSource)) {
+  throw new Error('returning to idle should switch away from the table and show the startup hall instead of the online lobby');
+}
+if (!/createOnlineRoom\(settings = \{\}\)\s*\{[\s\S]*?this\.mode = APP_MODES\.CREATE_ROOM;[\s\S]*?controller\.createLobbyRoom\(settings\)[\s\S]*?this\.mode = APP_MODES\.WAITING_ROOM;[\s\S]*?this\.menu\.showWaitingRoom\(result\);[\s\S]*?catch[\s\S]*?this\.mode = APP_MODES\.CREATE_ROOM;[\s\S]*?this\.menu\.setStatus\(onlineErrorMessage\(err\)\);/.test(mainSource)) {
+  throw new Error('create room flow should enter waiting on success and stay on the create page after failure');
+}
+if (!/startOnline\(profile = \{\}, inviteRoomId = ''\)[\s\S]*?catch\(\(err\) => \{[\s\S]*?if \(inviteRoomId && shouldReturnInviteToStart\(err\)\) \{[\s\S]*?this\.menu\.showStartHome\(homeProfile\);[\s\S]*?showToast\(message\);[\s\S]*?return;/.test(mainSource)) {
+  throw new Error('failed invite launches should return to the startup hall and toast instead of showing the old lobby page');
+}
+if (/startOnline\(profile = \{\}, inviteRoomId = ''\)[\s\S]*?catch\(\(err\) => \{[\s\S]*?if \(inviteRoomId && shouldReturnInviteToStart\(err\)\) \{[\s\S]*?this\.menu\.setStatus\(message\);[\s\S]*?showToast\(message\);/.test(mainSource)) {
+  throw new Error('failed invite launches should toast only and must not render the toast text below the start button');
 }
 const menuSource = await readFile(join(root, 'js/ui/menu.js'), 'utf8');
-if (!/roundOptions\s*=\s*\[1,\s*2,\s*4,\s*6\]/.test(menuSource)) {
-  throw new Error('online lobby should expose one, two, four, and six round room options');
+const lobbyRenderStart = menuSource.lastIndexOf('renderLobby(ctx, metrics)');
+const lobbyRenderEnd = menuSource.indexOf('\n  renderWaitingRoom(ctx, metrics)', lobbyRenderStart);
+const lobbyRenderSource = menuSource.slice(lobbyRenderStart, lobbyRenderEnd);
+if (/type:\s*'round'/.test(lobbyRenderSource) || /type:\s*'create-room'/.test(lobbyRenderSource) || /局数/.test(lobbyRenderSource)) {
+  throw new Error('online lobby should no longer render legacy round selectors or direct create-room controls');
+}
+if (!/type:\s*'open-create-room-settings'/.test(lobbyRenderSource)) {
+  throw new Error('online lobby should only offer an entry point into the create room settings page');
 }
 if (!/authState\s*=\s*'checking'/.test(menuSource) || !/ensureStartAuthCheck\(\)/.test(menuSource)) {
   throw new Error('start menu should check login state before enabling room creation');
@@ -2847,8 +2930,17 @@ if (!/authState\s*=\s*'checking'/.test(menuSource) || !/ensureStartAuthCheck\(\)
 if (!/onSelect\('startLogin'/.test(menuSource) || !/mode:\s*ready\s*\?\s*'start'\s*:\s*'login'/.test(menuSource)) {
   throw new Error('start menu should require login before the start action');
 }
-if (!/确认创建/.test(menuSource) || !/onSelect\('confirmCreateRoom'/.test(menuSource)) {
-  throw new Error('create room settings should confirm creation instead of directly opening seat selection');
+if (!/选择局数/.test(menuSource) || !/确认创建/.test(menuSource) || !/onSelect\('confirmCreateRoom'/.test(menuSource)) {
+  throw new Error('create room settings should remain the only place to choose rules and confirm creation');
+}
+if (!/showStartHome\(profile = \{\}\)/.test(menuSource) || !/this\.screen = MENU_SCREENS\.START/.test(menuSource)) {
+  throw new Error('start menu should expose an explicit startup hall screen for game-end returns');
+}
+if (!/hit\.type === 'create-back'[\s\S]*?this\.showStartHome/.test(menuSource)) {
+  throw new Error('create room back action should return to the startup hall, not the online lobby');
+}
+if (/onSelect\('confirmSeatSelection'/.test(menuSource) || !/showSeatSelection\(\)\s*\{\s*this\.showCreateRoomSettings\(\);/.test(menuSource)) {
+  throw new Error('legacy seat-selection must not remain a reachable create-room success target');
 }
 const rendererSource = await readFile(join(root, 'js/game/renderer.js'), 'utf8');
 const layoutSource = await readFile(join(root, 'js/game/layout.js'), 'utf8');

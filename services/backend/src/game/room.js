@@ -816,10 +816,16 @@ async function joinRoom(event, ctx) {
   const room = await getRoom(db, roomId);
   if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
   if (room.status === 'tableResult' || !activeRoomStatus(room.status)) return { ok: false, error: 'ROOM_ENDED' };
-  if (room.status !== 'waiting') return { ok: false, error: 'ROOM_ALREADY_STARTED', status: room.status };
 
   const existing = seatOfOpenid(room, OPENID);
   if (existing >= 0) {
+    if (room.status !== 'waiting') {
+      return {
+        ok: false,
+        error: 'ALREADY_IN_ROOM',
+        existing: buildActiveRoomResult(room, OPENID),
+      };
+    }
     touchWaitingPlayer(room, OPENID);
     await db.collection(ROOMS).doc(roomId).update({
       data: {
@@ -830,6 +836,8 @@ async function joinRoom(event, ctx) {
     });
     return { ok: true, roomId, seat: existing, room: buildWaitingRoomSnapshot(room, OPENID) };
   }
+
+  if (room.status !== 'waiting') return { ok: false, error: 'ROOM_ALREADY_STARTED', status: room.status };
 
   if ((room.players || []).length >= SEAT_COUNT) return { ok: false, error: 'ROOM_FULL' };
 

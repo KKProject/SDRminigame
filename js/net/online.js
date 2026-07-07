@@ -16,6 +16,13 @@ const BEHAVIOR_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'circle-loss', 
 const OBSERVATIONAL_EVENT_TYPES = ['pass', 'settlement', 'unclaimed'];
 const TIMELINE_FAST_QUEUE_THRESHOLD = 2;
 const SOCKET_AUTH_REFRESH_SKEW_MS = 60 * 1000;
+const INVITE_START_HOME_ERROR_CODES = new Set([
+  'ROOM_NOT_FOUND',
+  'ROOM_ENDED',
+  'ROOM_ALREADY_STARTED',
+  'ROOM_NOT_JOINABLE',
+  'ROOM_FULL',
+]);
 const SOCKET_AUTH_ERROR_CODES = [
   'TOKEN_EXPIRED',
   'TOKEN_SIGNATURE_INVALID',
@@ -365,6 +372,10 @@ export function onlineErrorMessage(err) {
     SOCKET_CONNECT_FAILED: 'WebSocket 连接失败，请检查服务和域名配置',
   };
   return messages[code] || `进入在线对战失败：${code}`;
+}
+
+function shouldReturnInviteToStart(err) {
+  return INVITE_START_HOME_ERROR_CODES.has(cloudErrorCode(err));
 }
 
 function socketAuthSummary(auth = {}) {
@@ -836,9 +847,10 @@ export default class OnlineController {
   async startLobby(profile = {}, options = {}) {
     if (this.starting) throw new Error('ONLINE_STARTING');
     this.starting = true;
+    let inviteRoomId = '';
     try {
       await this.loginForLobby(profile);
-      const inviteRoomId = normalizeInviteRoomId(options.inviteRoomId);
+      inviteRoomId = normalizeInviteRoomId(options.inviteRoomId);
       this.setLobbyState(LOBBY_STATES.CHECKING_ROOM);
       this.setStatus('检查牌桌…');
       const active = await callFunction('game', { action: 'activeRoom' });
@@ -866,7 +878,9 @@ export default class OnlineController {
       this.setStatus('');
       return { entered: false, profile: this.lobbyProfile };
     } catch (err) {
-      if (this.lobbyProfile) this.setLobbyState(LOBBY_STATES.ERROR, { error: onlineErrorMessage(err) });
+      if (this.lobbyProfile && !(inviteRoomId && shouldReturnInviteToStart(err))) {
+        this.setLobbyState(LOBBY_STATES.ERROR, { error: onlineErrorMessage(err) });
+      }
       throw err;
     } finally {
       this.starting = false;
@@ -1003,7 +1017,8 @@ export default class OnlineController {
     });
     if (joined && joined.ok) return this.enterWaitingRoom(joined);
     if (joined && joined.error === 'ALREADY_IN_ROOM' && joined.existing) {
-      return this.enterExistingRoom(joined.existing);
+      const entered = await this.enterExistingRoom(joined.existing);
+      return Object.assign({ entered: entered.entered !== false }, entered);
     }
     const error = new Error((joined && joined.error) || 'JOIN_ROOM_FAILED');
     error.code = (joined && joined.error) || 'JOIN_ROOM_FAILED';

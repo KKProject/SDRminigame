@@ -6,6 +6,14 @@ import {
   readStoredProfile,
 } from '../net/profile';
 
+const MENU_SCREENS = {
+  START: 'start',
+  LOBBY: 'lobby',
+  CREATE_ROOM: 'create-room-settings',
+  WAITING_ROOM: 'room-waiting',
+  SEAT_SELECTION: 'seat-selection',
+};
+
 /**
  * 启动主菜单覆盖层：进入在线对战。
  * 自管触摸事件，选择后通过回调通知，并停止接收触摸。
@@ -27,7 +35,7 @@ export default class StartMenu {
     this.lastTouchY = 0;
     this.createSettingsTouchActive = false;
     this.createSettingsScrollY = 0;
-    this.screen = 'start';
+    this.screen = MENU_SCREENS.START;
     this.authState = 'checking';
     this.authCheckStarted = false;
     this.authError = '';
@@ -106,7 +114,7 @@ export default class StartMenu {
   }
 
   ensureStartAuthCheck() {
-    if (!this.active || this.screen !== 'start' || this.authCheckStarted) return;
+    if (!this.active || this.screen !== MENU_SCREENS.START || this.authCheckStarted) return;
     this.authCheckStarted = true;
     this.setStartAuthState('checking');
     getAuthorizedProfile()
@@ -125,15 +133,33 @@ export default class StartMenu {
   }
 
   showLobby(profile = {}) {
-    this.screen = 'lobby';
+    this.screen = MENU_SCREENS.LOBBY;
     this.busy = false;
+    this.status = '';
+    this.createSettingsTouchActive = false;
+    this.waiting.swapModal = null;
+    this.waiting.swapRequestId = '';
     this.destroyProfileButton();
     this.lobby.profile = Object.assign({ nickName: '玩家', avatarUrl: '' }, profile);
     this.loadAvatar(this.lobby.profile.avatarUrl);
   }
 
+  showStartHome(profile = {}) {
+    this.screen = MENU_SCREENS.START;
+    this.busy = false;
+    this.status = '';
+    this.createSettingsTouchActive = false;
+    this.waiting.swapModal = null;
+    this.waiting.swapRequestId = '';
+    if (profile && (profile.nickName || profile.avatarUrl)) {
+      this.updateStartProfile(profile);
+    }
+    this.setStartAuthState('ready', { profile: this.startProfile });
+    this.destroyProfileButton();
+  }
+
   setLobbyState(state, detail = {}) {
-    this.screen = 'lobby';
+    this.screen = MENU_SCREENS.LOBBY;
     this.busy = state === 'checking-room' || state === 'reconnecting' || state === 'creating';
     if (detail.profile) {
       this.lobby.profile = Object.assign({ nickName: '玩家', avatarUrl: '' }, detail.profile);
@@ -144,17 +170,14 @@ export default class StartMenu {
   }
 
   showCreateRoomSettings() {
-    this.screen = 'create-room-settings';
+    this.screen = MENU_SCREENS.CREATE_ROOM;
     this.busy = false;
     this.status = '';
     this.destroyProfileButton();
   }
 
   showSeatSelection() {
-    this.screen = 'seat-selection';
-    this.busy = false;
-    this.status = '';
-    this.destroyProfileButton();
+    this.showCreateRoomSettings();
   }
 
   getRoomDraft() {
@@ -173,7 +196,7 @@ export default class StartMenu {
   }
 
   showWaitingRoom(detail = {}) {
-    this.screen = 'room-waiting';
+    this.screen = MENU_SCREENS.WAITING_ROOM;
     this.busy = false;
     this.destroyProfileButton();
     this.waiting.profile = detail.profile || this.lobby.profile || {};
@@ -182,7 +205,7 @@ export default class StartMenu {
   }
 
   setWaitingRoomState(detail = {}) {
-    this.screen = 'room-waiting';
+    this.screen = MENU_SCREENS.WAITING_ROOM;
     this.busy = Boolean(detail.busy);
     if (detail.profile) this.waiting.profile = detail.profile;
     if (detail.room) this.waiting.room = detail.room;
@@ -203,7 +226,7 @@ export default class StartMenu {
   }
 
   showSeatSwapReceived(player = {}) {
-    this.screen = 'room-waiting';
+    this.screen = MENU_SCREENS.WAITING_ROOM;
     this.waiting.swapModal = { type: 'received', player };
     this.destroyProfileButton();
   }
@@ -219,7 +242,7 @@ export default class StartMenu {
     const touch = event.touches && event.touches[0];
     if (!touch) return;
     this.lastTouchY = touch.clientY;
-    this.createSettingsTouchActive = this.screen === 'create-room-settings'
+    this.createSettingsTouchActive = this.screen === MENU_SCREENS.CREATE_ROOM
       && this.isInsideCreateSettingsViewport(touch);
     const hit = this.buttons.find((btn) => (
       touch.clientX >= btn.x
@@ -228,7 +251,7 @@ export default class StartMenu {
       && touch.clientY <= btn.y + btn.h
     ));
     if (!hit || typeof this.onSelect !== 'function') return;
-    if (this.screen === 'create-room-settings') {
+    if (this.screen === MENU_SCREENS.CREATE_ROOM) {
       if (hit.type === 'round' && !this.busy) {
         this.roomDraft.maxRounds = hit.maxRounds;
       } else if (hit.type === 'repeat-round' && !this.busy) {
@@ -238,8 +261,8 @@ export default class StartMenu {
       } else if (hit.type === 'pay-type' && !this.busy) {
         this.roomDraft.payType = hit.payType;
       } else if (hit.type === 'create-back' && !this.busy) {
-        this.screen = 'start';
-        this.status = '';
+        this.showStartHome(this.lobby.profile || this.startProfile || {});
+        this.onSelect('returnStartHome');
       } else if (hit.type === 'create-next' && !this.busy) {
         this.setBusy(true);
         this.status = '正在创建房间…';
@@ -247,17 +270,7 @@ export default class StartMenu {
       }
       return;
     }
-    if (this.screen === 'seat-selection') {
-      if (hit.type === 'seat' && !this.busy) {
-        this.roomDraft.seat = hit.seat;
-      } else if (hit.type === 'seat-back' && !this.busy) {
-        this.showCreateRoomSettings();
-      } else if (hit.type === 'seat-confirm' && !this.busy) {
-        this.onSelect('confirmSeatSelection', this.getRoomDraft());
-      }
-      return;
-    }
-    if (this.screen === 'room-waiting') {
+    if (this.screen === MENU_SCREENS.WAITING_ROOM) {
       if (hit.type === 'swap-modal-cancel') {
         this.waiting.swapModal = null;
       } else if (hit.type === 'swap-modal-send') {
@@ -281,13 +294,10 @@ export default class StartMenu {
       else if (hit.type === 'waiting-retry' && !this.busy) this.onSelect('waitingRetry');
       return;
     }
-    if (this.screen === 'lobby') {
-      if (hit.type === 'round') {
-        if (!this.busy) this.lobby.selectedMaxRounds = hit.maxRounds;
-        return;
-      }
-      if (hit.type === 'create-room' && !this.busy) {
-        this.onSelect('createRoom', { maxRounds: this.lobby.selectedMaxRounds });
+    if (this.screen === MENU_SCREENS.LOBBY) {
+      if (hit.type === 'open-create-room-settings' && !this.busy) {
+        this.showCreateRoomSettings();
+        this.onSelect('openCreateRoomSettings', this.getRoomDraft());
         return;
       }
       if (hit.type === 'retry' && !this.busy) {
@@ -307,7 +317,7 @@ export default class StartMenu {
   }
 
   handleTouchMove(event) {
-    if (!this.active || this.screen !== 'create-room-settings') return;
+    if (!this.active || this.screen !== MENU_SCREENS.CREATE_ROOM) return;
     if (!this.createSettingsTouchActive) return;
     const touch = event.touches && event.touches[0];
     if (!touch) return;
@@ -371,7 +381,7 @@ export default class StartMenu {
   }
 
   syncProfileButton() {
-    if (this.screen !== 'start') {
+    if (this.screen !== MENU_SCREENS.START) {
       this.destroyProfileButton();
       return;
     }
@@ -401,19 +411,20 @@ export default class StartMenu {
       this.destroyProfileButton();
       return;
     }
-    if (this.screen === 'lobby') {
+    if (this.screen === MENU_SCREENS.LOBBY) {
       this.renderLobby(ctx, metrics);
       return;
     }
-    if (this.screen === 'create-room-settings') {
+    if (this.screen === MENU_SCREENS.CREATE_ROOM) {
       this.renderCreateRoomSettings(ctx, metrics);
       return;
     }
-    if (this.screen === 'seat-selection') {
-      this.renderSeatSelection(ctx, metrics);
+    if (this.screen === MENU_SCREENS.SEAT_SELECTION) {
+      this.showCreateRoomSettings();
+      this.renderCreateRoomSettings(ctx, metrics);
       return;
     }
-    if (this.screen === 'room-waiting') {
+    if (this.screen === MENU_SCREENS.WAITING_ROOM) {
       this.renderWaitingRoom(ctx, metrics);
       return;
     }
@@ -925,7 +936,7 @@ export default class StartMenu {
 
     ctx.save();
     this.drawTableBackground(ctx, metrics);
-    this.drawRoomFlowHeader(ctx, layout, '创建房间', '选择规则后进入座位设置');
+    this.drawRoomFlowHeader(ctx, layout, '创建房间', '选择规则后进入等待房间');
     this.drawRoomFlowPanel(ctx, layout, 410, 156, 740, 511);
 
     const viewport = this.getCreateSettingsViewport();
@@ -1070,38 +1081,17 @@ export default class StartMenu {
     }
 
     if (state === 'idle') {
-      const roundY = avatarY + avatarSize + 104;
-      ctx.fillStyle = '#cbd5e1';
-      ctx.font = '20px sans-serif';
-      ctx.fillText('局数', centerX, roundY - 24);
-      const roundOptions = [1, 2, 4, 6];
-      const optionW = 62;
-      const optionH = 48;
-      const gap = 12;
-      const optionsWidth = optionW * roundOptions.length + gap * (roundOptions.length - 1);
-      roundOptions.forEach((maxRounds, index) => {
-        const x = centerX - optionsWidth / 2 + index * (optionW + gap);
-        const selected = this.lobby.selectedMaxRounds === maxRounds;
-        ctx.fillStyle = selected ? '#d92d20' : 'rgba(255,255,255,0.14)';
-        this.roundRect(ctx, x, roundY, optionW, optionH, 8);
-        ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 22px sans-serif';
-        ctx.fillText(`${maxRounds}`, x + optionW / 2, roundY + optionH / 2);
-        this.buttons.push({ type: 'round', maxRounds, x, y: roundY, w: optionW, h: optionH });
-      });
-
       const btnW = Math.min(300, bounds.width * 0.68);
       const btnH = 60;
       const btnX = centerX - btnW / 2;
-      const btnY = roundY + 78;
+      const btnY = avatarY + avatarSize + 118;
       ctx.fillStyle = '#d92d20';
       this.roundRect(ctx, btnX, btnY, btnW, btnH, 12);
       ctx.fill();
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 25px sans-serif';
       ctx.fillText('创建房间', centerX, btnY + btnH / 2);
-      this.buttons.push({ type: 'create-room', x: btnX, y: btnY, w: btnW, h: btnH });
+      this.buttons.push({ type: 'open-create-room-settings', x: btnX, y: btnY, w: btnW, h: btnH });
     }
 
     if (state === 'error') {
