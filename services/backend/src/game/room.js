@@ -24,6 +24,7 @@ const {
   buildPrivateView,
   serializePublicEvent,
 } = require('./core/engine');
+const { chooseAcceptTakeover, chooseDealerGift } = require('./core/ai');
 const { DEFAULT_RULES } = require('./core/rules');
 
 /** 固定 4 人桌，取自规则配置 */
@@ -355,6 +356,75 @@ function requiredOpenidsForSeats(room, seats = []) {
     .filter((openid, index, list) => openid && online.has(openid) && list.indexOf(openid) === index);
 }
 
+function roomDebugId(room) {
+  return room && (room.roomId || room._id || room.id) ? (room.roomId || room._id || room.id) : '';
+}
+
+function seatsForOpenids(room, openids = []) {
+  return openids
+    .map((openid) => seatOfOpenid(room, openid))
+    .filter((seat, index, list) => typeof seat === 'number' && seat >= 0 && list.indexOf(seat) === index);
+}
+
+function responseWindowDebug(responseWindow = {}) {
+  if (!responseWindow) return null;
+  const decisions = responseWindow.decisions || {};
+  const candidateSeats = Object.keys(decisions)
+    .map((seat) => Number(seat))
+    .filter((seat) => Number.isInteger(seat));
+  const waitingSeats = candidateSeats.filter((seat) => decisions[seat] && decisions[seat].status === 'pending');
+  const decidedSeats = candidateSeats.filter((seat) => decisions[seat] && decisions[seat].status !== 'pending');
+  return {
+    id: responseWindow.id || '',
+    sourceSeat: typeof responseWindow.sourceSeat === 'number' ? responseWindow.sourceSeat : null,
+    sourceType: responseWindow.sourceType || '',
+    cardId: responseWindow.card && responseWindow.card.id ? responseWindow.card.id : '',
+    candidateSeats,
+    waitingSeats,
+    decidedSeats,
+    currentBest: responseWindow.currentBest ? {
+      seat: responseWindow.currentBest.seat,
+      type: responseWindow.currentBest.type,
+      priority: responseWindow.currentBest.priority,
+    } : null,
+  };
+}
+
+function logResponseFlowDebug(message, detail = {}) {
+  if (process.env.HUAPAI_RESPONSE_FLOW_DEBUG === '0') return;
+  try {
+    console.info(`[room:response-flow] ${message}`, JSON.stringify(detail));
+  } catch (err) {
+    console.info(`[room:response-flow] ${message}`, detail);
+  }
+}
+
+function sameOpenidList(left = [], right = []) {
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => item === right[index]);
+}
+
+function animationBarrierDebug(room, engine, barrier = null) {
+  const state = engine && engine.state ? engine.state : {};
+  const event = state.publicEvent || {};
+  const continuation = state.pendingContinuation || {};
+  const currentBarrier = barrier || room.animationBarrier || null;
+  return {
+    roomId: roomDebugId(room),
+    eventSeq: event.eventSeq || (currentBarrier && currentBarrier.eventSeq) || null,
+    eventType: event.type || '',
+    eventSeat: typeof event.seat === 'number' ? event.seat : null,
+    eventAppearanceResolution: event.appearanceResolution || '',
+    continuationType: continuation.type || '',
+    continuationSourceSeat: typeof continuation.sourceSeat === 'number' ? continuation.sourceSeat : null,
+    continuationActionSeats: responseContinuationSeats(continuation),
+    requiredSeats: currentBarrier ? seatsForOpenids(room, currentBarrier.requiredOpenids || []) : [],
+    ackedSeats: currentBarrier ? seatsForOpenids(room, currentBarrier.ackedOpenids || []) : [],
+    deadlineAt: currentBarrier ? currentBarrier.deadlineAt : null,
+    responseWindow: responseWindowDebug(state.responseWindow),
+  };
+}
+
 function responseContinuationSeat(continuation = {}) {
   const actions = Array.isArray(continuation.actions) ? continuation.actions : [];
   return actions.length && typeof actions[0].seat === 'number' ? actions[0].seat : null;
@@ -371,6 +441,12 @@ function requiredAnimationOpenids(room, engine) {
   const state = engine && engine.state ? engine.state : {};
   const continuation = state.pendingContinuation || {};
   const allOnline = onlineAnimationOpenids(room);
+  if (continuation.type === 'draw-response-window' && continuation.actions) {
+    const sourceSeat = typeof continuation.sourceSeat === 'number' ? continuation.sourceSeat : null;
+    const seats = responseContinuationSeats(continuation)
+      .filter((seat) => sourceSeat === null || seat !== sourceSeat);
+    return requiredOpenidsForSeats(room, seats);
+  }
   if (continuation.type === 'handle-response-window' || continuation.type === 'draw-response-window') {
     const seats = responseContinuationSeats(continuation);
     return requiredOpenidsForSeats(room, seats.length ? seats : [responseContinuationSeat(continuation)]);
@@ -412,8 +488,13 @@ function syncAnimationBarrier(room, engine, now = Date.now()) {
   const current = room.animationBarrier;
   if (current && current.eventSeq === event.eventSeq) {
     const online = new Set(requiredAnimationOpenids(room, engine));
+    const beforeRequired = current.requiredOpenids || [];
+    const beforeAcked = current.ackedOpenids || [];
     current.requiredOpenids = (current.requiredOpenids || []).filter((openid) => online.has(openid));
     current.ackedOpenids = (current.ackedOpenids || []).filter((openid) => current.requiredOpenids.indexOf(openid) >= 0);
+    if (!sameOpenidList(beforeRequired, current.requiredOpenids) || !sameOpenidList(beforeAcked, current.ackedOpenids)) {
+      logResponseFlowDebug('barrier-update', animationBarrierDebug(room, engine, current));
+    }
     return current;
   }
   room.animationBarrier = {
@@ -424,6 +505,7 @@ function syncAnimationBarrier(room, engine, now = Date.now()) {
     deadlineAt: now + ANIMATION_ACK_TIMEOUT_MS,
   };
   animationMetrics(room).eventCount += 1;
+  logResponseFlowDebug('barrier-create', animationBarrierDebug(room, engine, room.animationBarrier));
   return room.animationBarrier;
 }
 
@@ -453,13 +535,16 @@ function animationState(room, engine, openid = null) {
   (room.players || []).forEach((player) => {
     seatByOpenid[player.openid] = player.seat;
   });
+  const requiredOpenids = barrier ? (barrier.requiredOpenids || []) : [];
+  const ackedOpenids = barrier ? (barrier.ackedOpenids || []) : [];
+  const selfRequiresAck = Boolean(openid && requiredOpenids.indexOf(openid) >= 0);
   return {
     currentEvent: engine.state ? serializePublicEvent(engine.state.publicEvent) : null,
     latestEventSeq: engine.state && typeof engine.state.eventSeq === 'number' ? engine.state.eventSeq : 0,
-    requiredSeats: barrier ? (barrier.requiredOpenids || []).map((id) => seatByOpenid[id]).filter((seat) => typeof seat === 'number') : [],
-    ackedSeats: barrier ? (barrier.ackedOpenids || []).map((id) => seatByOpenid[id]).filter((seat) => typeof seat === 'number') : [],
+    requiredSeats: requiredOpenids.map((id) => seatByOpenid[id]).filter((seat) => typeof seat === 'number'),
+    ackedSeats: ackedOpenids.map((id) => seatByOpenid[id]).filter((seat) => typeof seat === 'number'),
     deadlineAt: barrier ? barrier.deadlineAt : null,
-    selfAcked: Boolean(openid && barrier && (barrier.ackedOpenids || []).indexOf(openid) >= 0),
+    selfAcked: Boolean(barrier && openid && (!selfRequiresAck || ackedOpenids.indexOf(openid) >= 0)),
     waiting: Boolean(barrier),
   };
 }
@@ -1203,6 +1288,14 @@ async function op(event, ctx) {
   if (room.status !== 'playing') return { ok: false, error: 'ROOM_NOT_PLAYING', status: room.status };
 
   if (typeof event.version === 'number' && event.version !== room.version) {
+    if (event.kind === 'response') {
+      logResponseFlowDebug('response-op-rejected-version', {
+        roomId: roomId || roomDebugId(room),
+        clientVersion: event.version,
+        roomVersion: room.version,
+        opRef: event.ref || null,
+      });
+    }
     return { ok: false, error: 'VERSION_STALE', version: room.version };
   }
 
@@ -1211,7 +1304,15 @@ async function op(event, ctx) {
 
   const engine = loadEngine(room.state || null);
   if (!engine.state) return { ok: false, error: 'NO_STATE' };
-  if (syncAnimationBarrier(room, engine)) {
+  const barrier = syncAnimationBarrier(room, engine);
+  if (barrier) {
+    logResponseFlowDebug('op-blocked-animation', Object.assign(animationBarrierDebug(room, engine, barrier), {
+      opKind: event.kind || '',
+      opSeat: seat,
+      opRef: event.ref || null,
+      clientVersion: event.version,
+      roomVersion: room.version,
+    }));
     return {
       ok: false,
       error: 'ANIMATION_PENDING',
@@ -1225,7 +1326,29 @@ async function op(event, ctx) {
     && responseWindow.decisions
     && responseWindow.decisions[seat]
     && responseWindow.decisions[seat].status === 'pending';
+  if (event.kind === 'response') {
+    logResponseFlowDebug('response-op-received', {
+      roomId: roomId || roomDebugId(room),
+      opSeat: seat,
+      opRef: event.ref || null,
+      clientVersion: event.version,
+      roomVersion: room.version,
+      canRespondInWindow: Boolean(canRespondInWindow),
+      currentSeat: engine.state.currentSeat,
+      phase: engine.state.phase,
+      responseWindow: responseWindowDebug(responseWindow),
+    });
+  }
   if (!canRespondInWindow && engine.state.currentSeat !== seat) {
+    if (event.kind === 'response') {
+      logResponseFlowDebug('response-op-rejected-turn', {
+        roomId: roomId || roomDebugId(room),
+        opSeat: seat,
+        currentSeat: engine.state.currentSeat,
+        phase: engine.state.phase,
+        responseWindow: responseWindowDebug(responseWindow),
+      });
+    }
     return {
       ok: false,
       error: 'NOT_YOUR_TURN',
@@ -1249,7 +1372,25 @@ async function op(event, ctx) {
   }
 
   if (!result || !result.ok) {
+    if (event.kind === 'response') {
+      logResponseFlowDebug('response-op-rejected-engine', {
+        roomId: roomId || roomDebugId(room),
+        opSeat: seat,
+        opRef: event.ref || null,
+        reason: result && result.reason,
+        responseWindow: responseWindowDebug(engine.state.responseWindow),
+      });
+    }
     return { ok: false, error: 'OP_REJECTED', reason: result && result.reason, version: room.version };
+  }
+  if (event.kind === 'response') {
+    logResponseFlowDebug('response-op-accepted', {
+      roomId: roomId || roomDebugId(room),
+      opSeat: seat,
+      opRef: event.ref || null,
+      nextVersion: (room.version || 0) + 1,
+      responseWindow: responseWindowDebug(engine.state.responseWindow),
+    });
   }
 
   settleRoomStatus(room, engine);
@@ -1333,9 +1474,20 @@ async function ackAnimation(event, ctx) {
   animationMetrics(room).ackCallCount += 1;
   const barrier = syncAnimationBarrier(room, engine);
   if (!barrier) {
+    logResponseFlowDebug('ack-animation-no-barrier', {
+      roomId: event.roomId || roomDebugId(room),
+      ackSeat: seatOfOpenid(room, OPENID),
+      eventSeq: event.eventSeq,
+      roomVersion: room.version || 0,
+    });
     return { ok: true, version: room.version || 0, advanced: false, stale: true };
   }
   if (event.eventSeq !== barrier.eventSeq) {
+    logResponseFlowDebug('ack-animation-stale', Object.assign(animationBarrierDebug(room, engine, barrier), {
+      ackSeat: seatOfOpenid(room, OPENID),
+      ackEventSeq: event.eventSeq,
+      roomVersion: room.version || 0,
+    }));
     return {
       ok: true,
       version: room.version || 0,
@@ -1348,6 +1500,11 @@ async function ackAnimation(event, ctx) {
   if ((barrier.requiredOpenids || []).indexOf(OPENID) >= 0 && (barrier.ackedOpenids || []).indexOf(OPENID) < 0) {
     barrier.ackedOpenids.push(OPENID);
   }
+  logResponseFlowDebug('ack-animation-received', Object.assign(animationBarrierDebug(room, engine, barrier), {
+    ackSeat: seatOfOpenid(room, OPENID),
+    ackEventSeq: event.eventSeq,
+    complete: barrierComplete(barrier),
+  }));
   let advanced = false;
   if (!barrierComplete(barrier)) {
     await db.collection(ROOMS).doc(event.roomId).update({
@@ -1376,6 +1533,9 @@ async function ackAnimation(event, ctx) {
   const duration = Math.max(0, Date.now() - (barrier.createdAt || Date.now()));
   room.animationMetrics.lastAckDurationMs = duration;
   room.animationMetrics.maxAckDurationMs = Math.max(room.animationMetrics.maxAckDurationMs || 0, duration);
+  logResponseFlowDebug('ack-animation-resume', Object.assign(animationBarrierDebug(room, engine, barrier), {
+    duration,
+  }));
   engine.resumePublicEvent();
   room.animationBarrier = null;
   advanceUnobservedEvents(room, engine);
@@ -1412,6 +1572,11 @@ function advanceTimedOutSeat(engine, seat) {
   const state = engine.state;
   if (!state || state.currentSeat !== seat || state.phase === 'result') return false;
   state.seats[seat].online = false;
+  state.seats[seat].isHuman = false;
+  if (state.phase === 'human-discard') {
+    engine.aiDiscard(seat);
+    return true;
+  }
   if (
     state.responseWindow
     && state.responseWindow.decisions
@@ -1421,6 +1586,16 @@ function advanceTimedOutSeat(engine, seat) {
     engine.passResponse(seat);
     return true;
   }
+  if (state.phase === 'takeover-choice') {
+    const result = engine.submitTakeover(seat, chooseAcceptTakeover(state.seats[seat]));
+    return Boolean(result && result.ok);
+  }
+  if (state.phase === 'dealer-gift') {
+    const card = chooseDealerGift(state.seats[seat], engine.rules);
+    if (!card) return false;
+    const result = engine.submitDealerGift(seat, card.id);
+    return Boolean(result && result.ok);
+  }
   return false;
 }
 
@@ -1428,14 +1603,21 @@ function advanceExpiredAnimationBarrier(room, engine, now = Date.now()) {
   let barrier = syncAnimationBarrier(room, engine, now);
   if (!barrier) return false;
   if (barrierComplete(barrier)) {
+    logResponseFlowDebug('barrier-complete-resume', animationBarrierDebug(room, engine, barrier));
     engine.resumePublicEvent();
     room.animationBarrier = null;
     advanceUnobservedEvents(room, engine);
     return true;
   }
-  if (now < barrier.deadlineAt) return false;
+  if (now < barrier.deadlineAt) {
+    const detail = animationBarrierDebug(room, engine, barrier);
+    detail.remainingMs = barrier.deadlineAt - now;
+    logResponseFlowDebug('barrier-waiting', detail);
+    return false;
+  }
 
   animationMetrics(room).timeoutCount += 1;
+  logResponseFlowDebug('barrier-timeout', animationBarrierDebug(room, engine, barrier));
   const acked = new Set(barrier.ackedOpenids || []);
   (room.players || []).forEach((player) => {
     if ((barrier.requiredOpenids || []).indexOf(player.openid) < 0 || acked.has(player.openid)) return;
@@ -1445,7 +1627,11 @@ function advanceExpiredAnimationBarrier(room, engine, now = Date.now()) {
     }
   });
   syncAnimationBarrier(room, engine, now);
-  if (!barrierComplete(room.animationBarrier)) return false;
+  if (!barrierComplete(room.animationBarrier)) {
+    logResponseFlowDebug('barrier-timeout-still-waiting', animationBarrierDebug(room, engine, room.animationBarrier));
+    return false;
+  }
+  logResponseFlowDebug('barrier-timeout-resume', animationBarrierDebug(room, engine, room.animationBarrier));
   engine.resumePublicEvent();
   room.animationBarrier = null;
   advanceUnobservedEvents(room, engine);

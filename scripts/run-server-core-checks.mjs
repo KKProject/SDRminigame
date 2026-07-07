@@ -119,6 +119,60 @@ const publicState = serverEngine.buildPublicState({
   playerActions: [],
 });
 if (publicState.seats.some((seat) => 'hand' in seat)) throw new Error('public state must not expose player hands');
+{
+  const drawnCard = serverDeck[0];
+  const barrierRoom = {
+    players: [
+      { seat: 0, openid: 'draw-self', online: true },
+      { seat: 1, openid: 'draw-next', online: true },
+    ],
+  };
+  const selfOnlyDrawEngine = {
+    state: {
+      eventSeq: 10,
+      publicEvent: { eventSeq: 10, type: 'draw', seat: 0, card: drawnCard, appearanceResolution: 'await-response' },
+      pendingContinuation: {
+        type: 'draw-response-window',
+        sourceSeat: 0,
+        card: drawnCard,
+        actions: [{ type: 'chi', seat: 0, card: drawnCard, priority: serverRules.ACTION_PRIORITY.chi }],
+      },
+    },
+  };
+  const selfOnlyBarrier = room.syncAnimationBarrier(barrierRoom, selfOnlyDrawEngine, 1);
+  if (!selfOnlyBarrier || selfOnlyBarrier.requiredOpenids.length !== 0 || !room.barrierComplete(selfOnlyBarrier)) {
+    throw new Error('self-only draw response windows should not wait for the same player animation ack before opening actions');
+  }
+  const otherDrawEngine = {
+    state: {
+      eventSeq: 11,
+      publicEvent: { eventSeq: 11, type: 'draw', seat: 0, card: drawnCard, appearanceResolution: 'await-response' },
+      pendingContinuation: {
+        type: 'draw-response-window',
+        sourceSeat: 0,
+        card: drawnCard,
+        actions: [{ type: 'peng', seat: 1, card: drawnCard, priority: serverRules.ACTION_PRIORITY.peng }],
+      },
+    },
+  };
+  const otherBarrier = room.syncAnimationBarrier(barrierRoom, otherDrawEngine, 2);
+  if (!otherBarrier || otherBarrier.requiredOpenids.join(',') !== 'draw-next') {
+    throw new Error('draw response windows with another human responder should still wait for that responder animation ack');
+  }
+  const nonRequiredAnimation = room.animationState(barrierRoom, otherDrawEngine, 'draw-self');
+  if (!nonRequiredAnimation.selfAcked) {
+    throw new Error('animation state should treat seats outside the barrier requirement as already self-acked');
+  }
+  const requiredAnimation = room.animationState(barrierRoom, otherDrawEngine, 'draw-next');
+  if (requiredAnimation.selfAcked) {
+    throw new Error('animation state should keep a required seat unacked until its ack is recorded');
+  }
+  otherBarrier.ackedOpenids.push('draw-next');
+  const ackedRequiredAnimation = room.animationState(barrierRoom, otherDrawEngine, 'draw-next');
+  if (!ackedRequiredAnimation.selfAcked) {
+    throw new Error('animation state should mark a required seat self-acked after its ack is recorded');
+  }
+}
 const sanitizedEvent = serverEngine.serializePublicEvent({
   eventSeq: 7,
   type: 'discard',
@@ -235,11 +289,15 @@ timeoutEngine.startRound({
 });
 const timedOutSeat = timeoutEngine.state.currentSeat;
 const previousPhase = timeoutEngine.state.phase;
-if (previousPhase !== 'result' && room.advanceTimedOutSeat(timeoutEngine, timedOutSeat)) {
-  throw new Error('timed-out human manual action should pause instead of being auto-selected');
+if (previousPhase !== 'result' && !room.advanceTimedOutSeat(timeoutEngine, timedOutSeat)) {
+  throw new Error('timed-out human manual action should be auto-selected by server-side takeover');
 }
-if (previousPhase !== 'result' && timeoutEngine.state.currentSeat !== timedOutSeat) {
-  throw new Error('timed-out human manual action should keep the same acting seat');
+if (
+  previousPhase !== 'result'
+  && timeoutEngine.state.phase !== 'result'
+  && !timeoutEngine.state.publicEvent
+) {
+  throw new Error('timed-out human discard should emit an authoritative public event or finish the round');
 }
 
 function takeServerCards(keys, excludedIds = []) {

@@ -10,6 +10,11 @@ await rm(tempDir, { recursive: true, force: true });
 await mkdir(tempDir, { recursive: true });
 
 await writeFile(join(tempDir, 'cloud.mjs'), await readFile(join(root, 'js/net/cloud.js'), 'utf8'));
+await writeFile(
+  join(tempDir, 'diagnostics.mjs'),
+  (await readFile(join(root, 'js/net/diagnostics.js'), 'utf8'))
+    .replace("from './cloud'", "from './cloud.mjs'")
+);
 await writeFile(join(tempDir, 'codec.mjs'), await readFile(join(root, 'js/net/codec.js'), 'utf8'));
 await writeFile(join(tempDir, 'protobuf.mjs'), await readFile(join(root, 'js/net/protobuf.js'), 'utf8'));
 await writeFile(
@@ -24,6 +29,7 @@ await writeFile(
   (await readFile(join(root, 'js/net/online.js'), 'utf8'))
     .replace("from '../game/rules'", "from './rules-stub.mjs'")
     .replace("from './cloud'", "from './cloud.mjs'")
+    .replace("from './diagnostics'", "from './diagnostics.mjs'")
     .replace("from './socket'", "from './socket.mjs'")
     .replace("from './codec'", "from './codec.mjs'")
 );
@@ -812,6 +818,7 @@ const onlineDatabus = {
   setRoundState(state) { Object.assign(this, state); },
 };
 const onlineMusic = {
+  playCue() {},
   playCardVoice(card) { cardSoundEvents.push(card.id); },
   playActionVoice(type) { actionSoundEvents.push(type); },
 };
@@ -1011,6 +1018,25 @@ reconnectController.mySeat = 0;
 reconnectController.consumeAnimationState({ ...animationSnapshot, selfAcked: true });
 if (animationPlayCount !== 2 || reconnectController.lastAckedEventSeq !== 5) {
   throw new Error('a reconnecting client that already acknowledged the current event should align without replaying it');
+}
+const selfAckPreviewController = new online.default(onlineDatabus, onlineRenderer, onlineMusic);
+selfAckPreviewController.mySeat = 0;
+const selfAckPreviewCancelBaseline = localPreviewCancelCount;
+selfAckPreviewController.startLocalActionPreview({ type: 'discard', seat: 0, card: { id: 'self-acked-discard' } });
+if (!selfAckPreviewController.localActionPreviewType || !selfAckPreviewController.pendingLocalAction) {
+  throw new Error('local discard preview should hold ownership before authority returns');
+}
+selfAckPreviewController.consumeAnimationState({
+  waiting: true,
+  selfAcked: true,
+  currentEvent: { eventSeq: 10, type: 'discard', seat: 0, card: { id: 'self-acked-discard' } },
+});
+if (
+  selfAckPreviewController.localActionPreviewType
+  || selfAckPreviewController.pendingLocalAction
+  || localPreviewCancelCount !== selfAckPreviewCancelBaseline + 1
+) {
+  throw new Error('self-acked authoritative events should release any stale local preview lock');
 }
 onlineController.lastPlayedEventSeq = 5;
 onlineController.isAnimating = false;
@@ -1246,8 +1272,8 @@ activeController.consumeAnimationState({
   currentEvent: { eventSeq: 31, type: 'discard', seat: 1, card: { id: 'active-card' } },
 });
 activeController.consumeAnimationState({ waiting: false, selfAcked: false, currentEvent: null });
-if (!activeController.isAnimating || !activeController.currentEvent || releaseWhileAnimatingCount !== 0) {
-  throw new Error('a no-event snapshot must not cancel an authoritative appearance animation that is still playing locally');
+if (activeController.isAnimating || activeController.currentEvent || releaseWhileAnimatingCount !== 1 || activeController.lastLocallyCompletedEventSeq !== 31) {
+  throw new Error('a no-event snapshot must release stale local animation locks');
 }
 const authorityHandDatabus = {
   selectedCardId: 'peng-hand-1',
@@ -1469,6 +1495,56 @@ if (deltaController.applySocketDelta({
   delta: { appendDiscard: { seat: 1, card: { id: 'gap-card', key: 'da' }, index: 0 } },
 }) || deltaResyncCount !== 1) {
   throw new Error('eventSeq gaps should reject the delta and request snapshot recovery');
+}
+const staleAnimationDatabus = {
+  responseWindowId: 'response-window-stale-animation',
+  actionState: 'available',
+  playerActions: [{ type: 'chi', index: 0, seat: 0 }],
+  feedback: '',
+  setRoundState(state) { Object.assign(this, state); },
+};
+const staleAnimationRenderer = {
+  lastLayout: { id: 'response-layout' },
+  markButtonPressed() {},
+  layout: {
+    hit() {
+      return { type: 'action', action: { type: 'chi', index: 0 } };
+    },
+  },
+};
+const staleAnimationController = new online.default(staleAnimationDatabus, staleAnimationRenderer, { playCue() {} });
+const staleAnimationOps = [];
+staleAnimationController.active = true;
+staleAnimationController.roomId = 'stale-animation-room';
+staleAnimationController.mySeat = 0;
+staleAnimationController.version = 1;
+staleAnimationController.socket = {
+  isReady() { return true; },
+  request(type, payload = {}) {
+    if (type === 'op') staleAnimationOps.push(payload.payload);
+    return Promise.resolve({ ok: true, version: 1 });
+  },
+};
+staleAnimationController.isAnimating = true;
+staleAnimationController.animationWaiting = true;
+staleAnimationController.handleTouch({ touches: [{ clientX: 1, clientY: 1 }] });
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (
+  staleAnimationOps.length !== 1
+  || staleAnimationOps[0].kind !== 'response'
+  || staleAnimationOps[0].ref.responseWindowId !== 'response-window-stale-animation'
+) {
+  throw new Error('visible response buttons should remain tappable when a stale animation lock is still true');
+}
+staleAnimationRenderer.layout = {
+  hit() {
+    return { type: 'hand-card', card: { id: 'blocked-card' } };
+  },
+};
+staleAnimationDatabus.feedback = '';
+staleAnimationController.handleTouch({ touches: [{ clientX: 1, clientY: 1 }] });
+if (staleAnimationDatabus.feedback !== '请等待当前动作完成') {
+  throw new Error('stale animation locks should still block non-response table taps');
 }
 onlineController.isAnimating = false;
 onlineController.lastPlayedEventSeq = 6;

@@ -1,5 +1,6 @@
 import { DEFAULT_RULES } from '../game/rules';
 import { ensureCloudInit, callFunction, cloudErrorCode, login } from './cloud';
+import { reportClientDiagnostic } from './diagnostics';
 import OnlineSocketTransport from './socket';
 import { phraseFromCode, symbolFromCode } from './codec';
 
@@ -64,6 +65,74 @@ function animationActionType(type) {
 function shouldPlayOptimisticLocalPreview(action = {}) {
   const type = animationActionType(action.type);
   return RESPONSE_ACTION_TYPES.indexOf(type) < 0;
+}
+
+function isResponseAction(action = {}) {
+  return RESPONSE_ACTION_TYPES.indexOf(animationActionType(action.type)) >= 0;
+}
+
+function responseActionMatches(candidate = {}, action = {}) {
+  if (!candidate || !action) return false;
+  if (candidate.type !== action.type) return false;
+  if (typeof action.index === 'number' && typeof candidate.index === 'number' && candidate.index !== action.index) return false;
+  if (action.zhaoSize != null && candidate.zhaoSize != null && candidate.zhaoSize !== action.zhaoSize) return false;
+  return true;
+}
+
+function diagnosticAction(action = {}) {
+  if (!action) return null;
+  return {
+    type: action.type || '',
+    index: typeof action.index === 'number' ? action.index : null,
+    seat: typeof action.seat === 'number' ? action.seat : null,
+    zhaoSize: action.zhaoSize || null,
+    cardId: (action.card && action.card.id) || action.cardId || '',
+    key: action.key || (action.card && action.card.key) || '',
+  };
+}
+
+function diagnosticEvent(event = {}) {
+  if (!event) return null;
+  return {
+    eventSeq: typeof event.eventSeq === 'number' ? event.eventSeq : null,
+    type: event.type || '',
+    seat: typeof event.seat === 'number' ? event.seat : null,
+    actingSeat: typeof event.actingSeat === 'number' ? event.actingSeat : null,
+    cardId: (event.card && event.card.id) || event.cardId || '',
+    cardKey: (event.card && event.card.key) || '',
+    appearanceResolution: event.appearanceResolution || '',
+    responseWindowId: event.responseWindowId || '',
+  };
+}
+
+function diagnosticResponseSummary(summary = {}) {
+  if (!summary || !summary.active) return summary && summary.active === false ? { active: false } : null;
+  return {
+    active: true,
+    id: summary.id || '',
+    sourceSeat: typeof summary.sourceSeat === 'number' ? summary.sourceSeat : null,
+    sourceType: summary.sourceType || '',
+    cardId: summary.cardId || '',
+    candidateSeats: Array.isArray(summary.candidateSeats) ? summary.candidateSeats.slice() : [],
+    waitingSeats: Array.isArray(summary.waitingSeats) ? summary.waitingSeats.slice() : [],
+    decidedSeats: Array.isArray(summary.decidedSeats) ? summary.decidedSeats.slice() : [],
+    blockingSeats: Array.isArray(summary.blockingSeats) ? summary.blockingSeats.slice() : [],
+    currentBest: summary.currentBest ? {
+      seat: summary.currentBest.seat,
+      type: summary.currentBest.type,
+      priority: summary.currentBest.priority,
+    } : null,
+  };
+}
+
+function diagnosticOp(op = {}) {
+  if (!op) return null;
+  return {
+    kind: op.kind || '',
+    cardId: op.cardId || '',
+    accept: typeof op.accept === 'boolean' ? op.accept : null,
+    ref: diagnosticAction(op.ref || {}),
+  };
 }
 
 function normalizeInviteRoomId(value) {
@@ -544,6 +613,36 @@ export default class OnlineController {
 
   setStatus(text) {
     if (typeof this.onStatus === 'function') this.onStatus(text);
+  }
+
+  reportOnlineDiagnostic(event, extra = {}) {
+    if (!event) return;
+    const state = this.databus || {};
+    const currentEvent = this.currentEvent || (state.publicEvent || null);
+    const detail = Object.assign({
+      roomId: this.roomId || '',
+      version: this.version,
+      mySeat: typeof this.mySeat === 'number' ? this.mySeat : null,
+      phase: state.phase || '',
+      currentSeat: typeof state.currentSeat === 'number' ? state.currentSeat : null,
+      responseWindowId: state.responseWindowId || '',
+      actionState: state.actionState || '',
+      playerActions: Array.isArray(state.playerActions) ? state.playerActions.map(diagnosticAction) : [],
+      responseSummary: diagnosticResponseSummary(state.responseSummary),
+      animationWaiting: Boolean(this.animationWaiting),
+      databusAnimationWaiting: Boolean(state.animationWaiting),
+      isAnimating: Boolean(this.isAnimating),
+      localActionPreviewType: this.localActionPreviewType || '',
+      currentEvent: diagnosticEvent(currentEvent),
+      lastServerEventSeq: this.lastServerEventSeq,
+      lastPlayedEventSeq: this.lastPlayedEventSeq,
+      lastAckedEventSeq: this.lastAckedEventSeq,
+      lastLocallyCompletedEventSeq: this.lastLocallyCompletedEventSeq,
+      ackingEventSeq: this.ackingEventSeq || 0,
+      socketReady: Boolean(this.socket && this.socket.isReady && this.socket.isReady()),
+    }, extra);
+    console.info(`[online:diagnostic] ${event}`, detail);
+    reportClientDiagnostic(event, detail);
   }
 
   setLobbyState(state, detail = {}) {
@@ -1297,6 +1396,23 @@ export default class OnlineController {
       local.playerActions = [];
     }
     this.databus.setRoundState(local);
+    const serverEvent = animation.currentEvent || res.public.publicEvent || null;
+    if (
+      hasLocalResponseActions
+      || (local.responseSummary && local.responseSummary.active)
+      || (serverEvent && serverEvent.appearanceResolution === 'await-response')
+    ) {
+      this.reportOnlineDiagnostic('online-response-snapshot', {
+        incomingVersion: res.version,
+        animationWaitingFromServer: Boolean(animation.waiting),
+        animationSelfAcked: Boolean(animation.selfAcked),
+        hasLocalResponseActions,
+        serverEvent: diagnosticEvent(serverEvent),
+        serverRequiredSeats: Array.isArray(animation.requiredSeats) ? animation.requiredSeats.slice() : [],
+        serverAckedSeats: Array.isArray(animation.ackedSeats) ? animation.ackedSeats.slice() : [],
+        serverDeadlineAt: animation.deadlineAt || null,
+      });
+    }
     if (!local.responseWindowId || local.actionState !== 'available') {
       this.clearPendingResponseIntent(local.responseWindowId);
     }
@@ -1308,21 +1424,43 @@ export default class OnlineController {
   consumeAnimationState(animation = {}) {
     const event = rotatePublicEvent(animation.currentEvent, this.mySeat);
     if (!event) {
-      if (this.isAnimating && this.currentEvent) return;
+      if (this.isAnimating && this.currentEvent) {
+        this.reportOnlineDiagnostic('online-animation-release-forced', {
+          reason: 'server-event-cleared',
+          event: diagnosticEvent(this.currentEvent),
+          animationWaitingFromServer: Boolean(animation.waiting),
+          animationSelfAcked: Boolean(animation.selfAcked),
+        });
+        if (typeof this.currentEvent.eventSeq === 'number') {
+          this.lastLocallyCompletedEventSeq = Math.max(this.lastLocallyCompletedEventSeq || 0, this.currentEvent.eventSeq);
+        }
+      }
       if (this.animator.releaseOnlineEvent) this.animator.releaseOnlineEvent();
       this.currentEvent = null;
       this.isAnimating = false;
+      this.animationWaiting = false;
+      if (this.databus) this.databus.animationWaiting = false;
+      this.cancelLocalActionPreview();
       return;
     }
     this.currentEvent = event;
     if (animation.selfAcked) {
+      this.reportOnlineDiagnostic('online-animation-self-acked', {
+        event: diagnosticEvent(event),
+        clearingLocalPreview: Boolean(this.localActionPreviewType || this.pendingLocalAction),
+      });
       this.lastAckedEventSeq = Math.max(this.lastAckedEventSeq, event.eventSeq);
       this.lastPlayedEventSeq = Math.max(this.lastPlayedEventSeq, event.eventSeq);
       this.isAnimating = false;
       if (this.animator.restoreHeldAppearance) this.animator.restoreHeldAppearance(event);
+      this.cancelLocalActionPreview();
       return;
     }
     if (event.eventSeq <= this.lastPlayedEventSeq || this.isAnimating) {
+      this.reportOnlineDiagnostic('online-animation-consume-skipped', {
+        event: diagnosticEvent(event),
+        reason: this.isAnimating ? 'is-animating' : 'already-played',
+      });
       if (!this.isAnimating && event.eventSeq <= this.lastPlayedEventSeq) {
         // 多客户端并发全量写可能覆盖单个回执；权威状态仍未记录本人时主动幂等补发。
         this.lastAckedEventSeq = Math.min(this.lastAckedEventSeq, event.eventSeq - 1);
@@ -1343,6 +1481,11 @@ export default class OnlineController {
     this.applyAuthoritativeDiscardEventToLocalHand(event);
     this.applyAuthoritativeMeldEventToLocalHand(event);
     this.isAnimating = true;
+    this.reportOnlineDiagnostic('online-animation-start', {
+      event: diagnosticEvent(event),
+      animationWaitingFromServer: Boolean(animation.waiting),
+      animationSelfAcked: Boolean(animation.selfAcked),
+    });
     const hasLocalPreview = Boolean(this.pendingLocalAction && this.pendingLocalAction.localPreviewStarted);
     const usesLocalPreview = hasLocalPreview
       && localActionMatchesEvent(this.pendingLocalAction, event)
@@ -1361,7 +1504,12 @@ export default class OnlineController {
     const started = usesLocalPreview || (this.animator.playOnlineEvent
       ? this.animator.playOnlineEvent(event, () => this.finishAnimation(event.eventSeq))
       : false);
-    if (!started) this.finishAnimation(event.eventSeq);
+    if (!started) {
+      this.reportOnlineDiagnostic('online-animation-not-started', {
+        event: diagnosticEvent(event),
+      });
+      this.finishAnimation(event.eventSeq);
+    }
   }
 
   applyAuthoritativeDiscardEventToLocalHand(event = {}) {
@@ -1430,6 +1578,10 @@ export default class OnlineController {
 
   finishAnimation(eventSeq) {
     if (!this.currentEvent || this.currentEvent.eventSeq !== eventSeq) return;
+    this.reportOnlineDiagnostic('online-animation-finish', {
+      eventSeq,
+      event: diagnosticEvent(this.currentEvent),
+    });
     this.isAnimating = false;
     this.animationWaiting = false;
     this.lastLocallyCompletedEventSeq = Math.max(this.lastLocallyCompletedEventSeq || 0, eventSeq);
@@ -1516,18 +1668,27 @@ export default class OnlineController {
     if (!this.roomId || eventSeq <= this.lastAckedEventSeq) return;
     if (this.ackingEventSeq === eventSeq) return;
     this.ackingEventSeq = eventSeq;
+    this.reportOnlineDiagnostic('online-animation-ack-send', { eventSeq });
     try {
       const res = this.socket.isReady()
         ? await this.socket.request('ackAnimation', { roomId: this.roomId, eventSeq, version: this.version })
         : null;
       if (!res) throw new Error('SOCKET_NOT_CONNECTED');
       if (!res || !res.ok) throw new Error((res && res.error) || 'ACK_FAILED');
+      this.reportOnlineDiagnostic('online-animation-ack-success', {
+        eventSeq,
+        serverVersion: res.version,
+      });
       this.lastAckedEventSeq = Math.max(this.lastAckedEventSeq, eventSeq);
       this.ackingEventSeq = 0;
       if (this.ackRetryTimer) clearTimeout(this.ackRetryTimer);
       this.ackRetryTimer = null;
       if (!this.applyServerSnapshot(res)) await this.refresh();
     } catch (err) {
+      this.reportOnlineDiagnostic('online-animation-ack-failed', {
+        eventSeq,
+        error: err && (err.code || err.message) ? (err.code || err.message) : String(err || ''),
+      });
       this.ackingEventSeq = 0;
       if (!this.socket.isReady()) {
         this.socketReconnecting = true;
@@ -1614,21 +1775,60 @@ export default class OnlineController {
       && hand.some((card) => card.id === op.cardId);
   }
 
+  canSubmitResponseWhileAnimating(action = {}) {
+    const state = this.databus || {};
+    if (!isResponseAction(action)) return false;
+    if (!state.responseWindowId || state.actionState !== 'available') return false;
+    if (!Array.isArray(state.playerActions) || !state.playerActions.length) return false;
+    return state.playerActions.some((candidate) => responseActionMatches(candidate, action));
+  }
+
+  canSubmitResponseOpWhileAnimating(op = {}) {
+    if (!op || op.kind !== 'response' || !op.ref) return false;
+    const state = this.databus || {};
+    if (!state.responseWindowId || state.actionState !== 'available') return false;
+    if (op.ref.responseWindowId && op.ref.responseWindowId !== state.responseWindowId) return false;
+    return this.canSubmitResponseWhileAnimating(op.ref);
+  }
+
   async sendOp(op, allowRetry = true) {
-    if (this.animationWaiting || this.isAnimating) {
+    const allowResponseDuringAnimation = this.canSubmitResponseOpWhileAnimating(op);
+    if ((this.animationWaiting || this.isAnimating) && !allowResponseDuringAnimation) {
+      this.reportOnlineDiagnostic('online-op-blocked-by-animation', {
+        op: diagnosticOp(op),
+        allowResponseDuringAnimation,
+      });
       this.databus.feedback = '请等待当前动作完成';
       return;
     }
     try {
       if (!this.socket.isReady()) {
+        this.reportOnlineDiagnostic('online-op-blocked-by-socket', {
+          op: diagnosticOp(op),
+        });
         this.socketReconnecting = true;
         this.scheduleReconnect(0);
         this.databus.feedback = '连接已断开，等待重连';
         this.cancelLocalActionPreview();
         return;
       }
+      if (op && op.kind === 'response') {
+        this.reportOnlineDiagnostic('online-response-op-submit', {
+          op: diagnosticOp(op),
+          allowResponseDuringAnimation,
+        });
+      }
       const res = await this.socket.request('op', { roomId: this.roomId, version: this.version, payload: op });
       if (!res || !res.ok) {
+        if (op && op.kind === 'response') {
+          this.reportOnlineDiagnostic('online-response-op-rejected', {
+            op: diagnosticOp(op),
+            error: res && res.error ? res.error : 'NO_RESPONSE',
+            reason: res && res.reason ? res.reason : '',
+            serverVersion: res && typeof res.version === 'number' ? res.version : null,
+            eventSeq: res && typeof res.eventSeq === 'number' ? res.eventSeq : null,
+          });
+        }
         if (res && res.error === 'VERSION_STALE') {
           const refreshed = await this.refresh();
           if (allowRetry && refreshed && this.canRetryOp(op)) {
@@ -1646,8 +1846,20 @@ export default class OnlineController {
         });
         return;
       }
+      if (op && op.kind === 'response') {
+        this.reportOnlineDiagnostic('online-response-op-accepted', {
+          op: diagnosticOp(op),
+          serverVersion: res.version,
+        });
+      }
       if (!this.applyServerSnapshot(res)) await this.refresh();
     } catch (err) {
+      if (op && op.kind === 'response') {
+        this.reportOnlineDiagnostic('online-response-op-failed', {
+          op: diagnosticOp(op),
+          error: err && (err.code || err.message) ? (err.code || err.message) : String(err || ''),
+        });
+      }
       this.scheduleReconnect(0);
       this.cancelLocalActionPreview();
       this.databus.feedback = '网络异常，请重试';
@@ -1661,15 +1873,45 @@ export default class OnlineController {
       this.scheduleReconnect(0);
       return;
     }
-    if (this.animationWaiting || this.isAnimating || this.localActionPreviewType) {
-      this.databus.feedback = '请等待当前动作完成';
-      return;
-    }
     const touch = event.touches && event.touches[0];
     if (!touch || !this.renderer.lastLayout) return;
     const region = this.renderer.layout.hit(this.renderer.lastLayout, touch.clientX, touch.clientY);
     if (!region) return;
-    if (this.music) this.music.playCue('tap');
+    const responseActionTap = region.type === 'action' && this.canSubmitResponseWhileAnimating(region.action);
+    if (region.type === 'action' && isResponseAction(region.action)) {
+      this.reportOnlineDiagnostic('online-response-touch', {
+        action: diagnosticAction(region.action),
+        responseActionTap,
+      });
+    }
+    if (this.localActionPreviewType || ((this.animationWaiting || this.isAnimating) && !responseActionTap)) {
+      this.reportOnlineDiagnostic('online-touch-blocked', {
+        regionType: region.type,
+        action: region.type === 'action' ? diagnosticAction(region.action) : null,
+        responseActionTap,
+        blockedByLocalPreview: Boolean(this.localActionPreviewType),
+        localActionPreviewType: this.localActionPreviewType || '',
+        blockedByAnimationWaiting: Boolean(this.animationWaiting),
+        blockedByIsAnimating: Boolean(this.isAnimating),
+      });
+      if (region.type === 'action' && isResponseAction(region.action)) {
+        this.reportOnlineDiagnostic('online-response-touch-blocked', {
+          action: diagnosticAction(region.action),
+          responseActionTap,
+          blockedByLocalPreview: Boolean(this.localActionPreviewType),
+          blockedByAnimationWaiting: Boolean(this.animationWaiting),
+          blockedByIsAnimating: Boolean(this.isAnimating),
+        });
+      }
+      this.databus.feedback = '请等待当前动作完成';
+      return;
+    }
+    if (region.type === 'action' && responseActionTap && (this.animationWaiting || this.isAnimating)) {
+      this.reportOnlineDiagnostic('online-response-touch-allowed-during-animation', {
+        action: diagnosticAction(region.action),
+      });
+    }
+    if (this.music && this.music.playCue) this.music.playCue('tap');
 
     if (region.type === 'hand-card') {
       this.handleCardTap(region.card.id);
