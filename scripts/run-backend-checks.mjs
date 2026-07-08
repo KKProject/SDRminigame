@@ -80,6 +80,11 @@ const login = await auth.login({ code: 'dev-code', profile: { nickName: '测试�
 assert(login.ok && login.openid === 'openid-a' && login.token && login.socket.token, 'auth service should login and issue tokens');
 const user = await db.collection('users').doc('openid-a').get();
 assert(user.data.nickName === '测试玩家', 'auth service should upsert user profile');
+const codeOnlyLogin = await auth.login({ code: 'dev-code' });
+assert(codeOnlyLogin.user.nickName === '测试玩家' && codeOnlyLogin.user.avatarUrl === 'avatar.png', 'code-only login should recover stored user profile');
+await auth.login({ code: 'dev-code', profile: { nickName: '新昵称' } });
+const mergedUser = await db.collection('users').doc('openid-a').get();
+assert(mergedUser.data.nickName === '新昵称' && mergedUser.data.avatarUrl === 'avatar.png', 'partial profile login should not clear stored avatar');
 
 const game = new LocalGameService({ db });
 const ping = await game.callAction('ping', 'openid-a', {});

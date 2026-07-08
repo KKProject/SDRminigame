@@ -250,6 +250,15 @@ if (
 ) {
   throw new Error('online login should forward wx.login code and profile to the backend login api');
 }
+await cloud.login();
+if (
+  !callData
+  || callData.code !== 'wx-login-code'
+  || !callData.profile
+  || callData.profile.nickName
+) {
+  throw new Error('code-only online login should call backend login without inventing a profile');
+}
 
 globalThis.wx.login = (options) => options.fail({ errMsg: 'login failed' });
 let loginFailure = null;
@@ -318,6 +327,29 @@ if (
 ) {
   throw new Error('authorized WeChat profile should be normalized and forwarded');
 }
+let emptyProfileCallbackValue = 'not-called';
+let emptyProfileTap = null;
+profile.createUserProfileButton({ x: 0, y: 0, w: 100, h: 40 }, (value) => {
+  emptyProfileCallbackValue = value;
+}, {
+  createUserInfoButton() {
+    return {
+      onTap(callback) { emptyProfileTap = callback; },
+      show() {},
+      destroy() {},
+    };
+  },
+  getUserInfo(options) {
+    options.success({ userInfo: {} });
+  },
+  getStorageSync() { return {}; },
+  setStorageSync() {},
+});
+emptyProfileTap({ userInfo: {} });
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (emptyProfileCallbackValue !== null) {
+  throw new Error('native profile button should not invent a fallback profile when WeChat returns empty data');
+}
 const fallbackProfile = profile.profileWithFallback({}, profileRuntime);
 if (fallbackProfile.nickName !== '微信玩家' || fallbackProfile.avatarUrl !== 'https://example.com/avatar.png') {
   throw new Error('declined profile request should reuse the stable stored fallback profile');
@@ -354,6 +386,17 @@ const authorizedRuntime = {
 const authorizedProfile = await profile.getAuthorizedProfile(authorizedRuntime);
 if (!authorizedProfile || authorizedProfile.nickName !== '已授权玩家') {
   throw new Error('online menu should reuse an already authorized WeChat profile');
+}
+const emptyAuthorizedProfile = await profile.getAuthorizedProfile({
+  getSetting(options) {
+    options.success({ authSetting: { 'scope.userInfo': true } });
+  },
+  getUserInfo(options) {
+    options.success({ userInfo: {} });
+  },
+});
+if (emptyAuthorizedProfile !== null) {
+  throw new Error('authorized profile lookup should not invent a profile when WeChat returns no nickname or avatar');
 }
 const unauthorizedProfile = await profile.getAuthorizedProfile({
   getSetting(options) {
@@ -2914,6 +2957,21 @@ if (!/startOnline\(profile = \{\}, inviteRoomId = ''\)[\s\S]*?catch\(\(err\) => 
 if (/startOnline\(profile = \{\}, inviteRoomId = ''\)[\s\S]*?catch\(\(err\) => \{[\s\S]*?if \(inviteRoomId && shouldReturnInviteToStart\(err\)\) \{[\s\S]*?this\.menu\.setStatus\(message\);[\s\S]*?showToast\(message\);/.test(mainSource)) {
   throw new Error('failed invite launches should toast only and must not render the toast text below the start button');
 }
+if (!/handleInviteRoomId\(roomId, autoStart = false\)[\s\S]*?readStoredProfile\(\)[\s\S]*?!hasProfile\(profile\)[\s\S]*?this\.silentLoginFromStart\('invite'\);[\s\S]*?return;/.test(mainSource)) {
+  throw new Error('share launches should try code-only backend profile recovery before requiring WeChat profile authorization');
+}
+if (/handleInviteRoomId\(roomId, autoStart = false\)[\s\S]*?profileWithFallback\(\)/.test(mainSource)) {
+  throw new Error('share launches must not bypass the WeChat profile gate with a fallback profile');
+}
+if (!/silentLoginFromStart\(intent = 'idle'\)[\s\S]*?controller\.loginForLobby\(\{\}\)[\s\S]*?!hasProfile\(lobbyProfile\)[\s\S]*?this\.menu\.promptLogin\(intent === 'invite' \? '请先微信登录后进入房间' : '请先微信登录后开始'\)/.test(mainSource)) {
+  throw new Error('startup should recover stored backend profile with code-only login before showing the WeChat profile authorization gate');
+}
+if (!/startFromHome\(profile = \{\}\)[\s\S]*?if \(this\.pendingInviteRoomId\) \{[\s\S]*?this\.startOnline\(storedProfile, this\.pendingInviteRoomId\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?this\.loginAndOpenCreateRoom\(storedProfile\);/.test(mainSource)) {
+  throw new Error('startup login completion should continue pending invites before opening create-room settings');
+}
+if (!/loginAndOpenCreateRoom\(profile = \{\}\)[\s\S]*?controller\.loginForLobby\(profile\)[\s\S]*?this\.mode = APP_MODES\.CREATE_ROOM;[\s\S]*?this\.menu\.showCreateRoomSettings\(\);/.test(mainSource)) {
+  throw new Error('start button should backend-login with an existing profile before entering create-room settings');
+}
 const menuSource = await readFile(join(root, 'js/ui/menu.js'), 'utf8');
 const lobbyRenderStart = menuSource.lastIndexOf('renderLobby(ctx, metrics)');
 const lobbyRenderEnd = menuSource.indexOf('\n  renderWaitingRoom(ctx, metrics)', lobbyRenderStart);
@@ -2924,11 +2982,27 @@ if (/type:\s*'round'/.test(lobbyRenderSource) || /type:\s*'create-room'/.test(lo
 if (!/type:\s*'open-create-room-settings'/.test(lobbyRenderSource)) {
   throw new Error('online lobby should only offer an entry point into the create room settings page');
 }
-if (!/authState\s*=\s*'checking'/.test(menuSource) || !/ensureStartAuthCheck\(\)/.test(menuSource)) {
-  throw new Error('start menu should check login state before enabling room creation');
+if (!/ensureStartAuthCheck\(\)/.test(menuSource) || !/readStoredProfile/.test(menuSource) || !/this\.setStartAuthState\('ready', \{ profile: stored \}\);/.test(menuSource)) {
+  throw new Error('start menu should use stored WeChat profile data as the startup gate before enabling room creation');
 }
-if (!/onSelect\('startLogin'/.test(menuSource) || !/mode:\s*ready\s*\?\s*'start'\s*:\s*'login'/.test(menuSource)) {
-  throw new Error('start menu should require login before the start action');
+if (!/ensureStartAuthCheck\(\)[\s\S]*?onSelect\('startSilentLogin'\)/.test(menuSource)) {
+  throw new Error('start menu should ask Main to recover backend profile before displaying the native WeChat profile button');
+}
+if (!/onSelect\('startReady'/.test(menuSource) || !/mode:\s*ready\s*\?\s*'start'\s*:\s*'login'/.test(menuSource)) {
+  throw new Error('start menu should require WeChat profile readiness before the start action');
+}
+if (/onSelect\('startLogin'/.test(menuSource)) {
+  throw new Error('start menu should not trigger backend login directly; Main must own the startup intent');
+}
+if (/profileWithFallback/.test(menuSource)) {
+  throw new Error('start menu should not bypass WeChat profile authorization with a fallback profile');
+}
+if (!/syncProfileButton\(\)[\s\S]*?const loginButton = this\.buttons\.find\(\(button\) => button\.mode === 'login'\);/.test(menuSource)) {
+  throw new Error('start menu should only create the native WeChat profile button for the login button state');
+}
+const profileSource = await readFile(join(root, 'js/net/profile.js'), 'utf8');
+if (/icon:\s*icon/.test(profileSource) || /image:\s*'image'/.test(profileSource)) {
+  throw new Error('empty authorized profile lookup must not contain the old invalid toast options');
 }
 if (!/选择局数/.test(menuSource) || !/确认创建/.test(menuSource) || !/onSelect\('confirmCreateRoom'/.test(menuSource)) {
   throw new Error('create room settings should remain the only place to choose rules and confirm creation');

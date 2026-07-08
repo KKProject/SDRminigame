@@ -2,7 +2,6 @@ import { getRenderMetrics } from '../render';
 import {
   createUserProfileButton,
   getAuthorizedProfile,
-  profileWithFallback,
   readStoredProfile,
 } from '../net/profile';
 
@@ -65,6 +64,7 @@ export default class StartMenu {
     this.avatarLoaded = false;
     this.startProfile = readStoredProfile(typeof wx !== 'undefined' ? wx : null);
     this.loadAvatar(this.startProfile.avatarUrl);
+    this.authState = this.hasStartProfile() ? 'ready' : 'login-required';
   }
 
   show() {
@@ -94,6 +94,15 @@ export default class StartMenu {
     if (this.busy) this.destroyProfileButton();
   }
 
+  hasStartProfile() {
+    return Boolean(this.startProfile && (this.startProfile.nickName || this.startProfile.avatarUrl));
+  }
+
+  promptLogin(message = '请先微信登录后开始') {
+    this.setStartAuthState('login-required');
+    this.status = message;
+  }
+
   setStartAuthState(state, detail = {}) {
     this.authState = state || 'login-required';
     this.authError = detail.error || '';
@@ -109,7 +118,7 @@ export default class StartMenu {
     } else if (this.authState === 'error') {
       this.status = this.authError || '登录失败，请重试';
     } else {
-      this.status = '请先登录后开始';
+      this.status = '请先微信登录后开始';
     }
   }
 
@@ -117,19 +126,17 @@ export default class StartMenu {
     if (!this.active || this.screen !== MENU_SCREENS.START || this.authCheckStarted) return;
     this.authCheckStarted = true;
     this.setStartAuthState('checking');
-    getAuthorizedProfile()
-      .then((profile) => {
-        if (profile) {
-          this.updateStartProfile(profile);
-          this.setStartAuthState('logging-in', { profile });
-          if (typeof this.onSelect === 'function') this.onSelect('startLogin', profile);
-          return;
-        }
-        this.setStartAuthState('login-required');
-      })
-      .catch(() => {
-        this.setStartAuthState('login-required');
-      });
+    const stored = readStoredProfile(typeof wx !== 'undefined' ? wx : null);
+    if (stored.nickName || stored.avatarUrl) {
+      this.updateStartProfile(stored);
+      this.setStartAuthState('ready', { profile: stored });
+      return;
+    }
+    if (typeof this.onSelect === 'function') {
+      this.onSelect('startSilentLogin');
+      return;
+    }
+    this.setStartAuthState('login-required');
   }
 
   showLobby(profile = {}) {
@@ -154,7 +161,7 @@ export default class StartMenu {
     if (profile && (profile.nickName || profile.avatarUrl)) {
       this.updateStartProfile(profile);
     }
-    this.setStartAuthState('ready', { profile: this.startProfile });
+    this.setStartAuthState(this.hasStartProfile() ? 'ready' : 'login-required', { profile: this.startProfile });
     this.destroyProfileButton();
   }
 
@@ -307,8 +314,9 @@ export default class StartMenu {
     }
     if (this.busy) return;
     if (hit && hit.mode === 'start' && !hit.disabled) {
-      this.showCreateRoomSettings();
-      this.onSelect('openCreateRoomSettings', this.getRoomDraft());
+      this.setBusy(true);
+      this.setStartAuthState('logging-in', { profile: this.startProfile });
+      this.onSelect('startReady', this.startProfile);
       return;
     }
     if (hit && hit.mode === 'login' && !hit.disabled) {
@@ -345,7 +353,7 @@ export default class StartMenu {
           this.updateStartProfile(profile);
           this.destroyProfileButton();
           this.setStartAuthState('logging-in', { profile });
-          this.onSelect('startLogin', profile);
+          this.onSelect('startReady', profile);
           return;
         }
         if (this.profileButton) {
@@ -354,18 +362,16 @@ export default class StartMenu {
           } catch (err) {
             console.warn('[profile] show authorization button failed', err);
             this.destroyProfileButton();
-            this.onSelect('online', profileWithFallback());
+            this.setStartAuthState('error', { error: '微信登录不可用，请稍后重试' });
             return;
           }
           this.setStartAuthState('login-required');
           return;
         }
-        this.setStartAuthState('logging-in');
-        this.onSelect('startLogin', profileWithFallback());
+        this.setStartAuthState('error', { error: '微信登录不可用，请稍后重试' });
       })
       .catch(() => {
-        this.setStartAuthState('logging-in');
-        this.onSelect('startLogin', profileWithFallback());
+        this.setStartAuthState('error', { error: '微信登录失败，请重试' });
       })
       .finally(() => {
         this.checkingProfile = false;
@@ -395,10 +401,14 @@ export default class StartMenu {
     if (this.profileButton && signature === this.profileButtonSignature) return;
     this.destroyProfileButton();
     this.profileButton = createUserProfileButton(loginButton, (profile) => {
+      if (!profile || (!profile.nickName && !profile.avatarUrl)) {
+        this.setStartAuthState('error', { error: '没有获取到头像和昵称，请重试' });
+        return;
+      }
       this.updateStartProfile(profile);
       this.destroyProfileButton();
       this.setStartAuthState('logging-in', { profile });
-      if (typeof this.onSelect === 'function') this.onSelect('startLogin', profile);
+      if (typeof this.onSelect === 'function') this.onSelect('startReady', profile);
     });
     this.profileButtonSignature = this.profileButton ? signature : '';
   }

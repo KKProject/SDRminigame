@@ -16,7 +16,7 @@ import OnlineController, {
   readLaunchInviteRoomId,
   registerInviteRoomListener,
 } from './net/online';
-import { profileWithFallback } from './net/profile';
+import { readStoredProfile } from './net/profile';
 import { flushClientDiagnostics, reportClientDiagnostic } from './net/diagnostics';
 
 GameGlobal.databus = new DataBus();
@@ -57,6 +57,10 @@ function showToast(message) {
   wx.showToast({ title: message, icon: 'none', duration: 2000 });
 }
 
+function hasProfile(profile = {}) {
+  return Boolean(profile && (profile.profileReady || profile.nickName || profile.avatarUrl));
+}
+
 export default class Main {
   aniId = 0;
   assets = new AssetLoader();
@@ -66,6 +70,7 @@ export default class Main {
   menu = null;
   loggedInProfile = null;
   pendingInviteRoomId = '';
+  startSilentLoginPending = false;
   cleanupInviteListener = null;
 
   constructor() {
@@ -101,7 +106,6 @@ export default class Main {
   handleInviteRoomId(roomId, autoStart = false) {
     if (!roomId) return;
     this.pendingInviteRoomId = roomId;
-    if (this.menu) this.menu.setStatus('收到房间邀请，正在进入…');
     if (this.online && this.online.starting) return;
     if (this.mode === APP_MODES.GAME_TABLE && this.online && this.online.active) {
       this.menu.setStatus('你已有进行中的牌桌');
@@ -111,8 +115,20 @@ export default class Main {
       this.online.refreshWaitingRoom();
       return;
     }
+    const profile = (this.online && this.online.lobbyProfile) || this.loggedInProfile || readStoredProfile();
+    if (!hasProfile(profile)) {
+      this.mode = APP_MODES.HALL;
+      if (this.menu) {
+        this.menu.showStartHome({});
+        this.menu.setStatus('正在登录…');
+        this.menu.show();
+      }
+      this.silentLoginFromStart('invite');
+      return;
+    }
+    if (this.menu) this.menu.setStatus('收到房间邀请，正在进入…');
     if (autoStart || this.mode === APP_MODES.HALL || this.mode === null) {
-      this.startOnline(this.online && this.online.lobbyProfile ? this.online.lobbyProfile : profileWithFallback(), roomId);
+      this.startOnline(profile, roomId);
     }
   }
 
@@ -191,8 +207,12 @@ export default class Main {
   }
 
   handleModeSelect(mode, profile = {}) {
-    if (mode === 'startLogin') {
+    if (mode === 'startReady') {
+      this.startFromHome(profile);
+    } else if (mode === 'startLogin') {
       this.loginFromStart(profile);
+    } else if (mode === 'startSilentLogin') {
+      this.silentLoginFromStart('idle');
     } else if (mode === 'openCreateRoomSettings') {
       this.mode = APP_MODES.CREATE_ROOM;
       this.menu.setStatus('');
@@ -281,6 +301,77 @@ export default class Main {
       });
   }
 
+  startFromHome(profile = {}) {
+    const storedProfile = hasProfile(profile) ? profile : readStoredProfile();
+    if (!hasProfile(storedProfile)) {
+      this.silentLoginFromStart(this.pendingInviteRoomId ? 'invite' : 'create');
+      return;
+    }
+    if (this.pendingInviteRoomId) {
+      this.startOnline(storedProfile, this.pendingInviteRoomId);
+      return;
+    }
+    this.loginAndOpenCreateRoom(storedProfile);
+  }
+
+  loginAndOpenCreateRoom(profile = {}) {
+    const controller = this.ensureOnlineController();
+    if (controller.starting) return;
+    this.menu.setBusy(true);
+    this.menu.setStartAuthState('logging-in', { profile });
+    controller.loginForLobby(profile)
+      .then((lobbyProfile) => {
+        this.openCreateRoomWithProfile(lobbyProfile);
+      })
+      .catch((err) => {
+        console.error('[online] start gate login failed', err);
+        this.mode = APP_MODES.HALL;
+        this.menu.setBusy(false);
+        this.menu.setStartAuthState('error', { error: onlineErrorMessage(err), profile });
+      });
+  }
+
+  openCreateRoomWithProfile(profile = {}) {
+    this.loggedInProfile = profile;
+    this.mode = APP_MODES.CREATE_ROOM;
+    this.menu.setBusy(false);
+    this.menu.setStartAuthState('ready', { profile });
+    this.menu.showCreateRoomSettings();
+  }
+
+  silentLoginFromStart(intent = 'idle') {
+    if (this.startSilentLoginPending) return;
+    const controller = this.ensureOnlineController();
+    if (controller.starting) return;
+    this.startSilentLoginPending = true;
+    this.mode = APP_MODES.HALL;
+    this.menu.setBusy(true);
+    this.menu.setStartAuthState('logging-in');
+    controller.loginForLobby({})
+      .then((lobbyProfile) => {
+        this.loggedInProfile = lobbyProfile;
+        this.menu.setBusy(false);
+        if (!hasProfile(lobbyProfile)) {
+          this.menu.promptLogin(intent === 'invite' ? '请先微信登录后进入房间' : '请先微信登录后开始');
+          return;
+        }
+        this.menu.setStartAuthState('ready', { profile: lobbyProfile });
+        if (intent === 'invite' && this.pendingInviteRoomId) {
+          this.startOnline(lobbyProfile, this.pendingInviteRoomId);
+        } else if (intent === 'create') {
+          this.openCreateRoomWithProfile(lobbyProfile);
+        }
+      })
+      .catch((err) => {
+        console.error('[online] silent start login failed', err);
+        this.menu.setBusy(false);
+        this.menu.setStartAuthState('error', { error: onlineErrorMessage(err) });
+      })
+      .finally(() => {
+        this.startSilentLoginPending = false;
+      });
+  }
+
   startOnline(profile = {}, inviteRoomId = '') {
     if (this.online && this.online.starting) return;
     this.menu.setBusy(true);
@@ -304,7 +395,7 @@ export default class Main {
         console.error('[online] start failed', err);
         if (inviteRoomId && shouldReturnInviteToStart(err)) {
           const message = inviteStartMessage(err);
-          const homeProfile = (this.online && this.online.lobbyProfile) || this.loggedInProfile || profileWithFallback();
+          const homeProfile = (this.online && this.online.lobbyProfile) || this.loggedInProfile || readStoredProfile();
           this.pendingInviteRoomId = '';
           this.mode = APP_MODES.HALL;
           this.menu.showStartHome(homeProfile);

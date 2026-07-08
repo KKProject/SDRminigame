@@ -46,10 +46,12 @@ export const LOBBY_STATES = {
 
 function lobbyProfile(loginRes = {}, fallback = {}) {
   const user = loginRes.user || {};
+  const profileReady = Boolean(user.nickName || user.avatarUrl || fallback.nickName || fallback.avatarUrl);
   return {
-    nickName: user.nickName || fallback.nickName || '玩家',
+    nickName: user.nickName || fallback.nickName || '',
     avatarUrl: user.avatarUrl || fallback.avatarUrl || '',
     openid: loginRes.openid || user.openid || '',
+    profileReady,
   };
 }
 

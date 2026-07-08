@@ -15,6 +15,13 @@ function normalizeProfile(input = {}) {
   };
 }
 
+function profileUpdateData(profile = {}, now = Date.now()) {
+  const data = { lastLoginAt: now };
+  if (profile.nickName) data.nickName = profile.nickName;
+  if (profile.avatarUrl) data.avatarUrl = profile.avatarUrl;
+  return data;
+}
+
 class AuthService {
   constructor({ config, db, fetch } = {}) {
     this.config = config || {};
@@ -35,7 +42,7 @@ class AuthService {
       existing = null;
     }
     if (existing) {
-      await userRef.update({ data: Object.assign({}, profile, { lastLoginAt: now }) });
+      await userRef.update({ data: profileUpdateData(profile, now) });
     } else {
       await userRef.set({
         data: {
@@ -71,4 +78,5 @@ class AuthService {
 module.exports = {
   AuthService,
   normalizeProfile,
+  profileUpdateData,
 };

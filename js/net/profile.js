@@ -105,16 +105,6 @@ export function getAuthorizedProfile(runtime = wx) {
         requestUserInfo(runtime).then((profile) => {
           if (!profile.nickName && !profile.avatarUrl) {
             resolve(null);
-            wx.showToast({
-              title: '没有获取到头像和昵称',
-              duration: 0,
-              icon: icon,
-              image: 'image',
-              mask: true,
-              success: (res) => {},
-              fail: (res) => {},
-              complete: (res) => {},
-            })
             return;
           }
           resolve(profileWithFallback(profile, runtime));
@@ -157,10 +147,20 @@ export function createUserProfileButton(bounds, onProfile, runtime = wx) {
   button.onTap((result = {}) => {
     const callbackProfile = extractProfile(result);
     requestUserInfo(runtime).then((freshProfile) => {
-      const profile = profileWithFallback({
+      const mergedProfile = normalizeProfile({
         nickName: freshProfile.nickName || callbackProfile.nickName,
         avatarUrl: freshProfile.avatarUrl || callbackProfile.avatarUrl,
-      }, runtime);
+      });
+      if (!mergedProfile.nickName && !mergedProfile.avatarUrl) {
+        console.info('[profile] authorization returned empty profile', {
+          errMsg: result.errMsg || '',
+          callbackHasProfile: Boolean(callbackProfile.nickName || callbackProfile.avatarUrl),
+          refreshedHasProfile: Boolean(freshProfile.nickName || freshProfile.avatarUrl),
+        });
+        if (typeof onProfile === 'function') onProfile(null);
+        return;
+      }
+      const profile = saveProfile(mergedProfile, runtime);
       console.info('[profile] authorization result', {
         errMsg: result.errMsg || '',
         nickName: profile.nickName,
