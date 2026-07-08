@@ -280,7 +280,7 @@ The system SHALL detect mandatory chi or peng situations, declined-then-later-ch
 - **THEN** the result MUST name the current player as loser and the other three players as winners
 
 ### Requirement: Discard Restrictions
-The system SHALL enforce phrase discard restrictions with a same-phrase reachability algorithm and treat inability to make a legal discard while not winning as circle-loss.
+The system SHALL enforce phrase discard restrictions with a same-phrase reachability algorithm, SHALL allow opening-hand `xxyy` same-phrase two-pair structures to be freely discarded, and SHALL treat inability to make a legal discard while not winning as circle-loss.
 
 #### Scenario: Exact complete phrase card is discarded
 - **WHEN** a player's same-phrase hand cards are exactly `xyz`
@@ -290,7 +290,7 @@ The system SHALL enforce phrase discard restrictions with a same-phrase reachabi
 #### Scenario: Same-phrase discard preserves a reachable door
 - **WHEN** a player attempts to discard a card from phrase `x/y/z`
 - **THEN** the system MUST simulate that discard together with prior discards from the same phrase
-- **AND** the discard MUST be legal only if the remaining same-phrase hand cards can still preserve or reach at least one final door among `xyz`, `xxx`, `yyy`, or `zzz` without exceeding the phrase discard allowance
+- **AND** the discard MUST be legal only if the remaining same-phrase hand cards can still preserve or reach at least one final door among `xyz`, `xxx`, `yyy`, or `zzz` without exceeding the phrase discard allowance, unless a more specific same-phrase discard scenario permits the discard
 
 #### Scenario: Xxyz only discards the extra key
 - **WHEN** a player's same-phrase structure is `xxyz`
@@ -302,6 +302,12 @@ The system SHALL enforce phrase discard restrictions with a same-phrase reachabi
 - **THEN** the system MUST allow discard paths that eventually discard `xx` and preserve `xyz`
 - **AND** the system MUST allow discard paths that eventually discard `yz` and preserve `xxx`
 - **AND** the system MUST reject any discard that can no longer reach either preserved door
+
+#### Scenario: Xxyy may be freely discarded
+- **WHEN** a player's opening-hand same-phrase structure is `xxyy`
+- **THEN** the system MUST allow discarding `x` or `y`
+- **AND** the system MUST continue allowing follow-up discards from that same phrase even if the remaining same-phrase cards can no longer preserve or reach `xyz`, `xxx`, `yyy`, or `zzz`
+- **AND** the system MUST allow the player to discard all four same-phrase cards if each discard is otherwise legal
 
 #### Scenario: Xxyyz may discard z and then stop
 - **WHEN** a player's same-phrase structure is `xxyyz`

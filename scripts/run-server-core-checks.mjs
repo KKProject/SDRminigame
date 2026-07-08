@@ -30,6 +30,30 @@ const { MemoryDocumentDatabase } = require(join(root, 'services/backend/src/db.j
 
 const localDeck = localCards.createDeck(localRules.DEFAULT_RULES);
 const serverDeck = serverCards.createDeck(serverRules.DEFAULT_RULES);
+function serverCardsFor(keys) {
+  const deck = serverCards.createDeck(serverRules.DEFAULT_RULES);
+  return keys.map((key) => {
+    const index = deck.findIndex((card) => card.key === key);
+    const card = deck[index];
+    deck.splice(index, 1);
+    return card;
+  });
+}
+function serverDiscardFromSeat(seat, key) {
+  const index = seat.hand.findIndex((card) => card.key === key);
+  if (index < 0) throw new Error(`test hand should contain ${key}`);
+  const card = seat.hand[index];
+  if (!serverEvaluator.isLegalDiscard(seat, card, serverRules.DEFAULT_RULES).legal) {
+    throw new Error(`${key} should be legal before test discard`);
+  }
+  seat.hand.splice(index, 1);
+  seat.history.actionHistory.push({ type: 'discard', key: card.key });
+  seat.history.discardPhraseCounts[card.phraseId] = (seat.history.discardPhraseCounts[card.phraseId] || 0) + 1;
+  return card;
+}
+function serverLegalDiscardKeys(seat) {
+  return serverEvaluator.getLegalDiscards(seat, serverRules.DEFAULT_RULES).map((card) => card.key).sort().join(',');
+}
 if (JSON.stringify(localDeck) !== JSON.stringify(serverDeck)) throw new Error('server deck must match local deck');
 if (serverCodec.SYMBOLS.length !== serverRules.DEFAULT_RULES.cardSymbols.length || serverCodec.PHRASES.length !== serverRules.DEFAULT_RULES.phrases.length) {
   throw new Error('server codec should match rule symbol and phrase counts');
@@ -110,6 +134,35 @@ if (!safeResponse || safeResponse.type !== 'peng') {
 }
 if (!serverAi.chooseDiscard({ hand: serverDeck.filter((card) => ['shang', 'kong'].includes(card.key)).slice(0, 3) }, serverRules.DEFAULT_RULES)) {
   throw new Error('server AI should choose a discard');
+}
+{
+  const xxyySeat = serverCards.createSeats(serverRules.DEFAULT_RULES, 0)[0];
+  xxyySeat.hand = serverCardsFor(['shang', 'shang', 'da', 'da']);
+  if (serverLegalDiscardKeys(xxyySeat) !== 'da,da,shang,shang') {
+    throw new Error('xxyy should allow either pair key as the first discard');
+  }
+  serverDiscardFromSeat(xxyySeat, 'shang');
+  if (serverLegalDiscardKeys(xxyySeat) !== 'da,da,shang') {
+    throw new Error('xxyy should keep allowing same-phrase discards after the first discard');
+  }
+  serverDiscardFromSeat(xxyySeat, 'da');
+  if (serverLegalDiscardKeys(xxyySeat) !== 'da,shang') {
+    throw new Error('xxyy should keep allowing mixed follow-up discards');
+  }
+  serverDiscardFromSeat(xxyySeat, 'shang');
+  if (serverLegalDiscardKeys(xxyySeat) !== 'da') {
+    throw new Error('xxyy should allow discarding down to the final same-phrase card');
+  }
+  serverDiscardFromSeat(xxyySeat, 'da');
+  if (serverEvaluator.getLegalDiscards(xxyySeat, serverRules.DEFAULT_RULES).length !== 0 || xxyySeat.hand.length !== 0) {
+    throw new Error('xxyy should allow all four same-phrase cards to be discarded');
+  }
+  const xxyyzSeat = serverCards.createSeats(serverRules.DEFAULT_RULES, 0)[0];
+  xxyyzSeat.hand = serverCardsFor(['shang', 'shang', 'da', 'da', 'ren']);
+  serverDiscardFromSeat(xxyyzSeat, 'ren');
+  if (serverEvaluator.getLegalDiscards(xxyyzSeat, serverRules.DEFAULT_RULES).length !== 0) {
+    throw new Error('xxyyz singleton discard path should still stop further same-phrase discards');
+  }
 }
 
 const publicState = serverEngine.buildPublicState({

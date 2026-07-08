@@ -489,6 +489,17 @@ export function runSelfChecks() {
   xxxyzTripletSeat.hand = cardsFor(['shang', 'shang', 'shang', 'da', 'ren']);
   discardFromSeat(xxxyzTripletSeat, 'shang');
   assert(legalDiscardKeys(xxxyzTripletSeat) === 'shang,shang', 'xxxyz path x should only continue with x and preserve xyz');
+  const xxyySeat = createSeats(DEFAULT_RULES, 0)[0];
+  xxyySeat.hand = cardsFor(['shang', 'shang', 'da', 'da']);
+  assert(legalDiscardKeys(xxyySeat) === 'da,da,shang,shang', 'xxyy should allow either pair key as the first discard');
+  discardFromSeat(xxyySeat, 'shang');
+  assert(legalDiscardKeys(xxyySeat) === 'da,da,shang', 'xxyy should keep allowing same-phrase discards after the first discard');
+  discardFromSeat(xxyySeat, 'da');
+  assert(legalDiscardKeys(xxyySeat) === 'da,shang', 'xxyy should keep allowing mixed follow-up discards');
+  discardFromSeat(xxyySeat, 'shang');
+  assert(legalDiscardKeys(xxyySeat) === 'da', 'xxyy should allow discarding down to the final same-phrase card');
+  discardFromSeat(xxyySeat, 'da');
+  assert(getLegalDiscards(xxyySeat, DEFAULT_RULES).length === 0 && xxyySeat.hand.length === 0, 'xxyy should allow all four same-phrase cards to be discarded');
   const xxyyzSeat = createSeats(DEFAULT_RULES, 0)[0];
   xxyyzSeat.hand = cardsFor(['shang', 'shang', 'da', 'da', 'ren']);
   assert(legalDiscardKeys(xxyyzSeat) === 'da,da,ren,shang,shang', 'xxyyz should allow x, y, or singleton z as first discard');

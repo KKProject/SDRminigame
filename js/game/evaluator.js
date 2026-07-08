@@ -515,6 +515,16 @@ function discardedKeyCounts(seat, keys) {
   }, {});
 }
 
+function manualDiscardedKeyCounts(seat, keys) {
+  const keySet = new Set(keys);
+  return ((seat.history && seat.history.actionHistory) || []).reduce((counts, entry) => {
+    if (isManualHandDiscardHistoryEntry(entry) && keySet.has(entry.key)) {
+      counts[entry.key] = (counts[entry.key] || 0) + 1;
+    }
+    return counts;
+  }, {});
+}
+
 function hasManuallyDiscardedHandKey(seat, key) {
   return ((seat.history && seat.history.actionHistory) || [])
     .some((entry) => isManualHandDiscardHistoryEntry(entry) && entry.key === key);
@@ -560,11 +570,21 @@ function isInitialTwoPairStop(countsBefore, countsAfter, phraseKeys, usedBefore,
   return beforeValues.join(',') === '1,2,2' && afterValues.join(',') === '0,2,2';
 }
 
+function isOpeningTwoPairDiscardChain(handCounts, manualCounts, phraseKeys) {
+  const originalValues = phraseKeys
+    .map((key) => (handCounts[key] || 0) + (manualCounts[key] || 0))
+    .sort((a, b) => a - b);
+  return originalValues.join(',') === '0,2,2';
+}
+
 function canDiscardPreservingPhraseDoor(seat, card, rules = DEFAULT_RULES) {
   const phraseKeys = getPhraseKeysForKey(card.key, rules);
   if (phraseKeys.length !== 3) return true;
 
   const handCounts = countByKey(seat.hand || []);
+  const manualDiscardedCounts = manualDiscardedKeyCounts(seat, phraseKeys);
+  if (isOpeningTwoPairDiscardChain(handCounts, manualDiscardedCounts, phraseKeys)) return true;
+
   const discardedCounts = discardedKeyCounts(seat, phraseKeys);
   const currentTotal = sumCounts(handCounts, phraseKeys);
   const discardedTotal = sumCounts(discardedCounts, phraseKeys);
