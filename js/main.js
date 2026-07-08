@@ -304,14 +304,14 @@ export default class Main {
   startFromHome(profile = {}) {
     const storedProfile = hasProfile(profile) ? profile : readStoredProfile();
     if (!hasProfile(storedProfile)) {
-      this.silentLoginFromStart(this.pendingInviteRoomId ? 'invite' : 'create');
+      this.menu.promptLogin(this.pendingInviteRoomId ? '请先微信登录后进入房间' : '请先微信登录后开始');
       return;
     }
     if (this.pendingInviteRoomId) {
       this.startOnline(storedProfile, this.pendingInviteRoomId);
       return;
     }
-    this.loginAndOpenCreateRoom(storedProfile);
+    this.openCreateRoomWithProfile(storedProfile);
   }
 
   loginAndOpenCreateRoom(profile = {}) {
@@ -333,6 +333,9 @@ export default class Main {
 
   openCreateRoomWithProfile(profile = {}) {
     this.loggedInProfile = profile;
+    const controller = this.ensureOnlineController();
+    controller.lobbyProfile = Object.assign({}, controller.lobbyProfile || {}, profile);
+    controller.loginProfile = Object.assign({}, controller.loginProfile || {}, profile);
     this.mode = APP_MODES.CREATE_ROOM;
     this.menu.setBusy(false);
     this.menu.setStartAuthState('ready', { profile });
@@ -414,7 +417,16 @@ export default class Main {
     this.mode = APP_MODES.CREATE_ROOM;
     this.menu.setBusy(true);
     this.menu.setStatus('正在创建房间…');
-    controller.createLobbyRoom(settings)
+    const profile = controller.lobbyProfile || this.loggedInProfile || readStoredProfile();
+    const ensureSession = controller.socketAuth
+      ? Promise.resolve()
+      : controller.loginForLobby(profile, { silent: true }).then((lobbyProfile) => {
+        this.loggedInProfile = lobbyProfile;
+        this.menu.setStartAuthState('ready', { profile: lobbyProfile });
+        this.menu.setStatus('正在创建房间…');
+      });
+    ensureSession
+      .then(() => controller.createLobbyRoom(settings))
       .then((result) => {
         if (result && result.entered) {
           this.enterOnlineTable();

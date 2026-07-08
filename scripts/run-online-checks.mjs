@@ -2966,11 +2966,11 @@ if (/handleInviteRoomId\(roomId, autoStart = false\)[\s\S]*?profileWithFallback\
 if (!/silentLoginFromStart\(intent = 'idle'\)[\s\S]*?controller\.loginForLobby\(\{\}\)[\s\S]*?!hasProfile\(lobbyProfile\)[\s\S]*?this\.menu\.promptLogin\(intent === 'invite' \? '请先微信登录后进入房间' : '请先微信登录后开始'\)/.test(mainSource)) {
   throw new Error('startup should recover stored backend profile with code-only login before showing the WeChat profile authorization gate');
 }
-if (!/startFromHome\(profile = \{\}\)[\s\S]*?if \(this\.pendingInviteRoomId\) \{[\s\S]*?this\.startOnline\(storedProfile, this\.pendingInviteRoomId\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?this\.loginAndOpenCreateRoom\(storedProfile\);/.test(mainSource)) {
-  throw new Error('startup login completion should continue pending invites before opening create-room settings');
+if (!/startFromHome\(profile = \{\}\)[\s\S]*?if \(this\.pendingInviteRoomId\) \{[\s\S]*?this\.startOnline\(storedProfile, this\.pendingInviteRoomId\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?this\.openCreateRoomWithProfile\(storedProfile\);/.test(mainSource)) {
+  throw new Error('startup create-room button should continue pending invites or open create-room settings without switching back to login state');
 }
-if (!/loginAndOpenCreateRoom\(profile = \{\}\)[\s\S]*?controller\.loginForLobby\(profile\)[\s\S]*?this\.mode = APP_MODES\.CREATE_ROOM;[\s\S]*?this\.menu\.showCreateRoomSettings\(\);/.test(mainSource)) {
-  throw new Error('start button should backend-login with an existing profile before entering create-room settings');
+if (!/createOnlineRoom\(settings = \{\}\)[\s\S]*?controller\.loginForLobby\(profile, \{ silent: true \}\)[\s\S]*?controller\.createLobbyRoom\(settings\)/.test(mainSource)) {
+  throw new Error('create room confirmation should silently prepare backend auth before creating the room');
 }
 const menuSource = await readFile(join(root, 'js/ui/menu.js'), 'utf8');
 const lobbyRenderStart = menuSource.lastIndexOf('renderLobby(ctx, metrics)');
@@ -2990,6 +2990,9 @@ if (!/ensureStartAuthCheck\(\)[\s\S]*?onSelect\('startSilentLogin'\)/.test(menuS
 }
 if (!/onSelect\('startReady'/.test(menuSource) || !/mode:\s*ready\s*\?\s*'start'\s*:\s*'login'/.test(menuSource)) {
   throw new Error('start menu should require WeChat profile readiness before the start action');
+}
+if (/hit && hit\.mode === 'start'[\s\S]*?setStartAuthState\('logging-in'/.test(menuSource)) {
+  throw new Error('create-room startup button must not switch back to the WeChat login/loading state');
 }
 if (/onSelect\('startLogin'/.test(menuSource)) {
   throw new Error('start menu should not trigger backend login directly; Main must own the startup intent');

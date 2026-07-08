@@ -784,9 +784,9 @@ export default class OnlineController {
     return true;
   }
 
-  async loginForLobby(profile = {}) {
+  async loginForLobby(profile = {}, options = {}) {
     if (!ensureCloudInit()) throw new Error('BACKEND_UNSUPPORTED');
-    this.setStatus('登录中…');
+    if (!options.silent) this.setStatus('登录中…');
     this.loginProfile = Object.assign({}, profile);
     const loginRes = await login(profile);
     if (!loginRes || !loginRes.ok) {

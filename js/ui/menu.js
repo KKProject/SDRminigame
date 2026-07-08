@@ -314,8 +314,6 @@ export default class StartMenu {
     }
     if (this.busy) return;
     if (hit && hit.mode === 'start' && !hit.disabled) {
-      this.setBusy(true);
-      this.setStartAuthState('logging-in', { profile: this.startProfile });
       this.onSelect('startReady', this.startProfile);
       return;
     }
@@ -352,7 +350,7 @@ export default class StartMenu {
         if (profile) {
           this.updateStartProfile(profile);
           this.destroyProfileButton();
-          this.setStartAuthState('logging-in', { profile });
+          this.setStartAuthState('ready', { profile });
           this.onSelect('startReady', profile);
           return;
         }
@@ -407,7 +405,7 @@ export default class StartMenu {
       }
       this.updateStartProfile(profile);
       this.destroyProfileButton();
-      this.setStartAuthState('logging-in', { profile });
+      this.setStartAuthState('ready', { profile });
       if (typeof this.onSelect === 'function') this.onSelect('startReady', profile);
     });
     this.profileButtonSignature = this.profileButton ? signature : '';
@@ -461,15 +459,16 @@ export default class StartMenu {
     const sloganHeight = this.drawSlogan(ctx, centerX, sloganY, bounds, sloganOptions);
     const flowers = this.drawStartFlowers(ctx, centerX, sloganY + sloganHeight-20, bounds, sloganSize.width * 0.8);
 
-    const startButton = this.getStartButtonBounds(bounds);
     const ready = this.authState === 'ready';
     const loading = this.authState === 'checking' || this.authState === 'logging-in';
     const defs = [{
       mode: ready ? 'start' : 'login',
+      image: ready ? 'startButton' : 'wechatLogin',
       label: ready ? '开始' : (loading ? '登录中' : '登录'),
       fill: ready ? '#d92d20' : '#a34722',
       disabled: loading,
     }];
+    const startButton = this.getStartButtonBounds(bounds, defs[0].image);
 
     this.buttons = defs.map((def, index) => {
       const x = centerX - startButton.width / 2;
@@ -667,17 +666,17 @@ export default class StartMenu {
     return { x, y, width, height, bottom: y + height };
   }
 
-  getStartButtonBounds(bounds) {
-    const image = this.assets && this.assets.getImage ? this.assets.getImage('startButton') : null;
+  getStartButtonBounds(bounds, imageName = 'startButton') {
+    const image = this.assets && this.assets.getImage ? this.assets.getImage(imageName) : null;
     if (!image || !image.width || !image.height) {
       return {
-        width: Math.min(320, bounds.width * 0.6),
-        height: 64,
+        width: Math.min(220, bounds.width * 0.32),
+        height: 62,
       };
     }
 
-    const maxW = Math.min(340, bounds.width * 0.48);
-    const maxH = 118;
+    const maxW = Math.min(220, bounds.width * 0.32);
+    const maxH = 68;
     const ratio = image.width / image.height;
     let width = maxW;
     let height = width / ratio;
@@ -685,23 +684,17 @@ export default class StartMenu {
       height = maxH;
       width = height * ratio;
     }
-    return { width: width * 0.6, height: height * 0.6 };
+    return { width, height };
   }
 
   drawStartButton(ctx, x, y, width, height, def) {
-    const image = this.assets && this.assets.getImage ? this.assets.getImage('startButton') : null;
+    const imageName = def.image || 'startButton';
+    const image = this.assets && this.assets.getImage ? this.assets.getImage(imageName) : null;
     if (image && image.width && image.height) {
       ctx.save();
       if (def.disabled) ctx.globalAlpha = 0.62;
       ctx.drawImage(image, x, y, width, height);
       ctx.restore();
-      if (def.label && def.label !== '开始') {
-        ctx.fillStyle = '#fff6d9';
-        ctx.font = `bold ${Math.max(18, Math.round(height * 0.34))}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(def.label, x + width / 2, y + height / 2);
-      }
       return;
     }
 
