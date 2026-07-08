@@ -6,7 +6,12 @@
       "Bash(git push:*)",
       "Bash(mv:*)",
       "Bash(npm run upload:*)",
-      "Bash(/opt/homebrew/Cellar/node@20/20.19.4/bin/node *)"
+      "Bash(/opt/homebrew/Cellar/node@20/20.19.4/bin/node *)",
+      "Bash(openspec list *)",
+      "Bash(openspec status *)",
+      "Bash(openspec --help)",
+      "Bash(openspec archive *)",
+      "Bash(openspec validate *)"
     ],
     "deny": [],
     "ask": []

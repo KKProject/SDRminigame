@@ -516,6 +516,13 @@ export function runSelfChecks() {
   assert(legalDiscardKeys(zzzxxySeat) === 'ren,ren,shang,shang', 'zzzxxy path z should still reach xzz or xxy, but not zy');
   assert(buildCircleLossResult(0, createSeats(DEFAULT_RULES), '测试进圈').type === 'circle-loss', 'circle-loss result should be created');
   assert(buildCircleLossResult(0, createSeats(DEFAULT_RULES), '测试进圈').settlement.payments.length === 3, 'circle-loss should pay three players');
+  const jiahuCircleLoss = buildCircleLossResult(0, createSeats(DEFAULT_RULES), '测试进圈', {
+    ...DEFAULT_RULES,
+    circleLossPayType: 'jiahu',
+    circleLossPoint: 2,
+  });
+  assert(jiahuCircleLoss.settlement.point === 2, 'jiahu circle-loss should pay two points per winner');
+  assert(jiahuCircleLoss.roundScores[0] === -6 && jiahuCircleLoss.roundScores[1] === 2, 'circle-loss should include per-seat round score deltas');
   assert(typeof isListening(cardsFor(['shang', 'shang']), [], DEFAULT_RULES) === 'boolean', 'listening evaluator should return boolean');
   assert(hasKezi(cardsFor(['shang', 'shang', 'shang']), []), 'three same cards should count as kezi');
   assert(!hasKezi(cardsFor(['shang', 'da', 'ren']), []), 'plain phrase should not count as kezi');
@@ -534,6 +541,8 @@ export function runSelfChecks() {
   assert(pointValueForGrade('屁胡', DEFAULT_RULES) === 1, 'pi hu should settle 1 point');
   assert(pointValueForGrade('小甲', DEFAULT_RULES) === 2, 'jia hands should settle 2 points');
   assert(pointValueForGrade('场', DEFAULT_RULES) === 4, 'chang should settle 4 points');
+  assert(pointValueForGrade('场', { ...DEFAULT_RULES, heavyRoundEnabled: true }, 87) === 4, 'heavy round should not trigger below 88 fu');
+  assert(pointValueForGrade('场', { ...DEFAULT_RULES, heavyRoundEnabled: true }, 88) === 8, 'heavy round should double chang payment at 88 fu');
   const operationScoring = calculateOperationFu([
     { type: 'chi', label: '吃', cards: cardsFor(['shang', 'da', 'ren']) },
     { type: 'peng', label: '碰', key: 'da', cards: cardsFor(['da', 'da', 'da']) },

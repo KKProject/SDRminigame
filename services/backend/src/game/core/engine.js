@@ -39,6 +39,7 @@ const {
 const {
   applyMeldCards,
   buildCircleLossResult,
+  calculateRoundScores,
   computePhraseTripletLocks,
   createChiPenaltyKey,
   dealOpeningHands,
@@ -1102,6 +1103,7 @@ class HuapaiEngine {
     const point = win.points || 0;
     const payers = this.state.seats.map((seat) => seat.id).filter((seat) => seat !== winner);
     const payments = payers.map((payer) => ({ from: payer, to: winner, points: point }));
+    const roundScores = calculateRoundScores(this.state.seats.length, payments);
     payments.forEach((payment) => {
       this.state.seats[payment.from].score -= payment.points;
       this.state.seats[payment.to].score += payment.points;
@@ -1115,8 +1117,12 @@ class HuapaiEngine {
       scoring: win.scoring,
       grade: win.grade,
       points: win.points,
+      heavyRound: Boolean(win.scoring && win.scoring.heavyRound),
+      roundScores,
       settlement: {
         point,
+        heavyRound: Boolean(win.scoring && win.scoring.heavyRound),
+        multiplier: win.scoring && win.scoring.heavyRoundMultiplier ? win.scoring.heavyRoundMultiplier : 1,
         payments,
       },
       jiangPhraseId: this.state.jiangPhraseId,
@@ -1454,10 +1460,11 @@ function logResponseWindowDebug(message, detail = {}) {
  * 构建公共状态（可 watch、可广播）。
  * 手牌仅暴露 handCount，melds/discards 完整可见。
  */
-function buildPublicState(state) {
+function buildPublicState(state, tableScores = null) {
   if (!state) return null;
   const responseWindow = state.responseWindow || null;
   const responseSummary = buildResponseSummary(state);
+  const publicTableScores = tableScores && typeof tableScores === 'object' ? tableScores : null;
   if (responseWindow) {
     logResponseWindowDebug('build-public-state', {
       id: responseWindow.id,
@@ -1479,6 +1486,7 @@ function buildPublicState(state) {
     round: state.round,
     feedback: state.feedback,
     result: state.result,
+    tableScores: publicTableScores,
     deckCount: Array.isArray(state.deck) ? state.deck.length : 0,
     recentDiscard: state.recentDiscard || null,
     appearingCard: state.appearingCard || null,
@@ -1494,7 +1502,9 @@ function buildPublicState(state) {
       isHuman: Boolean(seat.isHuman),
       isDealer: Boolean(seat.isDealer),
       online: seat.online !== false,
-      score: seat.score || 0,
+      score: publicTableScores && typeof publicTableScores[seat.id] === 'number'
+        ? publicTableScores[seat.id]
+        : (seat.score || 0),
       handCount: Array.isArray(seat.hand) ? seat.hand.length : 0,
       melds: seat.melds || [],
       discards: seat.discards || [],

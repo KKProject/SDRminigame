@@ -2166,6 +2166,8 @@ if (
   || createdConfiguredRoom.settings.washTwice !== true
   || createdConfiguredRoom.settings.payType !== 'changhu'
   || createRoomDbInstance.documents.rooms[createdConfiguredRoom.roomId].settings.payType !== 'changhu'
+  || createRoomDbInstance.documents.rooms[createdConfiguredRoom.roomId].tableScores[0] !== 0
+  || createRoomDbInstance.documents.rooms[createdConfiguredRoom.roomId].tableScores[3] !== 0
   || !createRoomDbInstance.documents.rooms[createdConfiguredRoom.roomId].playerOpenids.includes('creator-openid')
 ) {
   throw new Error('createRoom should save normalized room settings and queryable playerOpenids');
@@ -2443,7 +2445,7 @@ const resultDriftDb = createRoomDb({
       { seat: 1, openid: 'result-drift-guest', ready: true, online: true },
     ],
     playerOpenids: ['result-drift-host', 'result-drift-guest'],
-    settings: { maxRounds: 2 },
+    settings: { maxRounds: 2, repeatRound: true, payType: 'changhu' },
     state: {
       phase: 'result',
       round: 1,
@@ -2451,7 +2453,18 @@ const resultDriftDb = createRoomDb({
       eventSeq: 0,
       publicEvent: null,
       pendingContinuation: null,
-      result: { type: 'win', winner: 0 },
+      result: {
+        type: 'win',
+        winner: 0,
+        settlement: {
+          point: 4,
+          payments: [
+            { from: 1, to: 0, points: 4 },
+            { from: 2, to: 0, points: 4 },
+            { from: 3, to: 0, points: 4 },
+          ],
+        },
+      },
     },
   },
 });
@@ -2463,8 +2476,11 @@ if (
   || resultDriftDb.documents.rooms['result-drift-room'].status !== 'playing'
   || resultDriftDb.documents.rooms['result-drift-room'].state.round !== 2
   || resultDriftDb.documents.rooms['result-drift-room'].state.seats.length !== 4
+  || resultDriftDb.documents.rooms['result-drift-room'].tableScores[0] !== 12
+  || resultDriftDb.documents.rooms['result-drift-room'].tableScores[1] !== -4
+  || recoveredNextRound.public.seats[0].score !== 12
 ) {
-  throw new Error('startRound should recover playing/result drift rooms before opening the next non-final round');
+  throw new Error('startRound should recover result drift rooms, apply settlement scores, and open the next non-final round');
 }
 const finalEventDriftDb = createRoomDb({
   'final-event-drift-room': {
@@ -2659,6 +2675,7 @@ if (
 }
 const rematchAcceptDb = createRoomDb({
   'rematch-accept': finalRoom('rematch-accept', {
+    tableScores: { 0: 8, 1: -4, 2: -4, 3: 0 },
     rematch: {
       status: 'pending',
       requestedBy: 'rematch-host',
@@ -2677,6 +2694,8 @@ if (
   || !acceptedRematch.rematchStarted
   || rematchAcceptDb.documents.rooms['rematch-accept'].status !== 'playing'
   || rematchAcceptDb.documents.rooms['rematch-accept'].state.round !== 1
+  || rematchAcceptDb.documents.rooms['rematch-accept'].tableScores[0] !== 0
+  || rematchAcceptDb.documents.rooms['rematch-accept'].tableScores[1] !== 0
   || rematchAcceptDb.documents.rooms['rematch-accept'].rematch !== null
   || !acceptedRematch.public
   || !acceptedRematch.private

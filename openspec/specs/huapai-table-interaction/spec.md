@@ -614,3 +614,26 @@ The system SHALL configure the WeChat minigame to run in landscape orientation f
 - **THEN** 客户端 SHOULD 上报包含 sessionId、事件序号、`wx.getWindowInfo()` 观测值、canonical metrics、Canvas backing store 尺寸和候选处理状态的诊断事件
 - **AND** 后端 MUST NOT 在日志中输出 token、secret、authorization 或 password 字段原文
 
+### Requirement: 结算积分展示
+系统 SHALL 在牌桌结算面板中展示配置化结算后的实际支付分值，并在头像积分区域展示房间累计积分。胡牌重场、进圈按屁胡赔付、进圈按甲胡赔付和进圈按场胡赔付 MUST 使用服务端下发的结算结果显示，不得由客户端重新猜测分值。
+
+#### Scenario: 胡牌重场展示
+- **WHEN** 服务端下发的胡牌结果标记为重场结算
+- **THEN** 客户端结算面板 MUST 展示每家实际赔付 8 分
+- **AND** 客户端 MUST 保留胡牌等级、总福数和重场提示
+
+#### Scenario: 进圈赔付展示
+- **WHEN** 服务端下发进圈结果且 `settlement.point` 为 2
+- **THEN** 客户端结算面板 MUST 展示每家赔 2 分
+- **AND** 客户端 MUST NOT 把该结果显示为固定 1 分赔付
+
+#### Scenario: 新局头像积分显示累计分
+- **WHEN** 多局房间进入下一局开局快照
+- **THEN** 客户端头像下方第一行 MUST 显示服务端下发的房间累计积分
+- **AND** 客户端 MUST NOT 因为新局重新发牌而把积分清零
+
+#### Scenario: 最终结果展示累计分
+- **WHEN** 牌桌达到最大局数并进入最终结果状态
+- **THEN** 客户端 MUST 继续展示当前房间累计积分
+- **AND** 玩家重连后 MUST 看到同样的累计积分
+

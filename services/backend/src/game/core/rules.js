@@ -153,6 +153,15 @@ const DEFAULT_RULES = {
   lowDeckDrawThreshold: 15,
   actionOrder: ['hu', 'ta', 'zhao', 'peng', 'chi'],
   circleLossPoint: 1,
+  circleLossPayType: 'pihu',
+  circleLossPayments: {
+    pihu: 1,
+    jiahu: 2,
+    changhu: 4,
+  },
+  heavyRoundEnabled: false,
+  heavyRoundFuThreshold: 88,
+  heavyRoundMultiplier: 2,
   huPayments: {
     '屁胡': 1,
     '小甲': 2,

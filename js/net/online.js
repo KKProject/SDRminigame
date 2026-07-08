@@ -297,6 +297,15 @@ function rotateAppearing(appearing, mySeat) {
   });
 }
 
+function rotateScoreMap(scores, mySeat) {
+  if (!scores || typeof scores !== 'object') return scores;
+  return Object.keys(scores).reduce((mapped, seat) => {
+    const localSeat = rotateSeat(Number(seat), mySeat);
+    mapped[localSeat] = scores[seat];
+    return mapped;
+  }, {});
+}
+
 function rotateResult(result, mySeat) {
   if (!result) return null;
   const mapped = Object.assign({}, result);
@@ -312,6 +321,8 @@ function rotateResult(result, mySeat) {
       })),
     });
   }
+  if (result.roundScores) mapped.roundScores = rotateScoreMap(result.roundScores, mySeat);
+  if (result.tableScores) mapped.tableScores = rotateScoreMap(result.tableScores, mySeat);
   return mapped;
 }
 
@@ -604,6 +615,7 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
     actionState: priv.actionState || (responseSummary && responseSummary.active ? 'closed' : 'closed'),
     feedback: pub.feedback || '',
     result: rotateResult(pub.result, mySeat),
+    tableScores: rotateScoreMap(pub.tableScores, mySeat),
     muted: false,
     round: pub.round || 0,
   };

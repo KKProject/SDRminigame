@@ -838,7 +838,8 @@ export default class TableRenderer {
       if (result.scoring) {
         const jiangPhrase = state.rules.phrases.find((phrase) => phrase.id === result.jiangPhraseId);
         const payment = result.settlement ? `每家赔${result.settlement.point}分` : `分：${result.points}`;
-        ctx.fillText(`将：${jiangPhrase ? jiangPhrase.text : '-'}  等级：${result.grade}  福：${result.scoring.totalFu}  ${payment}`, area.x + 24, area.y + 142);
+        const heavyRound = result.heavyRound || (result.settlement && result.settlement.heavyRound);
+        ctx.fillText(`将：${jiangPhrase ? jiangPhrase.text : '-'}  等级：${result.grade}${heavyRound ? '(重场)' : ''}  福：${result.scoring.totalFu}  ${payment}`, area.x + 24, area.y + 142);
         const detail = result.scoring.entries
           .slice(0, 3)
           .map((entry) => `${entry.description}+${entry.fu}`)

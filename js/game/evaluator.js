@@ -802,11 +802,35 @@ function classifyHuGrade(doors, totalFu) {
   return '屁胡';
 }
 
-function pointValueForGrade(grade, rules = DEFAULT_RULES) {
+function isHeavyRoundSettlement(grade, totalFu = 0, rules = DEFAULT_RULES) {
+  return Boolean(
+    rules.heavyRoundEnabled
+    && grade === '场'
+    && totalFu >= (rules.heavyRoundFuThreshold || 88)
+  );
+}
+
+function pointValueForGrade(grade, rules = DEFAULT_RULES, totalFu = 0) {
+  const payments = rules.huPayments || {};
   const base = rules.basePoint || 1;
-  if (grade === '场') return base * 4;
-  if (grade === '大甲' || grade === '小甲') return base * 2;
-  return base;
+  const normalPoint = payments[grade] || (
+    grade === '场' ? base * 4 : (grade === '大甲' || grade === '小甲' ? base * 2 : base)
+  );
+  if (isHeavyRoundSettlement(grade, totalFu, rules)) {
+    return normalPoint * (rules.heavyRoundMultiplier || 2);
+  }
+  return normalPoint;
+}
+
+function calculateRoundScores(seatCount, payments = []) {
+  const scores = {};
+  for (let seat = 0; seat < seatCount; seat += 1) scores[seat] = 0;
+  payments.forEach((payment) => {
+    const points = Number(payment.points) || 0;
+    scores[payment.from] = (scores[payment.from] || 0) - points;
+    scores[payment.to] = (scores[payment.to] || 0) + points;
+  });
+  return scores;
 }
 
 export function calculateHuScoring(doors, rules = DEFAULT_RULES, context = {}) {
@@ -869,19 +893,23 @@ export function calculateHuScoring(doors, rules = DEFAULT_RULES, context = {}) {
     });
 
   const grade = classifyHuGrade(doors, totalFu);
-  const points = pointValueForGrade(grade, rules);
+  const points = pointValueForGrade(grade, rules, totalFu);
+  const heavyRound = isHeavyRoundSettlement(grade, totalFu, rules);
   return {
     totalFu,
     entries,
     grade,
     basePoint: rules.basePoint || 1,
     points,
+    heavyRound,
+    heavyRoundThreshold: rules.heavyRoundFuThreshold || 88,
+    heavyRoundMultiplier: heavyRound ? (rules.heavyRoundMultiplier || 2) : 1,
     jiangPhraseId,
     hasJiangMultiplier: entries.some((entry) => entry.multiplier > 1),
   };
 }
 
-export { classifyHuGrade, pointValueForGrade };
+export { calculateRoundScores, classifyHuGrade, isHeavyRoundSettlement, pointValueForGrade };
 
 export function evaluateWin(cards, melds = [], source = 'self', rules = DEFAULT_RULES, context = {}) {
   const exposed = exposedDoors(melds);
@@ -936,8 +964,11 @@ export function isListening(hand, melds = [], rules = DEFAULT_RULES, options = {
 }
 
 export function buildCircleLossResult(loser, seats, reason, rules = DEFAULT_RULES) {
-  const point = rules.circleLossPoint || rules.basePoint || 1;
+  const payType = rules.circleLossPayType || 'pihu';
+  const paymentsByType = rules.circleLossPayments || {};
+  const point = paymentsByType[payType] || rules.circleLossPoint || rules.basePoint || 1;
   const winners = seats.map((seat) => seat.id).filter((seat) => seat !== loser);
+  const payments = winners.map((winner) => ({ from: loser, to: winner, points: point }));
   return {
     type: 'circle-loss',
     loser,
@@ -945,9 +976,11 @@ export function buildCircleLossResult(loser, seats, reason, rules = DEFAULT_RULE
     reason,
     summary: `${seats[loser].name}进圈，三家赢`,
     score: point,
+    roundScores: calculateRoundScores(seats.length, payments),
     settlement: {
       point,
-      payments: winners.map((winner) => ({ from: loser, to: winner, points: point })),
+      payType,
+      payments,
     },
   };
 }

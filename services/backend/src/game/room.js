@@ -83,6 +83,84 @@ function normalizeRoomSettings(settings = {}) {
   };
 }
 
+function createRulesForRoomSettings(settings = {}) {
+  const normalized = normalizeRoomSettings(settings);
+  const circleLossPayments = DEFAULT_RULES.circleLossPayments || { pihu: 1, jiahu: 2, changhu: 4 };
+  return Object.assign({}, DEFAULT_RULES, {
+    heavyRoundEnabled: Boolean(normalized.repeatRound),
+    circleLossPayType: normalized.payType,
+    circleLossPoint: circleLossPayments[normalized.payType] || circleLossPayments.pihu || DEFAULT_RULES.circleLossPoint || 1,
+    circleLossPayments,
+  });
+}
+
+function emptyTableScores(seatCount = SEAT_COUNT) {
+  const scores = {};
+  for (let seat = 0; seat < seatCount; seat += 1) scores[seat] = 0;
+  return scores;
+}
+
+function normalizeTableScores(scores = {}, seatCount = SEAT_COUNT) {
+  const normalized = emptyTableScores(seatCount);
+  Object.keys(normalized).forEach((seat) => {
+    const value = Number(scores[seat]);
+    normalized[seat] = Number.isFinite(value) ? value : 0;
+  });
+  return normalized;
+}
+
+function ensureTableScores(room) {
+  const scores = normalizeTableScores(room && room.tableScores, room && room.seatCount ? room.seatCount : SEAT_COUNT);
+  if (room) room.tableScores = scores;
+  return scores;
+}
+
+function roundScoresFromPayments(seatCount, payments = []) {
+  const scores = emptyTableScores(seatCount);
+  payments.forEach((payment) => {
+    const points = Number(payment.points) || 0;
+    scores[payment.from] = (scores[payment.from] || 0) - points;
+    scores[payment.to] = (scores[payment.to] || 0) + points;
+  });
+  return scores;
+}
+
+function applyRoundSettlementToTableScores(room, engine) {
+  const state = engine && engine.state;
+  const result = state && state.result;
+  ensureTableScores(room);
+  if (!state || state.phase !== 'result' || !result || !result.settlement) return false;
+  if (result.type !== 'win' && result.type !== 'circle-loss') return false;
+  const round = Number(state.round) || 0;
+  const resultKey = `${round}:${result.type}:${result.winner ?? ''}:${result.loser ?? ''}`;
+  if (room.lastScoreAppliedResultKey === resultKey) {
+    if (!result.tableScores) result.tableScores = normalizeTableScores(room.tableScores, room.seatCount || SEAT_COUNT);
+    return false;
+  }
+  const roundScores = result.roundScores || roundScoresFromPayments(room.seatCount || SEAT_COUNT, result.settlement.payments || []);
+  result.roundScores = normalizeTableScores(roundScores, room.seatCount || SEAT_COUNT);
+  const tableScores = ensureTableScores(room);
+  Object.keys(result.roundScores).forEach((seat) => {
+    tableScores[seat] = (tableScores[seat] || 0) + (Number(result.roundScores[seat]) || 0);
+  });
+  room.tableScores = normalizeTableScores(tableScores, room.seatCount || SEAT_COUNT);
+  room.lastScoreAppliedResultKey = resultKey;
+  result.tableScores = room.tableScores;
+  return true;
+}
+
+function publicStateForRoom(room, engine) {
+  if (!engine || !engine.state) return null;
+  applyRoundSettlementToTableScores(room, engine);
+  return buildPublicState(engine.state, ensureTableScores(room));
+}
+
+function resetTableScores(room) {
+  if (!room) return;
+  room.tableScores = emptyTableScores(room.seatCount || SEAT_COUNT);
+  room.lastScoreAppliedResultKey = '';
+}
+
 function activeRoomStatus(status) {
   return CLOSED_ROOM_STATUSES.indexOf(status) < 0;
 }
@@ -299,10 +377,11 @@ function stripState(state) {
  * @param {object|null} state - 数据库中的 strip 后状态
  * @returns {HuapaiEngine}
  */
-function loadEngine(state) {
-  const engine = new HuapaiEngine(DEFAULT_RULES);
+function loadEngine(state, settings = {}) {
+  const rules = createRulesForRoomSettings(settings);
+  const engine = new HuapaiEngine(rules);
   if (state) {
-    state.rules = DEFAULT_RULES;
+    state.rules = rules;
     engine.load(state);
   }
   return engine;
@@ -598,8 +677,9 @@ function animationState(room, engine, openid = null) {
 async function writeRoomState(db, roomId, room, engine, version) {
   advanceUnobservedEvents(room, engine);
   settleRoomStatus(room, engine);
+  applyRoundSettlementToTableScores(room, engine);
   animationMetrics(room).stateWriteCount += 1;
-  const publicState = buildPublicState(engine.state);
+  const publicState = publicStateForRoom(room, engine);
   const animation = animationState(room, engine);
   await db.collection(ROOMS).doc(roomId).set({
     data: documentData(Object.assign({}, room, {
@@ -609,6 +689,8 @@ async function writeRoomState(db, roomId, room, engine, version) {
       players: room.players,
       playerOpenids: roomPlayerOpenids(room),
       settings: normalizeRoomSettings(room.settings),
+      tableScores: ensureTableScores(room),
+      lastScoreAppliedResultKey: room.lastScoreAppliedResultKey || '',
       rematch: room.rematch || null,
       updatedAt: Date.now(),
     })),
@@ -712,11 +794,13 @@ async function quickMatch(event, ctx) {
       playerOpenids: playerOpenids(players),
       settings: normalizeRoomSettings(event.settings || {}),
       hostOpenid: players[0].openid,
+      tableScores: emptyTableScores(SEAT_COUNT),
+      lastScoreAppliedResultKey: '',
       version: 0,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    const engine = loadEngine(null);
+    const engine = loadEngine(null, room.settings);
     engine.startRound({ players: buildSeatPlayers(room) });
     await writeRoomState(db, roomId, room, engine, 0);
     for (const p of players) {
@@ -785,6 +869,8 @@ async function createRoom(event, ctx) {
     players,
     playerOpenids: playerOpenids(players),
     settings,
+    tableScores: emptyTableScores(SEAT_COUNT),
+    lastScoreAppliedResultKey: '',
     hostOpenid: OPENID,
     version: 0,
     createdAt: Date.now(),
@@ -1006,14 +1092,17 @@ async function startRound(event, ctx) {
   if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
   if (room.hostOpenid !== OPENID) return { ok: false, error: 'NOT_HOST' };
 
-  const engine = loadEngine(room.state || null);
+  const engine = loadEngine(room.state || null, room.settings);
   settleRoomStatus(room, engine);
+  applyRoundSettlementToTableScores(room, engine);
   if (room.status === 'tableResult' || reachedMaxRounds(room, engine)) {
     room.status = 'tableResult';
     await db.collection(ROOMS).doc(roomId).update({
       data: {
         status: room.status,
         settings: normalizeRoomSettings(room.settings),
+        tableScores: ensureTableScores(room),
+        lastScoreAppliedResultKey: room.lastScoreAppliedResultKey || '',
         updatedAt: Date.now(),
       },
     });
@@ -1069,8 +1158,9 @@ async function leaveRoom(event, ctx) {
   const room = await getRoom(db, roomId);
   if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
   const now = Number(event.now) || Date.now();
-  const engine = loadEngine(room.state || null);
+  const engine = loadEngine(room.state || null, room.settings);
   settleRoomStatus(room, engine);
+  applyRoundSettlementToTableScores(room, engine);
   const expired = expireFinalRematchDecision(room, now);
   if (expired) {
     await db.collection(ROOMS).doc(roomId).set({
@@ -1086,7 +1176,7 @@ async function leaveRoom(event, ctx) {
       closed: true,
       status: room.status,
       version: room.version || 0,
-      public: engine.state ? buildPublicState(engine.state) : null,
+      public: engine.state ? publicStateForRoom(room, engine) : null,
       animation: engine.state ? animationState(room, engine, OPENID) : null,
       rematch: buildRematchState(room, OPENID),
     };
@@ -1153,7 +1243,7 @@ async function leaveRoom(event, ctx) {
     closed: room.status === 'closed',
     status: room.status,
     version: room.version || 0,
-    public: engine.state ? buildPublicState(engine.state) : null,
+    public: engine.state ? publicStateForRoom(room, engine) : null,
     animation: engine.state ? animationState(room, engine, OPENID) : null,
     rematch: buildRematchState(room, OPENID),
   };
@@ -1174,8 +1264,9 @@ async function requestRematch(event, ctx) {
   const room = await getRoom(db, roomId);
   if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
   const now = Number(event.now) || Date.now();
-  const engine = loadEngine(room.state || null);
+  const engine = loadEngine(room.state || null, room.settings);
   settleRoomStatus(room, engine);
+  applyRoundSettlementToTableScores(room, engine);
   const expired = expireFinalRematchDecision(room, now);
   if (expired) {
     await db.collection(ROOMS).doc(roomId).set({
@@ -1193,7 +1284,7 @@ async function requestRematch(event, ctx) {
       status: room.status,
       version: room.version || 0,
       rematch: buildRematchState(room, OPENID),
-      public: engine.state ? buildPublicState(engine.state) : null,
+      public: engine.state ? publicStateForRoom(room, engine) : null,
       private: { hand: [] },
       animation: engine.state ? animationState(room, engine, OPENID) : null,
     };
@@ -1219,6 +1310,7 @@ async function requestRematch(event, ctx) {
       const agreedAfterDecline = new Set(room.rematch.agreedOpenids || []);
       if (playerOpenids(players).every((id) => agreedAfterDecline.has(id))) {
         resetRoundCounter(engine);
+        resetTableScores(room);
         room.rematch = null;
         room.status = 'playing';
         engine.startRound({ players: buildSeatPlayers(room) });
@@ -1258,7 +1350,7 @@ async function requestRematch(event, ctx) {
       closed: room.status === 'closed',
       status: room.status,
       rematch: buildRematchState(room, OPENID),
-      public: engine.state ? buildPublicState(engine.state) : null,
+      public: engine.state ? publicStateForRoom(room, engine) : null,
       private: { hand: [] },
       animation: engine.state ? animationState(room, engine, OPENID) : null,
     };
@@ -1284,6 +1376,7 @@ async function requestRematch(event, ctx) {
   const allAgreed = requiredOpenids.every((id) => agreed.has(id));
   if (allAgreed) {
     resetRoundCounter(engine);
+    resetTableScores(room);
     room.rematch = null;
     room.status = 'playing';
     engine.startRound({ players: buildSeatPlayers(room) });
@@ -1321,7 +1414,7 @@ async function requestRematch(event, ctx) {
     yourSeat: seat,
     status: room.status,
     settings: normalizeRoomSettings(room.settings),
-    public: engine.state ? buildPublicState(engine.state) : null,
+    public: engine.state ? publicStateForRoom(room, engine) : null,
     private: engine.state ? buildPrivateView(engine.state, seat) : { hand: [] },
     animation: animationState(room, engine, OPENID),
     rematch: buildRematchState(room, OPENID),
@@ -1367,7 +1460,7 @@ async function op(event, ctx) {
   const seat = seatOfOpenid(room, OPENID);
   if (seat < 0) return { ok: false, error: 'NOT_IN_ROOM' };
 
-  const engine = loadEngine(room.state || null);
+  const engine = loadEngine(room.state || null, room.settings);
   if (!engine.state) return { ok: false, error: 'NO_STATE' };
   const barrier = syncAnimationBarrier(room, engine);
   if (barrier) {
@@ -1488,7 +1581,7 @@ async function pull(event, ctx) {
   const room = await getRoom(db, roomId);
   if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
   const seat = seatOfOpenid(room, OPENID);
-  const engine = loadEngine(room.state || null);
+  const engine = loadEngine(room.state || null, room.settings);
   const now = Date.now();
   let shouldWriteState = false;
   if (seat >= 0) {
@@ -1505,7 +1598,7 @@ async function pull(event, ctx) {
   }
   const advanced = advanceExpiredAnimationBarrier(room, engine, now);
   const version = advanced ? (room.version || 0) + 1 : (room.version || 0);
-  let publicState = engine.state ? buildPublicState(engine.state) : null;
+  let publicState = engine.state ? publicStateForRoom(room, engine) : null;
   if (advanced || shouldWriteState) {
     publicState = await writeRoomState(db, roomId, room, engine, version);
   } else if (seat >= 0) {
@@ -1535,7 +1628,7 @@ async function ackAnimation(event, ctx) {
   const room = await getRoom(db, event.roomId);
   if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
   if (seatOfOpenid(room, OPENID) < 0) return { ok: false, error: 'NOT_IN_ROOM' };
-  const engine = loadEngine(room.state || null);
+  const engine = loadEngine(room.state || null, room.settings);
   animationMetrics(room).ackCallCount += 1;
   const barrier = syncAnimationBarrier(room, engine);
   if (!barrier) {
@@ -1588,7 +1681,7 @@ async function ackAnimation(event, ctx) {
       settings: normalizeRoomSettings(room.settings),
       rematch: buildRematchState(room, OPENID),
       advanced,
-      public: buildPublicState(engine.state),
+      public: publicStateForRoom(room, engine),
       private: buildPrivateView(engine.state, seatOfOpenid(room, OPENID)),
       privateViewsBySeat: buildPrivateViewsBySeat(engine.state),
       animation: animationState(room, engine, OPENID),
@@ -1713,7 +1806,7 @@ async function heartbeat(event, ctx) {
   if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
   if (seatOfOpenid(room, OPENID) < 0) return { ok: false, error: 'NOT_IN_ROOM' };
   const now = Date.now();
-  const engine = loadEngine(room.state || null);
+  const engine = loadEngine(room.state || null, room.settings);
   let advanced = false;
   let barrier = syncAnimationBarrier(room, engine, now);
   (room.players || []).forEach((player) => {
@@ -1761,7 +1854,7 @@ async function setPlayerConnection(event, ctx) {
     player.online = online;
     if (online) player.lastSeenAt = now;
   }
-  const engine = loadEngine(room.state || null);
+  const engine = loadEngine(room.state || null, room.settings);
   if (engine.state && engine.state.seats && engine.state.seats[seat]) {
     engine.state.seats[seat].online = online;
   }

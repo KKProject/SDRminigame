@@ -136,6 +136,29 @@ if (!serverAi.chooseDiscard({ hand: serverDeck.filter((card) => ['shang', 'kong'
   throw new Error('server AI should choose a discard');
 }
 {
+  const heavyRules = { ...serverRules.DEFAULT_RULES, heavyRoundEnabled: true };
+  if (serverEvaluator.pointValueForGrade('场', heavyRules, 87) !== 4) {
+    throw new Error('heavy round should not trigger below 88 fu');
+  }
+  if (serverEvaluator.pointValueForGrade('场', heavyRules, 88) !== 8) {
+    throw new Error('heavy round should double chang payment at 88 fu');
+  }
+  const changhuCircleLoss = serverEvaluator.buildCircleLossResult(0, serverCards.createSeats(serverRules.DEFAULT_RULES), '测试进圈', {
+    ...serverRules.DEFAULT_RULES,
+    circleLossPayType: 'changhu',
+    circleLossPoint: 4,
+  });
+  const scoreSum = Object.values(changhuCircleLoss.roundScores).reduce((total, value) => total + value, 0);
+  if (
+    changhuCircleLoss.settlement.point !== 4
+    || changhuCircleLoss.roundScores[0] !== -12
+    || changhuCircleLoss.roundScores[1] !== 4
+    || scoreSum !== 0
+  ) {
+    throw new Error('circle-loss settlement should use configured pay type and zero-sum round scores');
+  }
+}
+{
   const xxyySeat = serverCards.createSeats(serverRules.DEFAULT_RULES, 0)[0];
   xxyySeat.hand = serverCardsFor(['shang', 'shang', 'da', 'da']);
   if (serverLegalDiscardKeys(xxyySeat) !== 'da,da,shang,shang') {
