@@ -1223,7 +1223,7 @@ async function requestRematch(event, ctx) {
         room.status = 'playing';
         engine.startRound({ players: buildSeatPlayers(room) });
         const startedVersion = (room.version || 0) + 1;
-        await writeRoomState(db, roomId, room, engine, startedVersion);
+        const publicState = await writeRoomState(db, roomId, room, engine, startedVersion);
         return {
           ok: true,
           roomId,
@@ -1231,6 +1231,11 @@ async function requestRematch(event, ctx) {
           left: true,
           declined: true,
           status: room.status,
+          settings: normalizeRoomSettings(room.settings),
+          public: publicState,
+          private: { hand: [] },
+          privateViewsBySeat: buildPrivateViewsBySeat(engine.state),
+          animation: animationState(room, engine, OPENID),
           rematch: buildRematchState(room, OPENID),
         };
       }
@@ -1293,6 +1298,7 @@ async function requestRematch(event, ctx) {
       settings: normalizeRoomSettings(room.settings),
       public: publicState,
       private: buildPrivateView(engine.state, seat),
+      privateViewsBySeat: buildPrivateViewsBySeat(engine.state),
       animation: animationState(room, engine, OPENID),
       rematch: buildRematchState(room, OPENID),
       rematchStarted: true,

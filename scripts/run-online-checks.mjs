@@ -2678,8 +2678,14 @@ if (
   || rematchAcceptDb.documents.rooms['rematch-accept'].status !== 'playing'
   || rematchAcceptDb.documents.rooms['rematch-accept'].state.round !== 1
   || rematchAcceptDb.documents.rooms['rematch-accept'].rematch !== null
+  || !acceptedRematch.public
+  || !acceptedRematch.private
+  || !acceptedRematch.privateViewsBySeat
+  || !acceptedRematch.privateViewsBySeat[0]
+  || !acceptedRematch.privateViewsBySeat[1]
+  || !acceptedRematch.animation
 ) {
-  throw new Error('all required rematch acceptances should reset the room counter and start a new round');
+  throw new Error('all required rematch acceptances should reset the room counter and broadcast a fresh round snapshot');
 }
 const targetedBarrierEngine = new HuapaiEngine(DEFAULT_RULES);
 targetedBarrierEngine.load({

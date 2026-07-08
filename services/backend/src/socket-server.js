@@ -148,23 +148,7 @@ function incrementalPayload(res) {
   const event = animation.currentEvent || (res.public && res.public.publicEvent) || null;
   const eventSeq = event && typeof event.eventSeq === 'number' ? event.eventSeq : 0;
   if (!event || !eventSeq) {
-    if (!res.public || res.advanced === false) return null;
-    const latestEventSeq = typeof animation.latestEventSeq === 'number'
-      ? animation.latestEventSeq
-      : ((res.public && typeof res.public.eventSeq === 'number') ? res.public.eventSeq : 0);
-    return {
-      ok: true,
-      roomId: res.roomId,
-      baseVersion: res.version - 1,
-      version: res.version,
-      eventSeq: latestEventSeq,
-      stateOnly: true,
-      delta: {
-        publicPatch: publicPatch(res.public || {}),
-        publicState: res.public || {},
-        privateViewsBySeat: res.privateViewsBySeat || {},
-      },
-    };
+    return null;
   }
   return {
     ok: true,
