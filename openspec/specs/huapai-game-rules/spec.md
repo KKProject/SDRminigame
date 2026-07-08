@@ -160,11 +160,11 @@ The system SHALL evaluate Shang Da Ren actions for the current rule configuratio
 - **THEN** the system MUST allow that player to continue using later legal peng, zhao, and ta actions
 
 ### Requirement: Win Detection
-The system SHALL detect winning hands using the eight-door Shang Da Ren rule. A winning hand MUST decompose into exactly 8 doors, each door MUST be one of `xxx`, `xyz`, `xxxx`, `xxxxx`, `xxxxxx`, `xx`, or `xy`, and the decomposition MUST contain exactly one `xy` door. Support-pair constraints for 4/5/6-of-a-kind doors MUST be satisfied, and discard-history restrictions MUST be applied before exposing hu actions.
+The system SHALL detect winning hands using the eight-door Shang Da Ren rule. A winning hand MUST decompose into exactly 8 doors, each door MUST be one of `xxx`, `xyz`, `xxxx`, `xxxxx`, `xxxxxx`, `xx`, or `xy`, and the decomposition MUST contain exactly one `xy` door. Support-pair constraints for 4/5/6-of-a-kind doors MUST be satisfied, and manual hand-discard response restrictions MUST be applied before exposing hu actions.
 
 #### Scenario: Eight-door win succeeds
 - **WHEN** a player's concealed cards, exposed groups, and the appearing card can be decomposed into 8 valid doors with exactly one `xy` door and all required support pairs
-- **AND** the appearing card is not blocked by discard-history restrictions
+- **AND** the appearing card is not blocked by manual hand-discard response restrictions
 - **THEN** the system MUST produce a win result containing winner, source, winning card, doors, support-pair summary, scoring summary, hu grade, and point-settlement summary
 
 #### Scenario: Missing xy door fails
@@ -181,16 +181,17 @@ The system SHALL detect winning hands using the eight-door Shang Da Ren rule. A 
 
 #### Scenario: Appearing card completes xy
 - **WHEN** the appearing card combines with one same-phrase hand card to form the only `xy` door in an otherwise legal 8-door decomposition
-- **AND** the appearing card is not blocked by discard-history restrictions
+- **AND** the appearing card is not blocked by manual hand-discard response restrictions
 - **THEN** the system MUST allow hu from any appearing-card source
 
 #### Scenario: Appearing card completes pair
 - **WHEN** the appearing card combines with one matching hand card to form an `xx` pair door and the decomposition still contains exactly one other `xy` door
+- **AND** the appearing card is not blocked by manual hand-discard response restrictions
 - **THEN** the system MUST allow hu
 
 #### Scenario: Appearing card triggers regrouping
 - **WHEN** a player has a complete `xyz` phrase and the appearing card is another character from that phrase, allowing regrouping such as `xyz + x` into `xx + yz`
-- **AND** the appearing card is not blocked by discard-history restrictions when it participates in an `xy` or `xyz` door
+- **AND** the appearing card is not blocked by manual hand-discard response restrictions
 - **THEN** the system MUST allow that regrouping only if the final decomposition has exactly 8 doors and exactly one `xy`
 
 #### Scenario: Dealer listening requires kezi
@@ -319,28 +320,39 @@ The system SHALL enforce phrase discard restrictions with a same-phrase reachabi
 - **THEN** the system MUST end the round as circle-loss for that player
 
 ### Requirement: Discarded Key Response Restrictions
-The system SHALL prevent a player from eating back a character key that the same player has previously discarded in the current round, including chi actions and chi-style hu decompositions.
+The system SHALL maintain, for each player and round, a manual hand-discard key record containing only character keys that the player actively discarded from the opening dealt hand. The system SHALL prevent that player from later claiming an appearing card with the same key through chi or hu, and SHALL treat a mandatory chi that is blocked by this record as circle-loss for that player.
 
-#### Scenario: Previously discarded key cannot be chi
-- **WHEN** a player has previously discarded key `x`
-- **AND** another player discards an appearing card with key `x`
-- **AND** the first player otherwise has the hand cards needed to chi that appearing card
+#### Scenario: Opening hand discard creates response restriction
+- **WHEN** a player actively selects and discards key `x` from the player's opening dealt hand during the current round
+- **THEN** the system MUST add key `x` to that player's manual hand-discard key record for the current round
+
+#### Scenario: Drawn card flow does not create response restriction
+- **WHEN** a player draws key `x` from the deck after the opening deal
+- **AND** no player claims that drawn appearing card
+- **THEN** the system MUST move or record that card according to the draw flow without adding key `x` to the drawing player's manual hand-discard key record
+
+#### Scenario: Claimed hand discard remains recorded
+- **WHEN** a player actively discards key `x` from the player's opening dealt hand
+- **AND** that discarded card is later removed from the discard pile because another player claims it
+- **THEN** the system MUST still treat key `x` as manually hand-discarded by the original player for future chi and hu restrictions
+
+#### Scenario: Manually hand-discarded key cannot be chi
+- **WHEN** a player has key `x` in the player's manual hand-discard key record
+- **AND** an appearing card with key `x` creates an otherwise legal chi action for that player
 - **THEN** the system MUST NOT offer or allow a chi action for that player with key `x`
 
-#### Scenario: Discard history survives claimed discards
-- **WHEN** a player discards key `x`
-- **AND** that discarded card is later removed from the discard pile because another player claims it
-- **THEN** the system MUST still treat key `x` as previously discarded by the original player for future chi and chi-style hu restrictions
-
-#### Scenario: Previously discarded key cannot produce chi-style hu
-- **WHEN** a player has previously discarded key `x`
-- **AND** another player discards an appearing card with key `x`
-- **AND** every winning decomposition for the first player requires that appearing card to participate in an `xy` or `xyz` door
+#### Scenario: Manually hand-discarded key cannot be hu
+- **WHEN** a player has key `x` in the player's manual hand-discard key record
+- **AND** an appearing card with key `x` creates an otherwise legal hu action for that player
 - **THEN** the system MUST NOT offer or allow hu for that player with that appearing card
 
-#### Scenario: Non-chi hu remains available
-- **WHEN** a player has previously discarded key `x`
-- **AND** another player discards an appearing card with key `x`
-- **AND** the player has a winning decomposition that uses the appearing card only in an `xx`, `xxx`, `xxxx`, `xxxxx`, or `xxxxxx` same-key door
-- **THEN** the system MUST allow hu if all other win requirements are satisfied
+#### Scenario: Non-hand discard does not block chi or hu
+- **WHEN** key `x` previously appeared only through a post-opening draw flow or another non-hand-discard event for a player
+- **AND** a later appearing card with key `x` creates an otherwise legal chi or hu action for that player
+- **THEN** the system MUST allow that chi or hu if all other rule requirements are satisfied
 
+#### Scenario: Mandatory chi blocked by manual hand discard causes circle-loss
+- **WHEN** an appearing card with key `x` creates a mandatory chi for a player
+- **AND** key `x` is in that player's manual hand-discard key record
+- **THEN** the system MUST end the round as circle-loss for that player
+- **AND** the result MUST pay the other three seats according to the configured circle-loss settlement

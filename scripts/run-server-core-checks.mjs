@@ -410,6 +410,114 @@ function makeResponseEngine() {
 }
 
 {
+  const takeoverSeats = serverCards.createSeats(serverRules.DEFAULT_RULES);
+  const takeoverState = {
+    rules: serverRules.DEFAULT_RULES,
+    seats: takeoverSeats,
+    deck: [],
+    phase: 'takeover-choice',
+    currentSeat: 1,
+    dealerSeat: 0,
+    nextDealerSeat: 0,
+    takeoverQueue: [1, 3],
+    playerActions: [
+      { type: 'acceptTakeover', seat: 1, label: '接庄' },
+      { type: 'declineTakeover', seat: 1, label: '不接' },
+    ],
+    pendingActions: [],
+    responseWindow: null,
+  };
+  const takeoverPrivateOne = serverEngine.buildPrivateView(takeoverState, 1);
+  const takeoverPrivateZero = serverEngine.buildPrivateView(takeoverState, 0);
+  if (
+    takeoverPrivateOne.actionState !== 'available'
+    || takeoverPrivateOne.responseWindowId !== null
+    || takeoverPrivateOne.playerActions.map((action) => action.type).join(',') !== 'acceptTakeover,declineTakeover'
+    || takeoverPrivateZero.actionState !== 'closed'
+    || takeoverPrivateZero.playerActions.length !== 0
+  ) {
+    throw new Error('private view should expose takeover actions only to the current takeover seat');
+  }
+}
+
+{
+  const manualDiscardChiState = { seats: serverCards.createSeats(serverRules.DEFAULT_RULES) };
+  manualDiscardChiState.seats[0].hand = takeServerCards(['da', 'ren']);
+  manualDiscardChiState.seats[0].history.actionHistory.push({ type: 'discard', key: 'shang' });
+  manualDiscardChiState.seats[3].hand = takeServerCards(['shang']);
+  const manualDiscardChiActions = serverEvaluator.findResponseActions(manualDiscardChiState, 3, manualDiscardChiState.seats[3].hand[0], serverRules.DEFAULT_RULES);
+  if (manualDiscardChiActions.some((action) => action.seat === 0 && action.type === 'chi')) {
+    throw new Error('manual hand-discarded key should block future chi');
+  }
+
+  const manualDiscardHuState = { seats: serverCards.createSeats(serverRules.DEFAULT_RULES) };
+  manualDiscardHuState.seats[0].hand = takeServerCards([
+    'shang', 'shang',
+    'da', 'ren',
+    'kong', 'yi', 'ji',
+    'hua', 'san', 'qian',
+    'qi', 'shi', 'tu',
+    'er', 'xiao', 'sheng',
+    'fu', 'lu', 'shou',
+    'jia', 'zuo', 'ren2',
+  ]);
+  manualDiscardHuState.seats[0].history.actionHistory.push({ type: 'discard', key: 'shang' });
+  manualDiscardHuState.seats[3].hand = takeServerCards(['shang']);
+  const manualDiscardHuActions = serverEvaluator.findResponseActions(manualDiscardHuState, 3, manualDiscardHuState.seats[3].hand[0], serverRules.DEFAULT_RULES);
+  if (manualDiscardHuActions.some((action) => action.seat === 0 && action.type === 'hu')) {
+    throw new Error('manual hand-discarded key should block future hu for the same key');
+  }
+
+  const autoDiscardChiState = { seats: serverCards.createSeats(serverRules.DEFAULT_RULES) };
+  autoDiscardChiState.seats[0].hand = takeServerCards(['da', 'ren']);
+  autoDiscardChiState.seats[0].history.actionHistory.push({ type: 'auto-discard-draw', key: 'shang' });
+  autoDiscardChiState.seats[3].hand = takeServerCards(['shang']);
+  const autoDiscardChiActions = serverEvaluator.findResponseActions(autoDiscardChiState, 3, autoDiscardChiState.seats[3].hand[0], serverRules.DEFAULT_RULES);
+  if (!autoDiscardChiActions.some((action) => action.seat === 0 && action.type === 'chi')) {
+    throw new Error('auto-discarded draw key should not block future chi');
+  }
+
+  const autoDiscardHuState = { seats: serverCards.createSeats(serverRules.DEFAULT_RULES) };
+  autoDiscardHuState.seats[0].hand = takeServerCards([
+    'shang', 'shang',
+    'da', 'ren',
+    'kong', 'yi', 'ji',
+    'hua', 'san', 'qian',
+    'qi', 'shi', 'tu',
+    'er', 'xiao', 'sheng',
+    'fu', 'lu', 'shou',
+    'jia', 'zuo', 'ren2',
+  ]);
+  autoDiscardHuState.seats[0].history.actionHistory.push({ type: 'auto-discard-draw', key: 'shang' });
+  autoDiscardHuState.seats[3].hand = takeServerCards(['shang']);
+  const autoDiscardHuActions = serverEvaluator.findResponseActions(autoDiscardHuState, 3, autoDiscardHuState.seats[3].hand[0], serverRules.DEFAULT_RULES);
+  if (!autoDiscardHuActions.some((action) => action.seat === 0 && action.type === 'hu')) {
+    throw new Error('auto-discarded draw key should not block future hu');
+  }
+}
+
+{
+  const { engine, incoming } = makeResponseEngine();
+  engine.state.seats[1].hand = takeServerCards(['da', 'da', 'ren'], [incoming.id]);
+  engine.state.seats[1].history.actionHistory.push({ type: 'discard', key: incoming.key });
+  const forcedActions = serverEvaluator.findResponseActions(engine.state, 0, incoming, serverRules.DEFAULT_RULES);
+  if (!forcedActions.some((action) => action.type === 'circle-loss' && action.seat === 1 && action.reasonCode === 'manual-hand-discard-blocked-forced-chi')) {
+    throw new Error('mandatory chi blocked by manual hand discard should create an internal circle-loss action');
+  }
+  engine.handleResponseWindow(forcedActions, 0);
+  if (
+    engine.state.phase !== 'result'
+    || !engine.state.result
+    || engine.state.result.type !== 'circle-loss'
+    || engine.state.result.loser !== 1
+    || !engine.state.result.settlement
+    || engine.state.result.settlement.payments.length !== 3
+  ) {
+    throw new Error('mandatory chi blocked by manual hand discard should resolve as circle-loss paying three seats');
+  }
+}
+
+{
   const { engine, incoming } = makeResponseEngine();
   engine.state.seats[1].hand = takeServerCards(['shang', 'shang'], [incoming.id]);
   engine.state.seats[2].hand = takeServerCards(['shang', 'shang'], [incoming.id].concat(engine.state.seats[1].hand.map((card) => card.id)));

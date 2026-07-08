@@ -119,10 +119,6 @@ ss -lntp 2>/dev/null | grep ":27017" || {
   echo "MongoDB is not listening on 27017" >&2
   exit 1
 }
-
-echo "[remote] installing npm production dependencies"
-npm install --omit=dev
-
 echo "[remote] restarting ${REMOTE_SERVICE}"
 systemctl restart "$REMOTE_SERVICE"
 sleep 3

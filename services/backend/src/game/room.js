@@ -1046,8 +1046,21 @@ async function startRound(event, ctx) {
   engine.startRound({ players: buildSeatPlayers(room) });
   room.status = 'playing';
   const version = (room.version || 0) + 1;
-  await writeRoomState(db, roomId, room, engine, version);
-  return { ok: true, roomId, version, status: room.status, settings: normalizeRoomSettings(room.settings), rematch: buildRematchState(room, OPENID) };
+  const publicState = await writeRoomState(db, roomId, room, engine, version);
+  const seat = seatOfOpenid(room, OPENID);
+  return {
+    ok: true,
+    roomId,
+    version,
+    yourSeat: seat,
+    status: room.status,
+    settings: normalizeRoomSettings(room.settings),
+    rematch: buildRematchState(room, OPENID),
+    public: publicState,
+    private: (engine.state && seat >= 0) ? buildPrivateView(engine.state, seat) : { hand: [] },
+    privateViewsBySeat: buildPrivateViewsBySeat(engine.state),
+    animation: animationState(room, engine, OPENID),
+  };
 }
 
 async function leaveRoom(event, ctx) {

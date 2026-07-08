@@ -577,11 +577,16 @@ class HuapaiEngine {
     const candidates = this.responseCandidates(actions);
     state.pendingActions = candidates;
     state.playerActions = [];
+    const forcedCircleLoss = candidates.find((action) => action.type === 'circle-loss' && action.forced);
     logResponseWindowDebug('evaluating', {
       sourceSeat,
       candidateCount: candidates.length,
       candidates: summarizeResponseActions(candidates),
     });
+    if (forcedCircleLoss) {
+      this.finishCircleLoss(forcedCircleLoss.seat, forcedCircleLoss.reason || '必须响应但已触发进圈');
+      return;
+    }
     if (!candidates.length) {
       this.resolveUnclaimedAppearingCard(sourceSeat);
       return;
@@ -1542,13 +1547,15 @@ function buildPrivateView(state, seatIndex) {
   if (!state || !state.seats || !state.seats[seatIndex]) return { hand: [] };
   const seat = state.seats[seatIndex];
   const responseView = buildPrivateResponseView(state, seatIndex);
+  const hasResponseWindow = Boolean(state.responseWindow);
+  const ownPlayerActions = (state.playerActions || []).filter((action) => action && action.seat === seatIndex);
   return {
     seat: seatIndex,
     hand: seat.hand || [],
     drawnCard: state.drawnCard || null,
-    playerActions: responseView.playerActions,
+    playerActions: hasResponseWindow ? responseView.playerActions : ownPlayerActions,
     responseWindowId: responseView.responseWindowId,
-    actionState: responseView.actionState,
+    actionState: hasResponseWindow ? responseView.actionState : (ownPlayerActions.length ? 'available' : 'closed'),
   };
 }
 

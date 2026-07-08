@@ -2348,8 +2348,12 @@ if (
   || friendRoomDb.documents.rooms[hostRoom.roomId].status !== 'playing'
   || !friendRoomDb.documents.roomStates[hostRoom.roomId]
   || friendRoomDb.documents.rooms[hostRoom.roomId].state.seats.length !== 4
+  || !readyStart.public
+  || !readyStart.private
+  || !readyStart.privateViewsBySeat
+  || !readyStart.animation
 ) {
-  throw new Error('startRound should allow all-ready humans and fill empty seats with AI');
+  throw new Error('startRound should allow all-ready humans, fill empty seats with AI, and return broadcastable state');
 }
 const hostOffline = await roomFunction.setPlayerConnection({
   roomId: hostRoom.roomId,

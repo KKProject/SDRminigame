@@ -170,7 +170,6 @@ function findChiActions(state, seatIndex, incomingCard, sourceSeat, sourceType, 
 
   const seat = state.seats[seatIndex];
   if (seat.history && seat.history.chiLocked) return [];
-  if (hasDiscardedKey(seat, incomingCard.key)) return [];
   if (phraseHasExactComplete(seat.hand, incomingCard.phraseId, rules)) return [];
 
   const phraseKeys = getPhraseKeysForKey(incomingCard.key, rules);
@@ -179,6 +178,24 @@ function findChiActions(state, seatIndex, incomingCard, sourceSeat, sourceType, 
   if (needed.length !== 2 || !needed.every((key) => counts[key] > 0)) return [];
 
   const specialTazi = getSpecialTaziRequirement(seat.hand, incomingCard, rules, 'chi');
+  if (hasManuallyDiscardedHandKey(seat, incomingCard.key)) {
+    if (!specialTazi) return [];
+    return [{
+      type: 'circle-loss',
+      seat: seatIndex,
+      card: incomingCard,
+      sourceSeat,
+      sourceType,
+      keys: [],
+      priority: ACTION_PRIORITY.chi,
+      label: ACTION_LABELS.circleLoss || '进圈',
+      forced: true,
+      hidden: true,
+      reason: `必须吃${incomingCard.text}，但已从手牌打过该字，进圈`,
+      reasonCode: 'manual-hand-discard-blocked-forced-chi',
+      forcedPattern: specialTazi.pattern,
+    }];
+  }
   const forced = Boolean(specialTazi);
   return [{
     type: 'chi',
@@ -321,7 +338,7 @@ function findAppearingCardActions(state, sourceSeat, incomingCard, sourceType, r
       const win = evaluateWin(seat.hand.concat([incomingCard]), seat.melds, sourceType === 'draw' && seatIndex === sourceSeat ? 'self' : sourceType, rules, {
         jiangPhraseId: state.jiangPhraseId,
       });
-      if (win.isWin && !isChiStyleHuBlocked(seat, incomingCard, sourceType, win)) {
+      if (win.isWin && !isManualHandDiscardHuBlocked(seat, incomingCard)) {
         actions.push({
           type: 'hu',
           seat: seatIndex,
@@ -576,6 +593,10 @@ function isDiscardHistoryEntry(entry) {
   return entry && (entry.type === 'discard' || entry.type === 'auto-discard-draw');
 }
 
+function isManualHandDiscardHistoryEntry(entry) {
+  return entry && entry.type === 'discard';
+}
+
 function discardedKeyCounts(seat, keys) {
   const keySet = new Set(keys);
   return ((seat.history && seat.history.actionHistory) || []).reduce((counts, entry) => {
@@ -586,17 +607,13 @@ function discardedKeyCounts(seat, keys) {
   }, {});
 }
 
-function hasDiscardedKey(seat, key) {
+function hasManuallyDiscardedHandKey(seat, key) {
   return ((seat.history && seat.history.actionHistory) || [])
-    .some((entry) => isDiscardHistoryEntry(entry) && entry.key === key);
+    .some((entry) => isManualHandDiscardHistoryEntry(entry) && entry.key === key);
 }
 
-function isChiStyleHuBlocked(seat, incomingCard, sourceType, win) {
-  if (sourceType !== 'discard' || !hasDiscardedKey(seat, incomingCard.key)) return false;
-  return ((win && win.doors) || []).some((door) => (
-    (door.type === 'xy' || door.type === 'xyz')
-    && (door.keys || []).indexOf(incomingCard.key) >= 0
-  ));
+function isManualHandDiscardHuBlocked(seat, incomingCard) {
+  return Boolean(incomingCard && hasManuallyDiscardedHandKey(seat, incomingCard.key));
 }
 
 function sumCounts(counts, keys) {

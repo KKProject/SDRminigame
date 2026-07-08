@@ -188,12 +188,13 @@ const SDR_RULE_TEST_CASES = [
   ['T043', 'xxyyz 单张停止'],
   ['T044', 'zzzxxy 双目标门'],
   ['T045', '出过不吃'],
-  ['T046', '出过不吃胡'],
-  ['T047', '出过仍可非吃胡'],
+  ['T046', '出过不胡'],
+  ['T047', '摸牌流走不禁吃'],
+  ['T048', '摸牌流走不禁胡'],
 ].map(([id, scenario]) => ({ id, scenario }));
 
 export function runSelfChecks() {
-  assert(SDR_RULE_TEST_CASES.length === 47, 'T001-T047 rule test skeleton should include 47 cases');
+  assert(SDR_RULE_TEST_CASES.length === 48, 'T001-T048 rule test skeleton should include 48 cases');
   SDR_RULE_TEST_CASES.forEach((testCase, index) => {
     assert(testCase.id === `T${String(index + 1).padStart(3, '0')}`, `missing rule test skeleton ${index + 1}`);
     assert(Boolean(testCase.scenario), `${testCase.id} should describe its scenario`);
@@ -326,7 +327,7 @@ export function runSelfChecks() {
   discardedChiHuState.seats[0].history.actionHistory.push({ type: 'discard', key: 'da' });
   discardedChiHuState.seats[3].hand = cardsFor(['da']);
   const discardedChiHuActions = findResponseActions(discardedChiHuState, 3, discardedChiHuState.seats[3].hand[0], DEFAULT_RULES);
-  assert(!discardedChiHuActions.find((action) => action.seat === 0 && action.type === 'hu'), 'previously discarded key must not produce chi-style hu');
+  assert(!discardedChiHuActions.find((action) => action.seat === 0 && action.type === 'hu'), 'manual hand-discarded key must not produce hu');
   const discardedSameHuState = makeState();
   discardedSameHuState.seats[0].hand = cardsFor([
     'shang', 'shang',
@@ -341,8 +342,29 @@ export function runSelfChecks() {
   discardedSameHuState.seats[0].history.actionHistory.push({ type: 'discard', key: 'shang' });
   discardedSameHuState.seats[3].hand = cardsFor(['shang']);
   const discardedSameHuActions = findResponseActions(discardedSameHuState, 3, discardedSameHuState.seats[3].hand[0], DEFAULT_RULES);
-  assert(discardedSameHuActions.find((action) => action.seat === 0 && action.type === 'hu'), 'previously discarded key should still allow non-chi hu');
-  assert(!discardedSameHuActions.find((action) => action.seat === 0 && action.type === 'chi'), 'previously discarded key should still block chi even when hu is available');
+  assert(!discardedSameHuActions.find((action) => action.seat === 0 && action.type === 'hu'), 'manual hand-discarded key must block non-chi hu too');
+  assert(!discardedSameHuActions.find((action) => action.seat === 0 && action.type === 'chi'), 'manual hand-discarded key should still block chi');
+  const autoDiscardChiState = makeState();
+  autoDiscardChiState.seats[0].hand = cardsFor(['da', 'ren']);
+  autoDiscardChiState.seats[0].history.actionHistory.push({ type: 'auto-discard-draw', key: 'shang' });
+  autoDiscardChiState.seats[3].hand = cardsFor(['shang']);
+  const autoDiscardChiActions = findResponseActions(autoDiscardChiState, 3, autoDiscardChiState.seats[3].hand[0], DEFAULT_RULES);
+  assert(autoDiscardChiActions.find((action) => action.seat === 0 && action.type === 'chi'), 'auto-discarded draw key should not block chi');
+  const autoDiscardHuState = makeState();
+  autoDiscardHuState.seats[0].hand = cardsFor([
+    'shang', 'shang',
+    'da', 'ren',
+    'kong', 'yi', 'ji',
+    'hua', 'san', 'qian',
+    'qi', 'shi', 'tu',
+    'er', 'xiao', 'sheng',
+    'fu', 'lu', 'shou',
+    'jia', 'zuo', 'ren2',
+  ]);
+  autoDiscardHuState.seats[0].history.actionHistory.push({ type: 'auto-discard-draw', key: 'shang' });
+  autoDiscardHuState.seats[3].hand = cardsFor(['shang']);
+  const autoDiscardHuActions = findResponseActions(autoDiscardHuState, 3, autoDiscardHuState.seats[3].hand[0], DEFAULT_RULES);
+  assert(autoDiscardHuActions.find((action) => action.seat === 0 && action.type === 'hu'), 'auto-discarded draw key should not block hu');
 
   const zhaoHand = cardsFor(['shang', 'shang', 'shang', 'da', 'da']);
   const zhaoCard = cardsFor(['shang'])[0];
