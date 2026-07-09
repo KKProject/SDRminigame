@@ -25,6 +25,7 @@ export default class DataBus {
   responseSummary = null;
   responseWindowId = null;
   actionState = 'closed';
+  zhaoSizePicker = null;
   feedback = '';
   result = null;
   muted = false;
@@ -67,6 +68,7 @@ export default class DataBus {
       responseSummary: null,
       responseWindowId: null,
       actionState: 'closed',
+      zhaoSizePicker: null,
       feedback: '',
       result: null,
       muted: this.muted,

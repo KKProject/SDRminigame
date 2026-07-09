@@ -749,7 +749,9 @@ export default class TableRenderer {
       ctx.globalAlpha = visual.alpha;
       ctx.translate(centerX, centerY);
       if (ctx.scale) ctx.scale(visual.scale, visual.scale);
-      const actionSpriteType = button.action.zhaoSize ? null : button.action.type;
+      const actionSpriteType = (button.action.zhaoSize || button.action.type === 'zhaoBack')
+        ? null
+        : button.action.type;
       this.drawButton(ctx, {
         ...button,
         x: -button.width / 2,

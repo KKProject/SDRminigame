@@ -652,6 +652,7 @@ export default class OnlineController {
     this.ackingEventSeq = 0;
     this.localActionPreviewType = null;
     this.pendingLocalAction = null;
+    this.zhaoSizePicker = null;
     this.lobbyState = null;
     this.lobbyProfile = null;
     this.loginProfile = {};
@@ -1408,6 +1409,7 @@ export default class OnlineController {
         this.clearPendingResponseIntent(this.databus.responseWindowId);
       }
     }
+    this.syncZhaoPicker();
     return true;
   }
 
@@ -1440,6 +1442,7 @@ export default class OnlineController {
   commitTimelineDisplayState(displayState, reason = 'timeline-display-commit', event = null) {
     if (!displayState || !this.databus || !this.databus.setRoundState) return false;
     this.databus.setRoundState(clonePlain(displayState));
+    this.syncZhaoPicker();
     this.reportOnlineDiagnostic('online-timeline-display-commit', {
       reason,
       event: diagnosticEvent(event),
@@ -1680,6 +1683,7 @@ export default class OnlineController {
     const gateDisplay = this.shouldGateDisplayState(local, serverEvent, { ...animation, selfAcked });
     const displayLocal = gateDisplay ? this.buildDeferredDisplayState(local) : local;
     this.databus.setRoundState(displayLocal);
+    this.syncZhaoPicker();
     if (
       hasLocalResponseActions
       || (local.responseSummary && local.responseSummary.active)
@@ -2207,8 +2211,53 @@ export default class OnlineController {
     state.feedback = '再次点击此牌即可打出';
   }
 
+  openZhaoPicker(cardId) {
+    this.zhaoSizePicker = { open: true, cardId };
+    this.syncZhaoPicker();
+  }
+
+  closeZhaoPicker() {
+    this.zhaoSizePicker = null;
+    this.syncZhaoPicker();
+  }
+
+  /**
+   * 校验招张数子面板是否仍有效：当前 playerActions 中针对该出现牌的招候选
+   * 必须多于 1 个，否则关闭子面板。结果写入 databus.zhaoSizePicker 供布局读取。
+   */
+  syncZhaoPicker() {
+    const db = this.databus;
+    const picker = this.zhaoSizePicker;
+    if (!picker || !db) {
+      if (db) db.zhaoSizePicker = null;
+      return;
+    }
+    const zhaoCount = (Array.isArray(db.playerActions) ? db.playerActions : [])
+      .filter((a) => a.type === 'zhao' && a.card && a.card.id === picker.cardId).length;
+    if (zhaoCount <= 1) {
+      this.zhaoSizePicker = null;
+      db.zhaoSizePicker = null;
+      return;
+    }
+    db.zhaoSizePicker = { open: true, cardId: picker.cardId };
+  }
+
   handleActionTap(action) {
     if (!action) return;
+    if (action.type === 'zhaoBack') {
+      this.closeZhaoPicker();
+      return;
+    }
+    if (action.zhaoPicker) {
+      const group = Array.isArray(action.zhaoGroup) ? action.zhaoGroup : [];
+      if (group.length <= 1) {
+        this.handleActionTap(group[0] || null);
+        return;
+      }
+      const cardId = action.card && action.card.id;
+      if (cardId) this.openZhaoPicker(cardId);
+      return;
+    }
     if (action.type === 'leaveTable') {
       this.leaveTable();
       return;

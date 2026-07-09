@@ -3062,6 +3062,105 @@ if (!/leaveTable/.test(layoutSource) || !/requestRematch/.test(layoutSource) || 
 if (!/state\.tableFinished[\s\S]*?牌局已结束/.test(rendererSource)) {
   throw new Error('final table settlement should render an explicit table result title');
 }
+if (!/buildActionItems/.test(layoutSource) || !/zhaoPicker/.test(layoutSource)) {
+  throw new Error('layout should fold multiple zhao actions into a single picker entry');
+}
+if (!/state\.zhaoSizePicker/.test(layoutSource)) {
+  throw new Error('layout should render zhao size sub-options when the picker is open');
+}
+if (!/zhaoBack/.test(layoutSource) || !/返回/.test(layoutSource)) {
+  throw new Error('zhao size sub-panel should expose a return control');
+}
+if (/button\.action\.zhaoSize \? null : button\.action\.type/.test(rendererSource)) {
+  throw new Error('renderer should let the folded zhao entry (no zhaoSize) use the zhao sprite');
+}
+
+// —— 招折叠为单入口 + 张数子面板交互 ——
+const zhaoPickerDatabus = {
+  feedback: '',
+  selectedCardId: null,
+  responseWindowId: 'zhao-window-1',
+  actionState: 'available',
+  playerActions: [],
+  zhaoSizePicker: null,
+  setRoundState(state) { Object.assign(this, state); },
+};
+let zhaoPickerOp = null;
+const zhaoPickerController = new online.default(zhaoPickerDatabus, onlineRenderer, onlineMusic);
+zhaoPickerController.roomId = 'zhao-room';
+zhaoPickerController.mySeat = 0;
+zhaoPickerController.version = 5;
+zhaoPickerController.active = true;
+zhaoPickerController.socket = {
+  isReady() { return true; },
+  request(type, data) {
+    if (type === 'op') { zhaoPickerOp = data && data.payload; return Promise.resolve({ ok: true, version: 5 }); }
+    return Promise.resolve({ ok: true });
+  },
+  close() {},
+};
+zhaoPickerController.applyServerSnapshot = () => true;
+zhaoPickerController.refresh = () => Promise.resolve(true);
+const zhaoCard = { id: 'zhao-card-1', key: 'shang' };
+const multiZhaoActions = [
+  { type: 'zhao', seat: 0, card: zhaoCard, zhaoSize: 4, handKeyCount: 3, index: 0, label: '招4张2对' },
+  { type: 'zhao', seat: 0, card: zhaoCard, zhaoSize: 5, handKeyCount: 4, index: 1, label: '招5张3对' },
+  { type: 'zhao', seat: 0, card: zhaoCard, zhaoSize: 6, handKeyCount: 5, index: 2, label: '招6张3对' },
+  { type: 'pass', seat: 0, index: 3, label: '过' },
+];
+zhaoPickerDatabus.playerActions = multiZhaoActions;
+zhaoPickerController.syncZhaoPicker();
+
+const foldedEntry = (group) => ({
+  type: 'zhao',
+  seat: 0,
+  card: zhaoCard,
+  zhaoPicker: true,
+  zhaoGroup: group,
+});
+
+// 多招：点折叠"招"入口应展开子面板，且不发 op
+await zhaoPickerController.handleActionTap(foldedEntry(multiZhaoActions.slice(0, 3)));
+if (!zhaoPickerDatabus.zhaoSizePicker || !zhaoPickerDatabus.zhaoSizePicker.open || zhaoPickerDatabus.zhaoSizePicker.cardId !== 'zhao-card-1') {
+  throw new Error('tapping folded zhao entry with multiple sizes should open the size picker without submitting');
+}
+if (zhaoPickerOp) throw new Error('opening zhao picker must not send an op');
+
+// 子选项：点 招5 应提交 response op 且 zhaoSize=5
+await zhaoPickerController.handleActionTap(Object.assign({}, multiZhaoActions[1], { label: '招5' }));
+if (!zhaoPickerOp || zhaoPickerOp.kind !== 'response' || zhaoPickerOp.ref.zhaoSize !== 5) {
+  throw new Error('tapping a zhao size option should submit a response op with the chosen zhaoSize');
+}
+zhaoPickerOp = null;
+
+// 返回应关闭子面板、不发 op
+zhaoPickerController.zhaoSizePicker = { open: true, cardId: 'zhao-card-1' };
+zhaoPickerDatabus.zhaoSizePicker = { open: true, cardId: 'zhao-card-1' };
+await zhaoPickerController.handleActionTap({ type: 'zhaoBack', label: '返回' });
+if (zhaoPickerDatabus.zhaoSizePicker) throw new Error('zhao back should close the picker');
+if (zhaoPickerOp) throw new Error('zhao back must not send an op');
+
+// 单招：点折叠"招"入口应直接提交，不展开子面板
+zhaoPickerDatabus.playerActions = [
+  { type: 'zhao', seat: 0, card: zhaoCard, zhaoSize: 4, handKeyCount: 3, index: 0, label: '招4张2对' },
+  { type: 'pass', seat: 0, index: 1, label: '过' },
+];
+zhaoPickerController.zhaoSizePicker = null;
+zhaoPickerDatabus.zhaoSizePicker = null;
+zhaoPickerOp = null;
+await zhaoPickerController.handleActionTap(foldedEntry([zhaoPickerDatabus.playerActions[0]]));
+if (!zhaoPickerOp || zhaoPickerOp.kind !== 'response' || zhaoPickerOp.ref.zhaoSize !== 4) {
+  throw new Error('tapping folded zhao entry with a single size should submit directly without opening the picker');
+}
+
+// 子面板展开期间招候选数量变化驱动自动关闭
+zhaoPickerDatabus.playerActions = multiZhaoActions;
+zhaoPickerController.zhaoSizePicker = { open: true, cardId: 'zhao-card-1' };
+zhaoPickerController.syncZhaoPicker();
+if (!zhaoPickerDatabus.zhaoSizePicker) throw new Error('picker should remain open while multiple zhao options exist');
+zhaoPickerDatabus.playerActions = [{ type: 'pass', seat: 0, index: 0, label: '过' }];
+zhaoPickerController.syncZhaoPicker();
+if (zhaoPickerDatabus.zhaoSizePicker) throw new Error('picker should auto-close when zhao group no longer has multiple options');
 
 await rm(tempDir, { recursive: true, force: true });
 console.log('online checks passed');

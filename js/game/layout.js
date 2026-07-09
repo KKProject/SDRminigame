@@ -33,7 +33,54 @@ function actionButtonWidth(action, buttonHeight) {
     const labelLength = String(action.label || '').length;
     return Math.max(68, labelLength * 18 + 16);
   }
+  if (action && action.type === 'zhaoBack') {
+    const labelLength = String(action.label || '').length;
+    return Math.max(68, labelLength * 18 + 16);
+  }
   return Math.round(buttonHeight * (ACTION_BUTTON_ASPECT_RATIOS[action.type] || 1));
+}
+
+/**
+ * 把同一出现牌的多个招候选折叠为单个"招"入口；当招张数子面板展开时，
+ * 改为渲染 招4/招5/招6 文字选项 + 返回。其它动作原样保留。
+ */
+function buildZhaoGroupEntry(group) {
+  const base = group[0] || { type: 'zhao' };
+  return Object.assign({}, base, {
+    label: '招',
+    zhaoSize: undefined,
+    zhaoPicker: true,
+    zhaoGroup: group,
+  });
+}
+
+function buildActionItems(playerActions, picker) {
+  const actions = Array.isArray(playerActions) ? playerActions : [];
+  if (picker && picker.open) {
+    const cardId = picker.cardId;
+    const group = actions.filter((a) => a.type === 'zhao' && a.card && a.card.id === cardId);
+    if (group.length > 1) {
+      const options = group
+        .slice()
+        .sort((a, b) => (a.zhaoSize || 0) - (b.zhaoSize || 0))
+        .map((a) => Object.assign({}, a, { label: `招${a.zhaoSize}` }));
+      return options.concat([{ type: 'zhaoBack', label: '返回' }]);
+    }
+  }
+  const items = [];
+  let zhaoEmitted = false;
+  actions.forEach((action) => {
+    if (action.type === 'zhao') {
+      if (zhaoEmitted) return;
+      const cardId = action.card && action.card.id;
+      const group = actions.filter((a) => a.type === 'zhao' && a.card && a.card.id === cardId);
+      items.push(buildZhaoGroupEntry(group.length > 1 ? group : [action]));
+      zhaoEmitted = true;
+    } else {
+      items.push(action);
+    }
+  });
+  return items;
 }
 
 function sortGroupCards(cards) {
@@ -684,15 +731,16 @@ export default class TableLayout {
     const actionModal = createActionModal(contentBounds, handY, state.playerActions, state.phase === 'result', isLandscape);
     const buttonGap = isLandscape ? 8 : 6;
     const buttonHeight = ACTION_BUTTON_HEIGHT;
-    const actionButtonWidths = state.playerActions.map((action) => actionButtonWidth(action, buttonHeight));
+    const actionItems = buildActionItems(state.playerActions, state.zhaoSizePicker);
+    const actionButtonWidths = actionItems.map((action) => actionButtonWidth(action, buttonHeight));
     const actionGroupWidth = actionButtonWidths.reduce((total, buttonWidth) => total + buttonWidth, 0)
-      + Math.max(0, state.playerActions.length - 1) * buttonGap;
+      + Math.max(0, actionItems.length - 1) * buttonGap;
     const actionStartX = Math.floor(contentBounds.x + (contentBounds.width - actionGroupWidth) / 2);
     const actionY = actionModal.visible
       ? actionModal.y
       : Math.max(contentBounds.y, handY - buttonHeight - 8);
     let nextActionX = actionStartX;
-    const actionButtons = state.playerActions.map((action, index) => {
+    const actionButtons = actionItems.map((action, index) => {
       const buttonWidth = actionButtonWidths[index];
       const button = rect(nextActionX, actionY, buttonWidth, buttonHeight, { type: 'action', action });
       nextActionX += buttonWidth + buttonGap;
