@@ -432,6 +432,7 @@ const lobbyPublic = {
 const lobbyPrivate = { hand: [{ id: 'lobby-card', key: 'shang' }] };
 let lobbyCalls = [];
 let activeRoomResult = { ok: true, hasRoom: false };
+let createRoomResultOverride = null;
 let waitingRoomState = null;
 let sharedPayload = null;
 globalThis.wx.request = (options) => {
@@ -460,6 +461,10 @@ globalThis.wx.request = (options) => {
     return;
   }
   if (action === 'createRoom') {
+    if (createRoomResultOverride) {
+      options.success({ statusCode: 200, data: createRoomResultOverride });
+      return;
+    }
     const roomSettings = Object.assign({
       maxRounds: options.data.maxRounds,
       repeatRound: false,
@@ -639,6 +644,34 @@ if (
   throw new Error('lobby room creation should keep numeric maxRounds calls compatible');
 }
 legacyLobby.stopWaitingRefresh();
+const conflictLobby = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+conflictLobby.lobbyProfile = { nickName: '大厅玩家', avatarUrl: 'avatar.png' };
+let conflictAutoEntryCount = 0;
+conflictLobby.enterExistingRoom = async () => {
+  conflictAutoEntryCount += 1;
+  return { entered: true };
+};
+createRoomResultOverride = {
+  ok: false,
+  error: 'ALREADY_IN_ACTIVE_ROOM',
+  existing: { roomId: 'existing-playing-room', seat: 1, status: 'playing', version: 8 },
+};
+let createConflictError = null;
+try {
+  await conflictLobby.createLobbyRoom({ maxRounds: 2 });
+} catch (err) {
+  createConflictError = err;
+}
+createRoomResultOverride = null;
+if (
+  !createConflictError
+  || createConflictError.code !== 'ALREADY_IN_ACTIVE_ROOM'
+  || !createConflictError.existing
+  || createConflictError.existing.roomId !== 'existing-playing-room'
+  || conflictAutoEntryCount !== 0
+) {
+  throw new Error('create-room conflicts should preserve existing room info without silently entering the old room');
+}
 if (!createdLobby.shareWaitingRoom() || !sharedPayload || sharedPayload.query !== 'roomId=123456&source=friendInvite') {
   throw new Error('waiting room invite should call shareAppMessage with roomId query');
 }
@@ -748,6 +781,81 @@ if (
   throw new Error('online lobby should show reconnecting state and restore an existing active room through socket');
 }
 reconnectLobby.destroy();
+const startupWaitingRoom = {
+  roomId: 'startup-waiting-room',
+  status: 'waiting',
+  hostOpenid: 'waiting-host',
+  settings: { maxRounds: 2 },
+  players: [{ seat: 0, openid: 'lobby-openid', nickName: '大厅玩家', ready: false, online: true, isHost: true }],
+  humanCount: 1,
+  minHumansToStart: 2,
+  canStart: false,
+  readyToStart: false,
+  yourSeat: 0,
+  isHost: true,
+};
+activeRoomResult = {
+  ok: true,
+  hasRoom: true,
+  roomId: 'startup-waiting-room',
+  seat: 0,
+  status: 'waiting',
+  version: 0,
+  room: startupWaitingRoom,
+};
+lobbyCalls = [];
+const startupWaitingLobby = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+const startupWaitingResult = await startupWaitingLobby.startLobby({ nickName: '授权大厅' });
+if (!startupWaitingResult.waiting || startupWaitingLobby.waitingRoom.roomId !== 'startup-waiting-room' || startupWaitingLobby.active) {
+  throw new Error('waiting rooms should restore the waiting page during startup');
+}
+startupWaitingLobby.destroy();
+
+activeRoomResult = {
+  ok: true,
+  hasRoom: true,
+  roomId: 'finished-room',
+  seat: 0,
+  status: 'finished',
+  version: 4,
+  settings: { maxRounds: 6 },
+};
+lobbyCalls = [];
+const finishedLobby = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+attachLobbySocket(finishedLobby, 0);
+const finishedResult = await finishedLobby.startLobby({ nickName: '授权大厅' });
+if (!finishedResult.entered || finishedResult.roomId !== 'finished-room' || !finishedLobby.active) {
+  throw new Error('finished rooms should restore the game page for the next-round flow');
+}
+finishedLobby.destroy();
+
+for (const terminalStatus of ['tableResult', 'closed', 'future-status']) {
+  activeRoomResult = {
+    ok: true,
+    hasRoom: true,
+    roomId: `terminal-${terminalStatus}`,
+    seat: 0,
+    status: terminalStatus,
+    version: 5,
+    settings: { maxRounds: 2 },
+  };
+  lobbyCalls = [];
+  const terminalLobby = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+  attachLobbySocket(terminalLobby, 0);
+  const terminalStates = [];
+  terminalLobby.onLobby = (state) => { terminalStates.push(state.state); };
+  const terminalResult = await terminalLobby.startLobby({ nickName: '授权大厅' });
+  if (
+    terminalResult.entered
+    || terminalLobby.roomId
+    || terminalLobby.active
+    || terminalStates.join(',') !== `${online.LOBBY_STATES.CHECKING_ROOM},${online.LOBBY_STATES.IDLE}`
+    || lobbySocketSubscribes.find((call) => call.roomId === `terminal-${terminalStatus}`)
+  ) {
+    throw new Error(`${terminalStatus} rooms should stay in the idle lobby instead of restoring the game page`);
+  }
+  terminalLobby.destroy();
+}
 activeRoomResult = { ok: true, hasRoom: false };
 
 const expiredAuthController = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
@@ -979,6 +1087,10 @@ const leavePromise = leaveController.leaveTable().then((result) => {
   leaveResult = result;
 });
 await Promise.resolve();
+if (leaveResolved || leaveController.roomId !== 'host-exit-room' || !leaveController.active) {
+  throw new Error('leaving a table should keep the local room until the backend confirms the exit');
+}
+await leavePromise;
 globalThis.wx.request = previousWxRequestForLeave;
 if (
   !leaveResolved
@@ -992,9 +1104,42 @@ if (
   || !leaveLobbyState
   || leaveLobbyState.state !== online.LOBBY_STATES.IDLE
 ) {
-  throw new Error('leaving a table should return to the lobby immediately through HTTPS without waiting on the room socket or HTTP response');
+  throw new Error('leaving a table should return to the lobby only after HTTPS confirms the exit');
 }
-await leavePromise;
+
+let rejectedLeaveSocketClosed = false;
+const previousWxRequestForRejectedLeave = globalThis.wx.request;
+globalThis.wx.request = (options) => {
+  if (options.url === 'https://api.unit.test/api/game' && options.data && options.data.action === 'leaveRoom') {
+    options.success({ statusCode: 200, data: { ok: false, error: 'ROOM_NOT_FINISHED', status: 'playing' } });
+    return;
+  }
+  previousWxRequestForRejectedLeave(options);
+};
+const rejectedLeaveDatabus = {
+  feedback: '',
+  resetCount: 0,
+  reset() { this.resetCount += 1; },
+};
+const rejectedLeaveController = new online.default(rejectedLeaveDatabus, onlineRenderer, onlineMusic);
+rejectedLeaveController.roomId = 'playing-room';
+rejectedLeaveController.active = true;
+rejectedLeaveController.socket = {
+  isReady() { return true; },
+  close() { rejectedLeaveSocketClosed = true; },
+};
+const rejectedLeaveResult = await rejectedLeaveController.leaveTable();
+globalThis.wx.request = previousWxRequestForRejectedLeave;
+if (
+  rejectedLeaveResult
+  || rejectedLeaveController.roomId !== 'playing-room'
+  || !rejectedLeaveController.active
+  || rejectedLeaveSocketClosed
+  || rejectedLeaveDatabus.resetCount !== 0
+  || rejectedLeaveDatabus.feedback !== '牌桌尚未结束，暂时不能退出'
+) {
+  throw new Error('rejected leave requests should preserve the current room and local game session');
+}
 const directSnapshot = {
   ok: true,
   version: 3,
@@ -2149,6 +2294,31 @@ const missingActiveRoom = await roomFunction.activeRoom({}, { db: activeRoomDb, 
 if (!missingActiveRoom.ok || missingActiveRoom.hasRoom) {
   throw new Error('activeRoom should not return a room for players without unfinished rooms');
 }
+const closedWithResultDb = createRoomDb({
+  'closed-with-result': {
+    _id: 'closed-with-result',
+    status: 'closed',
+    version: 9,
+    updatedAt: 9,
+    hostOpenid: 'closed-player',
+    players: [{ seat: 0, openid: 'closed-player', ready: true, online: false }],
+    playerOpenids: [],
+    settings: { maxRounds: 1 },
+    state: {
+      phase: 'result',
+      round: 1,
+      seats: [{}, {}, {}, {}],
+      result: { type: 'draw-round' },
+      eventSeq: 0,
+      publicEvent: null,
+      pendingContinuation: null,
+    },
+  },
+});
+const closedWithResult = await roomFunction.activeRoom({}, { db: closedWithResultDb, OPENID: 'closed-player' });
+if (closedWithResult.hasRoom || closedWithResultDb.documents.rooms['closed-with-result'].status !== 'closed') {
+  throw new Error('activeRoom must never revive a closed room from its retained result state');
+}
 const createRoomDbInstance = createRoomDb();
 const createdConfiguredRoom = await roomFunction.createRoom({
   profile: { nickName: '建房玩家' },
@@ -2208,8 +2378,131 @@ const duplicateCreate = await roomFunction.createRoom({
   profile: { nickName: '重复建房' },
   maxRounds: 2,
 }, { db: duplicateRoomDb, OPENID: 'duplicate-openid' });
-if (!duplicateCreate.alreadyInRoom || duplicateCreate.roomId !== 'duplicate-room' || Object.keys(duplicateRoomDb.documents.rooms).length !== 1) {
-  throw new Error('createRoom should return the existing active room instead of creating a duplicate room');
+if (
+  duplicateCreate.ok
+  || duplicateCreate.error !== 'ALREADY_IN_ACTIVE_ROOM'
+  || !duplicateCreate.existing
+  || duplicateCreate.existing.roomId !== 'duplicate-room'
+  || Object.keys(duplicateRoomDb.documents.rooms).length !== 1
+) {
+  throw new Error('createRoom should return an explicit conflict without creating or silently entering another active room');
+}
+const concurrentCreateDb = createRoomDb();
+const concurrentCreates = await Promise.all([
+  roomFunction.createRoom({ profile: { nickName: '并发建房' }, maxRounds: 2 }, { db: concurrentCreateDb, OPENID: 'concurrent-openid' }),
+  roomFunction.createRoom({ profile: { nickName: '并发建房' }, maxRounds: 2 }, { db: concurrentCreateDb, OPENID: 'concurrent-openid' }),
+]);
+if (
+  concurrentCreates.filter((result) => result.ok).length !== 1
+  || concurrentCreates.filter((result) => result.error === 'ALREADY_IN_ACTIVE_ROOM').length !== 1
+  || Object.keys(concurrentCreateDb.documents.rooms).length !== 1
+) {
+  throw new Error('concurrent createRoom requests for one player should create exactly one waiting room');
+}
+
+function terminalRoomFixture(id, overrides = {}) {
+  const players = [0, 1, 2, 3].map((seat) => ({
+    seat,
+    openid: `${id}-player-${seat}`,
+    ready: true,
+    online: true,
+    isHuman: true,
+  }));
+  return Object.assign({
+    _id: id,
+    status: 'tableResult',
+    version: 3,
+    updatedAt: 3,
+    hostOpenid: players[0].openid,
+    players,
+    playerOpenids: players.map((player) => player.openid),
+    settings: { maxRounds: 2 },
+    rematch: {
+      status: 'pending',
+      requestedBy: players[0].openid,
+      agreedOpenids: [players[0].openid, players[3].openid],
+      declinedOpenids: [],
+      deadlineAt: null,
+    },
+  }, overrides);
+}
+
+const terminalReleaseRoom = terminalRoomFixture('terminal-release');
+const terminalReleaseDb = createRoomDb({ 'terminal-release': terminalReleaseRoom });
+const terminalActive = await roomFunction.activeRoom({}, {
+  db: terminalReleaseDb,
+  OPENID: 'terminal-release-player-3',
+});
+const terminalAfterRelease = terminalReleaseDb.documents.rooms['terminal-release'];
+const terminalActiveAgain = await roomFunction.activeRoom({}, {
+  db: terminalReleaseDb,
+  OPENID: 'terminal-release-player-3',
+});
+if (
+  terminalActive.hasRoom
+  || terminalActiveAgain.hasRoom
+  || terminalAfterRelease.status !== 'tableResult'
+  || terminalAfterRelease.players.some((player) => player.openid === 'terminal-release-player-3')
+  || terminalAfterRelease.playerOpenids.includes('terminal-release-player-3')
+  || terminalAfterRelease.rematch.agreedOpenids.includes('terminal-release-player-3')
+) {
+  throw new Error('activeRoom should idempotently release a non-host from tableResult without restoring the terminal room');
+}
+
+const terminalHostDb = createRoomDb({ 'terminal-host': terminalRoomFixture('terminal-host') });
+const terminalHostActive = await roomFunction.activeRoom({}, {
+  db: terminalHostDb,
+  OPENID: 'terminal-host-player-0',
+});
+if (terminalHostActive.hasRoom || terminalHostDb.documents.rooms['terminal-host'].status !== 'closed') {
+  throw new Error('a tableResult host returning to the lobby should close the old room');
+}
+
+const insufficientTerminalRoom = terminalRoomFixture('terminal-insufficient');
+insufficientTerminalRoom.players = insufficientTerminalRoom.players.slice(0, 2);
+insufficientTerminalRoom.playerOpenids = insufficientTerminalRoom.players.map((player) => player.openid);
+const insufficientTerminalDb = createRoomDb({ 'terminal-insufficient': insufficientTerminalRoom });
+const insufficientTerminalActive = await roomFunction.activeRoom({}, {
+  db: insufficientTerminalDb,
+  OPENID: 'terminal-insufficient-player-1',
+});
+if (insufficientTerminalActive.hasRoom || insufficientTerminalDb.documents.rooms['terminal-insufficient'].status !== 'closed') {
+  throw new Error('terminal release should close rooms that fall below the minimum human count');
+}
+
+const terminalTimeoutDb = createRoomDb({
+  'terminal-timeout': terminalRoomFixture('terminal-timeout', {
+    rematch: {
+      status: 'host-decision',
+      requestedBy: '',
+      agreedOpenids: [],
+      declinedOpenids: [],
+      deadlineAt: 10,
+    },
+  }),
+});
+const terminalTimeoutActive = await roomFunction.activeRoom({ now: 11 }, {
+  db: terminalTimeoutDb,
+  OPENID: 'terminal-timeout-player-3',
+});
+if (terminalTimeoutActive.hasRoom || terminalTimeoutDb.documents.rooms['terminal-timeout'].status !== 'closed') {
+  throw new Error('expired tableResult rooms should close during active-room lookup');
+}
+
+const terminalCreateDb = createRoomDb({
+  'terminal-create': terminalRoomFixture('terminal-create'),
+});
+const createdAfterTerminal = await roomFunction.createRoom({ profile: { nickName: '终局后建房' }, maxRounds: 2 }, {
+  db: terminalCreateDb,
+  OPENID: 'terminal-create-player-3',
+});
+if (
+  !createdAfterTerminal.ok
+  || createdAfterTerminal.roomId === 'terminal-create'
+  || terminalCreateDb.documents.rooms['terminal-create'].players.some((player) => player.openid === 'terminal-create-player-3')
+  || Object.keys(terminalCreateDb.documents.rooms).length !== 2
+) {
+  throw new Error('tableResult membership should be released before creating a new waiting room');
 }
 const friendRoomDb = createRoomDb();
 const hostRoom = await roomFunction.createRoom({
@@ -2979,6 +3272,12 @@ if (!/bindOnlineController\(controller\)\s*\{[\s\S]*?controller\.onLobby = \(lob
 }
 if (!/createOnlineRoom\(settings = \{\}\)\s*\{[\s\S]*?this\.mode = APP_MODES\.CREATE_ROOM;[\s\S]*?controller\.createLobbyRoom\(settings\)[\s\S]*?this\.mode = APP_MODES\.WAITING_ROOM;[\s\S]*?this\.menu\.showWaitingRoom\(result\);[\s\S]*?catch[\s\S]*?this\.mode = APP_MODES\.CREATE_ROOM;[\s\S]*?this\.menu\.setStatus\(onlineErrorMessage\(err\)\);/.test(mainSource)) {
   throw new Error('create room flow should enter waiting on success and stay on the create page after failure');
+}
+if (!/promptContinueExistingRoom\(controller, existing\)[\s\S]*?wx\.showModal[\s\S]*?controller\.enterExistingRoom\(existing\)/.test(mainSource)) {
+  throw new Error('create-room conflicts should require explicit confirmation before entering the existing room');
+}
+if (!/err && err\.code === 'ALREADY_IN_ACTIVE_ROOM'[\s\S]*?this\.promptContinueExistingRoom\(controller, err\.existing\)/.test(mainSource)) {
+  throw new Error('active-room create conflicts should open the explicit continue-room prompt');
 }
 if (!/startOnline\(profile = \{\}, inviteRoomId = ''\)[\s\S]*?catch\(\(err\) => \{[\s\S]*?if \(inviteRoomId && shouldReturnInviteToStart\(err\)\) \{[\s\S]*?this\.menu\.showStartHome\(homeProfile\);[\s\S]*?showToast\(message\);[\s\S]*?return;/.test(mainSource)) {
   throw new Error('failed invite launches should return to the startup hall and toast instead of showing the old lobby page');

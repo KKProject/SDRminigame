@@ -35,6 +35,7 @@ const SOCKET_AUTH_ERROR_CODES = [
   'SOCKET_CONNECT_UNAUTHORIZED',
 ];
 const SUPPORTED_PAY_TYPES = ['pihu', 'jiahu', 'changhu'];
+const RECOVERABLE_ROOM_STATUSES = ['waiting', 'playing', 'finished'];
 export const LOBBY_STATES = {
   CHECKING_ROOM: 'checking-room',
   RECONNECTING: 'reconnecting',
@@ -43,6 +44,14 @@ export const LOBBY_STATES = {
   CREATING: 'creating',
   ERROR: 'error',
 };
+
+function recoverableRoomStatus(status) {
+  return RECOVERABLE_ROOM_STATUSES.indexOf(status) >= 0;
+}
+
+function roomLifecycleDiagnostic(event, detail = {}) {
+  console.info('[online-room-lifecycle]', Object.assign({ event }, detail));
+}
 
 function lobbyProfile(loginRes = {}, fallback = {}) {
   const user = loginRes.user || {};
@@ -357,6 +366,8 @@ export function onlineErrorMessage(err) {
     ROOM_NOT_JOINABLE: '房间当前不可加入',
     NOT_HOST: '只有房主可以发起再来一局',
     ALREADY_IN_ROOM: '你已有未结束牌桌，正在进入原牌桌',
+    ALREADY_IN_ACTIVE_ROOM: '你已有进行中的房间，请先继续当前房间',
+    ROOM_NOT_RECOVERABLE: '房间状态已变化，请返回大厅重试',
     NOT_IN_ROOM: '当前微信账号不在这张牌桌中',
     WAITING_FOR_PLAYERS: '至少需要 2 名真人玩家才能开局',
     HOST_NOT_READY: '房主准备后才能开局',
@@ -839,6 +850,15 @@ export default class OnlineController {
 
   async enterExistingRoom(roomInfo = {}) {
     if (!roomInfo.roomId) throw new Error('ROOM_NOT_FOUND');
+    if (!recoverableRoomStatus(roomInfo.status)) {
+      roomLifecycleDiagnostic('unsupported-room-entry', {
+        roomId: roomInfo.roomId,
+        status: roomInfo.status || 'unknown',
+      });
+      const error = new Error('ROOM_NOT_RECOVERABLE');
+      error.code = 'ROOM_NOT_RECOVERABLE';
+      throw error;
+    }
     if (roomInfo.status === 'waiting' || roomInfo.room) {
       return this.enterWaitingRoom(roomInfo);
     }
@@ -875,11 +895,19 @@ export default class OnlineController {
         throw error;
       }
       if (active.hasRoom) {
-        this.setLobbyState(LOBBY_STATES.RECONNECTING, { room: active });
-        this.setStatus('正在进入房间…');
-        const entered = await this.enterExistingRoom(active);
-        this.setStatus('');
-        return Object.assign({ entered: entered.entered !== false }, entered);
+        if (!recoverableRoomStatus(active.status)) {
+          roomLifecycleDiagnostic('startup-ignored-terminal-room', {
+            roomId: active.roomId || '',
+            status: active.status || 'unknown',
+          });
+          clearRoomSession();
+        } else {
+          this.setLobbyState(LOBBY_STATES.RECONNECTING, { room: active });
+          this.setStatus('正在进入房间…');
+          const entered = await this.enterExistingRoom(active);
+          this.setStatus('');
+          return Object.assign({ entered: entered.entered !== false }, entered);
+        }
       }
       if (inviteRoomId) {
         this.setLobbyState(LOBBY_STATES.JOINING_INVITE, { roomId: inviteRoomId });
@@ -919,13 +947,24 @@ export default class OnlineController {
       if (!created || !created.ok) {
         const error = new Error((created && created.error) || 'CREATE_ROOM_FAILED');
         error.code = (created && created.error) || 'CREATE_ROOM_FAILED';
+        error.existing = created && created.existing ? created.existing : null;
+        if (error.code === 'ALREADY_IN_ACTIVE_ROOM') {
+          roomLifecycleDiagnostic('create-room-conflict', {
+            roomId: error.existing && error.existing.roomId ? error.existing.roomId : '',
+            status: error.existing && error.existing.status ? error.existing.status : 'unknown',
+          });
+        }
         throw error;
       }
       if (created.alreadyInRoom) {
-        this.setStatus('正在进入房间…');
-        const entered = await this.enterExistingRoom(created);
-        this.setStatus('');
-        return Object.assign({ entered: entered.entered !== false }, entered);
+        const error = new Error('ALREADY_IN_ACTIVE_ROOM');
+        error.code = 'ALREADY_IN_ACTIVE_ROOM';
+        error.existing = created;
+        roomLifecycleDiagnostic('legacy-create-room-conflict', {
+          roomId: created.roomId || '',
+          status: created.status || 'unknown',
+        });
+        throw error;
       }
       const waiting = await this.enterWaitingRoom(created);
       this.setStatus('');
@@ -2317,19 +2356,33 @@ export default class OnlineController {
   async leaveTable() {
     const roomId = this.roomId;
     if (!roomId) return false;
-    callFunction('game', { action: 'leaveRoom', roomId })
-      .then((res) => {
-        if (!res || !res.ok) {
-          console.warn('[online] leave room request rejected', { roomId, error: res && res.error });
-        }
-      })
-      .catch((err) => {
-        console.warn('[online] leave room request failed after local exit', {
+    try {
+      const res = await callFunction('game', { action: 'leaveRoom', roomId });
+      if (!res || !res.ok) {
+        const code = (res && res.error) || 'LEAVE_ROOM_FAILED';
+        roomLifecycleDiagnostic('leave-room-rejected', { roomId, code });
+        this.databus.feedback = onlineErrorMessage({ code });
+        return false;
+      }
+      if (res.left || res.closed || res.status === 'closed') {
+        roomLifecycleDiagnostic('leave-room-confirmed', {
           roomId,
-          code: err && (err.code || err.errMsg || err.message),
+          status: res.status || 'left',
         });
+        return this.returnToLobby();
+      }
+      roomLifecycleDiagnostic('leave-room-unconfirmed', {
+        roomId,
+        status: res.status || 'unknown',
       });
-    return this.returnToLobby();
+      this.databus.feedback = onlineErrorMessage({ code: 'LEAVE_ROOM_FAILED' });
+      return false;
+    } catch (err) {
+      const code = err && (err.code || err.errMsg || err.message) || 'LEAVE_ROOM_FAILED';
+      roomLifecycleDiagnostic('leave-room-request-failed', { roomId, code });
+      this.databus.feedback = onlineErrorMessage(err);
+      return false;
+    }
   }
 
   async requestRematch(accept = true) {

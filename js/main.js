@@ -411,6 +411,40 @@ export default class Main {
       });
   }
 
+  promptContinueExistingRoom(controller, existing) {
+    if (!existing || !existing.roomId || !wx.showModal) return;
+    wx.showModal({
+      title: '已有进行中房间',
+      content: '是否继续当前房间？',
+      confirmText: '继续游戏',
+      cancelText: '留在此页',
+      success: (choice) => {
+        if (!choice || !choice.confirm) return;
+        this.menu.setBusy(true);
+        this.menu.setStatus('正在进入当前房间…');
+        controller.enterExistingRoom(existing)
+          .then((result) => {
+            if (result && result.waiting) {
+              this.mode = APP_MODES.WAITING_ROOM;
+              this.menu.setBusy(false);
+              this.menu.showWaitingRoom(result.room || controller.waitingRoom);
+              return;
+            }
+            this.enterOnlineTable();
+          })
+          .catch((err) => {
+            console.error('[online] continue existing room failed', {
+              roomId: existing.roomId,
+              code: err && (err.code || err.message),
+            });
+            this.mode = APP_MODES.CREATE_ROOM;
+            this.menu.setBusy(false);
+            this.menu.setStatus(onlineErrorMessage(err));
+          });
+      },
+    });
+  }
+
   createOnlineRoom(settings = {}) {
     const controller = this.ensureOnlineController();
     if (controller.starting) return;
@@ -437,11 +471,17 @@ export default class Main {
         this.menu.showWaitingRoom(result);
       })
       .catch((err) => {
-        console.error('[online] create room failed', err);
+        console.error('[online] create room failed', {
+          code: err && (err.code || err.message),
+          existingRoomId: err && err.existing && err.existing.roomId ? err.existing.roomId : '',
+        });
         this.mode = APP_MODES.CREATE_ROOM;
         if (this.menu.screen !== 'create-room-settings') this.menu.showCreateRoomSettings();
         this.menu.setBusy(false);
         this.menu.setStatus(onlineErrorMessage(err));
+        if (err && err.code === 'ALREADY_IN_ACTIVE_ROOM') {
+          this.promptContinueExistingRoom(controller, err.existing);
+        }
       });
   }
 

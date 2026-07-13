@@ -929,10 +929,6 @@ await rematchDb.collection('rooms').doc(rematchRoomId).set({
     updatedAt: Date.now(),
   }),
 });
-const activeTableResult = await room.activeRoom({}, { db: rematchDb, _: {}, OPENID: 'host-openid' });
-if (!activeTableResult.hasRoom || activeTableResult.status !== 'tableResult') {
-  throw new Error('tableResult rooms should remain recoverable until the player exits');
-}
 const hostRematch = await room.requestRematch({ roomId: rematchRoomId }, { db: rematchDb, OPENID: 'host-openid' });
 if (!hostRematch.ok || !hostRematch.rematch || !hostRematch.rematch.active || hostRematch.rematchStarted) {
   throw new Error('host should be able to request rematch and wait for other humans');
@@ -940,6 +936,60 @@ if (!hostRematch.ok || !hostRematch.rematch || !hostRematch.rematch.active || ho
 const guestRematch = await room.requestRematch({ roomId: rematchRoomId }, { db: rematchDb, OPENID: 'guest-openid' });
 if (!guestRematch.ok || !guestRematch.rematchStarted || guestRematch.status !== 'playing' || guestRematch.public.round !== 1) {
   throw new Error('all human approvals should restart the same room with round counter reset');
+}
+
+const startupFinalRoomId = '991120';
+const startupFinalPlayers = [
+  { seat: 0, openid: 'startup-final-host', nickName: '终局房主', avatarUrl: '', isHuman: true, online: true, ready: true },
+  { seat: 1, openid: 'startup-final-guest', nickName: '终局客人', avatarUrl: '', isHuman: true, online: true, ready: true },
+];
+await rematchDb.collection('rooms').doc(startupFinalRoomId).set({
+  data: room.documentData({
+    _id: startupFinalRoomId,
+    status: 'tableResult',
+    seatCount: 4,
+    players: startupFinalPlayers,
+    playerOpenids: startupFinalPlayers.map((player) => player.openid),
+    settings: { maxRounds: 2 },
+    hostOpenid: 'startup-final-host',
+    version: 7,
+    state: rematchEngine.state,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }),
+});
+const activeTableResult = await room.activeRoom({}, { db: rematchDb, _: {}, OPENID: 'startup-final-host' });
+const releasedTableResult = (await rematchDb.collection('rooms').doc(startupFinalRoomId).get()).data;
+if (activeTableResult.hasRoom || releasedTableResult.status !== 'closed' || releasedTableResult.playerOpenids.length !== 0) {
+  throw new Error('tableResult rooms should release membership and stay out of startup recovery');
+}
+
+const finishedRecoveryRoomId = '991121';
+const finishedRecoveryState = JSON.parse(JSON.stringify(rematchEngine.state));
+finishedRecoveryState.round = 1;
+const finishedRecoveryPlayers = [
+  { seat: 0, openid: 'finished-host', nickName: '续局房主', avatarUrl: '', isHuman: true, online: true, ready: true },
+  { seat: 1, openid: 'finished-guest', nickName: '续局客人', avatarUrl: '', isHuman: true, online: true, ready: true },
+];
+await rematchDb.collection('rooms').doc(finishedRecoveryRoomId).set({
+  data: room.documentData({
+    _id: finishedRecoveryRoomId,
+    status: 'playing',
+    seatCount: 4,
+    players: finishedRecoveryPlayers,
+    playerOpenids: finishedRecoveryPlayers.map((player) => player.openid),
+    settings: { maxRounds: 2 },
+    hostOpenid: 'finished-host',
+    version: 3,
+    state: finishedRecoveryState,
+    createdAt: Date.now(),
+    updatedAt: Date.now() + 1,
+  }),
+});
+const activeFinished = await room.activeRoom({}, { db: rematchDb, _: {}, OPENID: 'finished-guest' });
+const persistedFinished = (await rematchDb.collection('rooms').doc(finishedRecoveryRoomId).get()).data;
+if (!activeFinished.hasRoom || activeFinished.status !== 'finished' || persistedFinished.status !== 'finished') {
+  throw new Error('activeRoom should normalize non-final result drift to finished and keep it recoverable');
 }
 
 const leaveRoomId = '991123';
