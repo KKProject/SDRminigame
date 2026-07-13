@@ -213,6 +213,7 @@ function createActionHistoryEntry(type, detail = {}) {
 function createSeatHistory() {
   return {
     declinedChiKeys: [],           // 曾放弃吃的牌 key
+    chiKeys:[],                    // 曾经吃过的牌 key
     declinedChiPenaltyKeys: [],    // 放弃吃后的惩罚键（再次吃会进圈）
     chiLocked: false,              // 吃后碰招踏冲突锁
     chiLockSource: null,

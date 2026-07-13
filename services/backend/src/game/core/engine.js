@@ -908,6 +908,17 @@ class HuapaiEngine {
       meld.handKeyCount = action.handKeyCount || Math.max(0, applied.cards.length - 1);
     }
     seat.melds.push(meld);
+    seat.history.actionHistory.push(createActionHistoryEntry(action.type, {
+      cardId: incoming.id,
+      key: incoming.key,
+      sourceSeat: action.sourceSeat,
+      sourceType: action.sourceType,
+      keys: action.keys,
+      meldId: meld.id,
+    }));
+    if (action.type === 'chi') {
+      seat.history.chiKeys.push(incoming.key);
+    }
     if (action.type === 'chi' && action.createsChiLock) {
       seat.history.chiLocked = true;
       seat.history.chiLockSource = {
@@ -957,9 +968,17 @@ class HuapaiEngine {
       this.setFeedback('无法踏牌');
       return;
     }
-    meld.cards = sortCards(meld.cards.concat([state.drawnCard]), this.rules);
+    const taCard = state.drawnCard;
+    meld.cards = sortCards(meld.cards.concat([taCard]), this.rules);
     meld.type = 'ta';
     meld.label = ACTION_LABELS.ta;
+    actingSeat.history.actionHistory.push(createActionHistoryEntry('ta', {
+      cardId: taCard.id,
+      key: taCard.key,
+      meldId: meld.id,
+      ownerSeat: action.ownerSeat,
+      sourceType: 'draw',
+    }));
     const support = validateSupportPairs(state.seats[action.seat].hand, meld.cards, this.rules);
     state.seats[action.seat].history.supportPairObligations.push({
       key: state.drawnCard.key,

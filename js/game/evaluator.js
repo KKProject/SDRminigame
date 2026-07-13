@@ -167,6 +167,7 @@ export function canPengWithIncoming(hand, incomingCard) {
 export function findPengActions(state, seatIndex, incomingCard, sourceSeat, sourceType, rules = DEFAULT_RULES) {
   const seat = state.seats[seatIndex];
   if (seat.history && seat.history.chiLocked) return [];
+  if (hasManuallyDiscardedHandKey(seat, incomingCard.key)) return [];
   if (!canPengWithIncoming(seat.hand, incomingCard)) return [];
   const specialTazi = getSpecialTaziRequirement(seat.hand, incomingCard, rules, 'peng');
   return [{
@@ -186,6 +187,7 @@ export function findPengActions(state, seatIndex, incomingCard, sourceSeat, sour
 export function findZhaoActions(state, seatIndex, incomingCard, sourceSeat, sourceType) {
   const seat = state.seats[seatIndex];
   if (seat.history && seat.history.chiLocked) return [];
+  if (hasManuallyDiscardedHandKey(seat, incomingCard.key)) return [];
   const count = countByKey(seat.hand)[incomingCard.key] || 0;
   if (count < 3) return [];
   const maxGroupSize = Math.min(count + 1, 6);
@@ -226,6 +228,8 @@ export function findZhaoActions(state, seatIndex, incomingCard, sourceSeat, sour
 
 export function findTaActions(state, seatIndex, incomingCard, sourceType) {
   if (sourceType !== 'draw') return [];
+  const respondingSeat = state.seats[seatIndex];
+  if (respondingSeat && hasManuallyDiscardedHandKey(respondingSeat, incomingCard.key)) return [];
   const actions = [];
   state.seats.forEach((owner) => {
     if (owner.id !== seatIndex) return;
@@ -497,22 +501,8 @@ export function computePhraseTripletLocks(hand, rules = DEFAULT_RULES) {
   }, {});
 }
 
-function isDiscardHistoryEntry(entry) {
-  return entry && (entry.type === 'discard' || entry.type === 'auto-discard-draw');
-}
-
 function isManualHandDiscardHistoryEntry(entry) {
   return entry && entry.type === 'discard';
-}
-
-function discardedKeyCounts(seat, keys) {
-  const keySet = new Set(keys);
-  return ((seat.history && seat.history.actionHistory) || []).reduce((counts, entry) => {
-    if (isDiscardHistoryEntry(entry) && keySet.has(entry.key)) {
-      counts[entry.key] = (counts[entry.key] || 0) + 1;
-    }
-    return counts;
-  }, {});
 }
 
 function manualDiscardedKeyCounts(seat, keys) {
@@ -585,7 +575,7 @@ function canDiscardPreservingPhraseDoor(seat, card, rules = DEFAULT_RULES) {
   const manualDiscardedCounts = manualDiscardedKeyCounts(seat, phraseKeys);
   if (isOpeningTwoPairDiscardChain(handCounts, manualDiscardedCounts, phraseKeys)) return true;
 
-  const discardedCounts = discardedKeyCounts(seat, phraseKeys);
+  const discardedCounts = manualDiscardedKeyCounts(seat, phraseKeys);
   const currentTotal = sumCounts(handCounts, phraseKeys);
   const discardedTotal = sumCounts(discardedCounts, phraseKeys);
   const originalTotal = currentTotal + discardedTotal;
@@ -612,6 +602,9 @@ export function isLegalDiscard(seat, card, rules = DEFAULT_RULES) {
   }
   if (!canDiscardPreservingPhraseDoor(seat, card, rules)) {
     return { legal: false, reason: '同句出牌后必须保留可成门路径' };
+  }
+  if ((history.chiKeys || []).includes(card.key)) {
+    return { legal: false, reason: '吃过的牌不能再次打出' };
   }
   return { legal: true };
 }

@@ -280,7 +280,7 @@ The system SHALL detect mandatory chi or peng situations, declined-then-later-ch
 - **THEN** the result MUST name the current player as loser and the other three players as winners
 
 ### Requirement: Discard Restrictions
-The system SHALL enforce phrase discard restrictions with a same-phrase reachability algorithm, SHALL allow opening-hand `xxyy` same-phrase two-pair structures to be freely discarded, and SHALL treat inability to make a legal discard while not winning as circle-loss.
+The system SHALL enforce phrase discard restrictions with a same-phrase reachability algorithm based only on cards actively discarded from hand, SHALL allow opening-hand `xxyy` same-phrase two-pair structures to be freely discarded, SHALL NOT let draw auto-discard (`auto-discard-draw`) consume same-phrase hand discard allowance, and SHALL treat inability to make a legal discard while not winning as circle-loss.
 
 #### Scenario: Exact complete phrase card is discarded
 - **WHEN** a player's same-phrase hand cards are exactly `xyz`
@@ -289,8 +289,14 @@ The system SHALL enforce phrase discard restrictions with a same-phrase reachabi
 
 #### Scenario: Same-phrase discard preserves a reachable door
 - **WHEN** a player attempts to discard a card from phrase `x/y/z`
-- **THEN** the system MUST simulate that discard together with prior discards from the same phrase
+- **THEN** the system MUST simulate that discard together with prior manual hand discards from the same phrase
 - **AND** the discard MUST be legal only if the remaining same-phrase hand cards can still preserve or reach at least one final door among `xyz`, `xxx`, `yyy`, or `zzz` without exceeding the phrase discard allowance, unless a more specific same-phrase discard scenario permits the discard
+
+#### Scenario: Draw auto-discard does not consume same-phrase hand allowance
+- **WHEN** a player holds same-phrase hand cards such as `yyz`
+- **AND** a drawn appearing card from the same phrase was previously auto-discarded as `auto-discard-draw`
+- **THEN** the system MUST judge the next hand discard using only the player's current hand cards and prior manual hand discards
+- **AND** the auto-discarded drawn card MUST NOT consume the same-phrase hand discard allowance
 
 #### Scenario: Xxyz only discards the extra key
 - **WHEN** a player's same-phrase structure is `xxyz`
@@ -326,36 +332,52 @@ The system SHALL enforce phrase discard restrictions with a same-phrase reachabi
 - **THEN** the system MUST end the round as circle-loss for that player
 
 ### Requirement: Discarded Key Response Restrictions
-The system SHALL maintain, for each player and round, a manual hand-discard key record containing only character keys that the player actively discarded from the opening dealt hand. The system SHALL prevent that player from later claiming an appearing card with the same key through chi or hu, and SHALL treat a mandatory chi that is blocked by this record as circle-loss for that player.
+The system SHALL maintain, for each player and round, a manual hand-discard key record containing only character keys that the player actively discarded from hand by selecting a hand card and confirming discard (`discard` event). The system SHALL NOT treat draw auto-discard (`auto-discard-draw`) as a manual hand discard. The system SHALL prevent that player from later claiming an appearing card with the same key through chi, peng, zhao, ta, or hu, even if the player still holds other hand cards with that key. The system SHALL treat a mandatory chi that is blocked by this record as circle-loss for that player.
 
-#### Scenario: Opening hand discard creates response restriction
-- **WHEN** a player actively selects and discards key `x` from the player's opening dealt hand during the current round
+#### Scenario: Manual hand discard creates response restriction
+- **WHEN** a player actively selects and discards key `x` from hand during the current round
 - **THEN** the system MUST add key `x` to that player's manual hand-discard key record for the current round
 
-#### Scenario: Drawn card flow does not create response restriction
-- **WHEN** a player draws key `x` from the deck after the opening deal
-- **AND** no player claims that drawn appearing card
-- **THEN** the system MUST move or record that card according to the draw flow without adding key `x` to the drawing player's manual hand-discard key record
+#### Scenario: Draw auto-discard does not create response restriction
+- **WHEN** a player draws key `x` and no player claims that appearing card
+- **AND** the system auto-discards that card as `auto-discard-draw`
+- **THEN** the system MUST NOT add key `x` to that player's manual hand-discard key record
 
 #### Scenario: Claimed hand discard remains recorded
-- **WHEN** a player actively discards key `x` from the player's opening dealt hand
+- **WHEN** a player actively discards key `x` from hand
 - **AND** that discarded card is later removed from the discard pile because another player claims it
-- **THEN** the system MUST still treat key `x` as manually hand-discarded by the original player for future chi and hu restrictions
+- **THEN** the system MUST still treat key `x` as manually hand-discarded by the original player for future response restrictions
 
 #### Scenario: Manually hand-discarded key cannot be chi
-- **WHEN** a player has key `x` in the player's manual hand-discard key record
+- **WHEN** a player has key `x` in the manual hand-discard key record
 - **AND** an appearing card with key `x` creates an otherwise legal chi action for that player
 - **THEN** the system MUST NOT offer or allow a chi action for that player with key `x`
 
+#### Scenario: Manually hand-discarded key cannot be peng
+- **WHEN** a player has key `x` in the manual hand-discard key record
+- **AND** an appearing card with key `x` creates an otherwise legal peng action for that player
+- **THEN** the system MUST NOT offer or allow peng for that player with key `x`
+- **AND** the restriction MUST apply even if the player still holds two or more hand cards with key `x`
+
+#### Scenario: Manually hand-discarded key cannot be zhao
+- **WHEN** a player has key `x` in the manual hand-discard key record
+- **AND** an appearing card with key `x` creates an otherwise legal zhao action for that player
+- **THEN** the system MUST NOT offer or allow zhao for that player with key `x`
+
+#### Scenario: Manually hand-discarded key cannot be ta
+- **WHEN** a player has key `x` in the manual hand-discard key record
+- **AND** an appearing card with key `x` creates an otherwise legal ta action for that player
+- **THEN** the system MUST NOT offer or allow ta for that player with key `x`
+
 #### Scenario: Manually hand-discarded key cannot be hu
-- **WHEN** a player has key `x` in the player's manual hand-discard key record
+- **WHEN** a player has key `x` in the manual hand-discard key record
 - **AND** an appearing card with key `x` creates an otherwise legal hu action for that player
 - **THEN** the system MUST NOT offer or allow hu for that player with that appearing card
 
-#### Scenario: Non-hand discard does not block chi or hu
-- **WHEN** key `x` previously appeared only through a post-opening draw flow or another non-hand-discard event for a player
-- **AND** a later appearing card with key `x` creates an otherwise legal chi or hu action for that player
-- **THEN** the system MUST allow that chi or hu if all other rule requirements are satisfied
+#### Scenario: Non-manual discard does not block responses
+- **WHEN** key `x` previously appeared only through draw auto-discard or another non-manual-hand-discard event for a player
+- **AND** a later appearing card with key `x` creates an otherwise legal response action for that player
+- **THEN** the system MUST allow that response if all other rule requirements are satisfied
 
 #### Scenario: Mandatory chi blocked by manual hand discard causes circle-loss
 - **WHEN** an appearing card with key `x` creates a mandatory chi for a player
@@ -416,4 +438,3 @@ The system SHALL include deterministic payment details and per-seat round score 
 - **THEN** the result MUST include one payment from the losing player to each of the other three players
 - **AND** the result MUST include each seat's score delta for that round
 - **AND** all round score deltas MUST sum to zero
-

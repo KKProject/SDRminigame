@@ -48,6 +48,27 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **WHEN** 相同的牌面与操作序列分别经过既有本地逻辑与服务端逻辑
 - **THEN** 服务端的规则判定与计分结果 MUST 与既有花牌规则结果一致
 
+### Requirement: Seat History Key Restrictions
+The server game engine SHALL maintain per-seat history fields needed for bidirectional key restrictions during a round. The engine MUST record manual hand discards in `actionHistory` with type `discard` and key, MUST record draw auto-discards with type `auto-discard-draw` without treating them as manual hand discards, and MUST append incoming card keys to `chiKeys` when a chi action is successfully applied.
+
+#### Scenario: Engine records manual discard in action history
+- **WHEN** a player successfully discards a hand card with key `x` through the authoritative discard flow
+- **THEN** the engine MUST append an `actionHistory` entry with type `discard` and key `x` for that seat
+
+#### Scenario: Engine records draw auto-discard separately
+- **WHEN** a drawn appearing card with key `x` is auto-discarded because no player claims it
+- **THEN** the engine MUST append an `actionHistory` entry with type `auto-discard-draw` and key `x`
+- **AND** the engine MUST NOT treat that entry as a manual hand-discard key record
+- **AND** the engine MUST NOT let that entry consume same-phrase hand discard allowance
+
+#### Scenario: Engine records chi key on successful chi
+- **WHEN** the engine successfully applies a chi action with incoming card key `x` for a seat
+- **THEN** the engine MUST append key `x` to that seat's `chiKeys`
+
+#### Scenario: Engine does not record chi key for peng zhao ta
+- **WHEN** the engine successfully applies peng, zhao, or ta for incoming card key `x`
+- **THEN** the engine MUST NOT append key `x` to `chiKeys` solely because of that action
+
 ### Requirement: 并发与一致性保护
 系统 SHALL 防止对同一牌桌的并发操作破坏权威状态一致性。服务端 MUST 通过版本号或等价机制识别基于过期状态的操作并拒绝之，保证操作按权威顺序应用。该一致性保护 MUST 同时适用于 WebSocket 操作、云函数兜底操作和动画回执。
 
@@ -330,4 +351,3 @@ TBD - created by archiving change add-wechat-online-battle. Update Purpose after
 - **WHEN** 当前房间长时间等待动画回执
 - **THEN** 服务端诊断 MUST 能显示仍在等待的席位、已回执席位和截止时间
 - **AND** 诊断 MUST 能区分等待在线玩家、玩家离线移除和超时托管推进
-

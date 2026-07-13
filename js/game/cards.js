@@ -153,6 +153,7 @@ export function createActionHistoryEntry(type, detail = {}) {
 export function createSeatHistory() {
   return {
     declinedChiKeys: [],
+    chiKeys: [],
     declinedChiPenaltyKeys: [],
     chiLocked: false,
     chiLockSource: null,
