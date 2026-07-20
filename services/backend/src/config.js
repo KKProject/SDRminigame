@@ -18,7 +18,7 @@ function readConfig(env = process.env) {
   const socketUrl = env.PUBLIC_SOCKET_URL
     || env.BACKEND_SOCKET_URL
     || (apiBaseUrl ? `${apiBaseUrl.replace(/^http/i, 'ws')}/ws` : '');
-  return {
+  const config = {
     port: Number(env.PORT || env.BACKEND_PORT || DEFAULT_PORT),
     apiBaseUrl,
     socketUrl,
@@ -33,6 +33,7 @@ function readConfig(env = process.env) {
     socketTokenSecret: env.SOCKET_TOKEN_SECRET || env.WEBSOCKET_TOKEN_SECRET || 'huapai-dev-socket-secret',
     adminToken: env.ADMIN_TOKEN || '',
     adminSessionSecret: env.ADMIN_SESSION_SECRET || env.ADMIN_TOKEN || env.APP_TOKEN_SECRET || env.SESSION_TOKEN_SECRET || 'huapai-dev-admin-secret',
+    initialAdminUsername: String(env.INITIAL_ADMIN_USERNAME || '').trim(),
     appTokenTtlMs: Number(env.APP_TOKEN_TTL_MS || DEFAULT_APP_TOKEN_TTL_MS),
     socketTokenTtlMs: Number(env.SOCKET_TOKEN_TTL_MS || DEFAULT_SOCKET_TOKEN_TTL_MS),
     adminSessionTtlMs: Number(env.ADMIN_SESSION_TTL_MS || DEFAULT_ADMIN_SESSION_TTL_MS),
@@ -45,6 +46,13 @@ function readConfig(env = process.env) {
     handlerTimeoutMs: Number(env.SOCKET_HANDLER_TIMEOUT_MS || 15000),
     protobufEnabled: String(env.SOCKET_PROTOBUF_ENABLED || env.REALTIME_PROTOBUF_ENABLED || '1') !== '0',
   };
+  Object.defineProperty(config, 'initialAdminPassword', {
+    value: String(env.INITIAL_ADMIN_PASSWORD || ''),
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return config;
 }
 
 module.exports = {

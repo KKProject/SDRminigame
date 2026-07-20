@@ -51,10 +51,10 @@ context: |
   - 注意：部署时只同步 `services/backend`，不要覆盖 `/etc/huapai-backend.env`，不要把密钥、MongoDB URI、MongoDB 密码写入 OpenSpec 或日志输出。
 
   CMS/后台管理页速查：
-  - CMS 不是独立前端应用，而是内嵌在同一个后端 Node 服务中，跟随后端一起部署和重启。
-  - 公网入口: `https://www.wangyouk.cn/admin`
-  - 服务器本机入口: `http://127.0.0.1:8080/admin`
-  - 页面源码: `services/backend/src/admin-page.js`
+  - CMS 是位于 `services/admin-web` 的独立 Vue 3 + Vite 应用，由 Nginx 托管版本化静态产物。
+  - 公网入口: `https://www.wangyouk.cn/admin/`
+  - 生产静态根: `/var/www/huapai-admin/current/admin`，`current` 原子指向 `releases/<version>`。
+  - 页面源码: `services/admin-web/src`
   - 后台服务源码: `services/backend/src/admin-service.js`
   - 后台路由入口: `services/backend/src/server.js`
   - 管理员数据集合: `adminUsers`
@@ -70,10 +70,19 @@ context: |
     - `POST /api/admin/admins`
     - `POST /api/admin/admins/disable`
   - CMS 冒烟检查:
-    - `curl -fsS https://www.wangyouk.cn/admin | grep -q '管理员登录'`
-    - `ssh aliyun 'curl -fsS http://127.0.0.1:8080/admin | grep -q "管理员登录"'`
+    - `curl -fsS https://www.wangyouk.cn/admin/ | grep -q '<div id="app"></div>'`
+    - `curl -fsS https://www.wangyouk.cn/admin/administrators | grep -q '<div id="app"></div>'`
   - CMS 本地回归:
+    - `npm run check:admin`
     - `node scripts/run-backend-checks.mjs`
+  - CMS 部署:
+    - 仅管理端：`bash scripts/deploy-backend.sh --only-admin`
+    - 后端与管理端：`bash scripts/deploy-backend.sh --with-admin`
+    - 首次安装已审核 Nginx 配置时附加：`--install-admin-nginx`
+  - 管理员安全初始化:
+    - 只有 `adminUsers` 为空时才临时设置 `INITIAL_ADMIN_USERNAME` 和 `INITIAL_ADMIN_PASSWORD`。
+    - 已有管理员时不需要初始化密码，服务不会覆盖或重置现有账号。
+    - 不得在仓库、构建产物、日志或 OpenSpec 中记录真实初始化密码。
   - CMS 日志仍看后端服务日志:
     - `ssh aliyun 'journalctl -u huapai-backend.service -n 100 --no-pager'`
     - `ssh aliyun 'journalctl -u huapai-backend.service -f'`

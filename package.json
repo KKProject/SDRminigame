@@ -3,6 +3,9 @@
     "miniprogram-ci": "^2.1.31"
   },
   "scripts": {
+    "check:admin": "npm --prefix services/admin-web run check",
+    "deploy:admin": "bash scripts/deploy-backend.sh --only-admin",
+    "deploy:all": "bash scripts/deploy-backend.sh --with-admin",
     "deploy:backend": "bash scripts/deploy-backend.sh",
     "upload": "node scripts/upload.js"
   }

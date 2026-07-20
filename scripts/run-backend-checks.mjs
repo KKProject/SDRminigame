@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+const { AdminService, hashPassword } = require('../services/backend/src/admin-service.js');
 const { AuthService } = require('../services/backend/src/auth-service.js');
 const { readConfig } = require('../services/backend/src/config.js');
 const { createDatabase, MemoryDocumentDatabase } = require('../services/backend/src/db.js');
@@ -10,6 +11,9 @@ const { CODEC_VERSION } = require('../services/backend/src/codec.js');
 const { decodeProtobufFrame, encodeProtobufFrame } = require('../services/backend/src/protobuf.js');
 const { issueAppToken, issueSocketToken, verifyAppToken, verifySocketToken } = require('../services/backend/src/tokens.js');
 const { WebSocket } = require('../services/backend/node_modules/ws');
+
+const TEST_INITIAL_USERNAME = 'bootstrap-owner';
+const TEST_INITIAL_PASSWORD = 'test-only-bootstrap-pass';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -22,6 +26,8 @@ const config = readConfig({
   APP_TOKEN_SECRET: 'app-secret',
   SOCKET_TOKEN_SECRET: 'socket-secret',
   BACKEND_DEV_OPENID: 'openid-a',
+  INITIAL_ADMIN_USERNAME: TEST_INITIAL_USERNAME,
+  INITIAL_ADMIN_PASSWORD: TEST_INITIAL_PASSWORD,
 });
 assert(config.databaseDriver === 'mongodb', 'backend should default to MongoDB storage');
 
@@ -162,7 +168,48 @@ const adminConfig = readConfig({
   APP_TOKEN_SECRET: 'app-secret',
   SOCKET_TOKEN_SECRET: 'socket-secret',
   ADMIN_SESSION_SECRET: 'admin-secret',
+  INITIAL_ADMIN_USERNAME: TEST_INITIAL_USERNAME,
+  INITIAL_ADMIN_PASSWORD: TEST_INITIAL_PASSWORD,
 });
+assert(adminConfig.initialAdminPassword === TEST_INITIAL_PASSWORD, 'admin bootstrap password should be readable by the initializer');
+assert(!Object.keys(adminConfig).includes('initialAdminPassword'), 'admin bootstrap password should not be enumerable');
+assert(!JSON.stringify(adminConfig).includes(TEST_INITIAL_PASSWORD), 'serialized config should not expose the admin bootstrap password');
+
+const missingInitialDb = new MemoryDocumentDatabase();
+const missingInitialAdmin = new AdminService({ config: readConfig({ ADMIN_SESSION_SECRET: 'admin-secret' }), db: missingInitialDb });
+let missingInitialError = null;
+try {
+  await missingInitialAdmin.ensureInitialAdmin();
+} catch (err) {
+  missingInitialError = err;
+}
+assert(missingInitialError && missingInitialError.code === 'INITIAL_ADMIN_USERNAME_REQUIRED', 'empty admin storage should require bootstrap configuration');
+assert(!JSON.stringify(missingInitialError).includes(TEST_INITIAL_PASSWORD), 'bootstrap configuration errors should not expose credentials');
+
+const invalidInitialAdmin = new AdminService({
+  config: readConfig({ INITIAL_ADMIN_USERNAME: 'invalid username', INITIAL_ADMIN_PASSWORD: TEST_INITIAL_PASSWORD }),
+  db: new MemoryDocumentDatabase(),
+});
+let invalidInitialError = null;
+try {
+  await invalidInitialAdmin.ensureInitialAdmin();
+} catch (err) {
+  invalidInitialError = err;
+}
+assert(invalidInitialError && invalidInitialError.code === 'INITIAL_ADMIN_USERNAME_INVALID', 'invalid bootstrap username should reject initialization');
+
+const existingAdminDb = new MemoryDocumentDatabase();
+const existingPassword = hashPassword('existing-test-password');
+await existingAdminDb.collection('adminUsers').doc('existing-owner').set({ data: {
+  username: 'existing-owner', role: 'superadmin', enabled: true, defaultAdmin: true,
+  createdAt: 'existing', updatedAt: 'existing', createdBy: 'migration',
+  salt: existingPassword.salt, passwordHash: existingPassword.passwordHash,
+} });
+const existingAdminService = new AdminService({ config: readConfig({}), db: existingAdminDb });
+await existingAdminService.ensureInitialAdmin();
+const existingAdminSnap = await existingAdminDb.collection('adminUsers').limit(10).get();
+assert(existingAdminSnap.data.length === 1 && existingAdminSnap.data[0].updatedAt === 'existing', 'existing admins should not be created or overwritten');
+
 const adminDb = new MemoryDocumentDatabase();
 await adminDb.collection('rooms').doc('room-a').set({ data: { status: 'waiting' } });
 await adminDb.collection('rooms').doc('room-b').set({ data: { status: 'playing' } });
@@ -173,8 +220,7 @@ const adminApp = await createBackendServer({ config: adminConfig, db: adminDb })
 await adminApp.listen(0);
 const adminBase = `http://127.0.0.1:${adminApp.server.address().port}`;
 const adminPage = await fetch(`${adminBase}/admin`);
-const adminPageText = await adminPage.text();
-assert(adminPage.status === 200 && /管理员登录/.test(adminPageText), 'admin page should render the login workspace');
+assert(adminPage.status === 404, 'Node backend should no longer render the admin page');
 const adminApiUnauthorized = await fetch(`${adminBase}/api/admin/status`, {
   headers: { authorization: 'Bearer wrong' },
 });
@@ -182,20 +228,20 @@ assert(adminApiUnauthorized.status === 401, 'admin api should reject an invalid 
 const adminLoginFailed = await fetch(`${adminBase}/api/admin/login`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ username: 'wangyk', password: 'wrong' }),
+  body: JSON.stringify({ username: TEST_INITIAL_USERNAME, password: 'wrong' }),
 });
 assert(adminLoginFailed.status === 401, 'admin login should reject wrong password');
 const adminLogin = await fetch(`${adminBase}/api/admin/login`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ username: 'wangyk', password: 'ww808123' }),
+  body: JSON.stringify({ username: TEST_INITIAL_USERNAME, password: TEST_INITIAL_PASSWORD }),
 }).then((res) => res.json());
-assert(adminLogin.ok && adminLogin.token && adminLogin.admin.role === 'superadmin', 'default superadmin should login');
+assert(adminLogin.ok && adminLogin.token && adminLogin.admin.role === 'superadmin', 'initial superadmin should login');
 const adminAuthHeaders = { authorization: `Bearer ${adminLogin.token}` };
 const adminMe = await fetch(`${adminBase}/api/admin/me`, { headers: adminAuthHeaders }).then((res) => res.json());
-assert(adminMe.ok && adminMe.admin.username === 'wangyk', 'admin me should return current admin');
+assert(adminMe.ok && adminMe.admin.username === TEST_INITIAL_USERNAME, 'admin me should return current admin');
 const adminList = await fetch(`${adminBase}/api/admin/admins`, { headers: adminAuthHeaders }).then((res) => res.json());
-assert(adminList.ok && adminList.admins.some((item) => item.username === 'wangyk'), 'superadmin should list admins');
+assert(adminList.ok && adminList.admins.some((item) => item.username === TEST_INITIAL_USERNAME), 'superadmin should list admins');
 assert(!JSON.stringify(adminList).includes('passwordHash') && !JSON.stringify(adminList).includes('salt'), 'admin list should hide password fields');
 const createAdmin = await fetch(`${adminBase}/api/admin/admins`, {
   method: 'POST',
@@ -221,9 +267,9 @@ assert(opsAdminList.status === 403, 'regular admin should not list admins');
 const disableDefaultAdmin = await fetch(`${adminBase}/api/admin/admins/disable`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', ...adminAuthHeaders },
-  body: JSON.stringify({ username: 'wangyk' }),
+  body: JSON.stringify({ username: TEST_INITIAL_USERNAME }),
 }).then((res) => res.json());
-assert(!disableDefaultAdmin.ok && disableDefaultAdmin.error === 'ADMIN_DEFAULT_CANNOT_DISABLE', 'default superadmin should not be disabled');
+assert(!disableDefaultAdmin.ok && disableDefaultAdmin.error === 'ADMIN_DEFAULT_CANNOT_DISABLE', 'initial superadmin should not be disabled');
 const disableOpsAdmin = await fetch(`${adminBase}/api/admin/admins/disable`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', ...adminAuthHeaders },
@@ -498,7 +544,17 @@ rejectPullForB = false;
 
 const jsonRollbackMessages = [];
 const jsonRollbackRawKinds = [];
-const jsonRollbackConfig = Object.assign({}, config, { protobufEnabled: false });
+const jsonRollbackConfig = readConfig({
+  PORT: '0',
+  PUBLIC_API_BASE_URL: 'https://api.example.com',
+  PUBLIC_SOCKET_URL: 'wss://api.example.com/ws',
+  APP_TOKEN_SECRET: 'app-secret',
+  SOCKET_TOKEN_SECRET: 'socket-secret',
+  BACKEND_DEV_OPENID: 'openid-a',
+  SOCKET_PROTOBUF_ENABLED: '0',
+  INITIAL_ADMIN_USERNAME: TEST_INITIAL_USERNAME,
+  INITIAL_ADMIN_PASSWORD: TEST_INITIAL_PASSWORD,
+});
 const jsonRollbackApp = await createBackendServer({ config: jsonRollbackConfig, db: new MemoryDocumentDatabase(), game: socketGame, logger: quietSocketLogger });
 await jsonRollbackApp.listen(0);
 const jsonRollbackPort = jsonRollbackApp.server.address().port;
@@ -538,6 +594,8 @@ const socketLogConfig = readConfig({
   BACKEND_DEV_OPENID: 'openid-a',
   SOCKET_HEARTBEAT_MS: '10',
   SOCKET_CONNECTION_TIMEOUT_MS: '1000',
+  INITIAL_ADMIN_USERNAME: TEST_INITIAL_USERNAME,
+  INITIAL_ADMIN_PASSWORD: TEST_INITIAL_PASSWORD,
 });
 const socketLogApp = await createBackendServer({
   config: socketLogConfig,

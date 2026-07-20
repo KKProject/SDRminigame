@@ -2,8 +2,6 @@ const crypto = require('crypto');
 
 const { issueToken, verifyToken } = require('./tokens');
 
-const DEFAULT_ADMIN_USERNAME = 'wangyk';
-const DEFAULT_ADMIN_PASSWORD = 'ww808123';
 const DEFAULT_ADMIN_ROLE = 'superadmin';
 const ADMIN_COLLECTION = 'adminUsers';
 const PASSWORD_ITERATIONS = 100000;
@@ -58,6 +56,12 @@ function validateRole(role) {
     throw error;
   }
   return value;
+}
+
+function initialAdminConfigError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
 }
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
@@ -117,13 +121,29 @@ class AdminService {
     }
   }
 
-  async ensureDefaultAdmin() {
-    const existing = await this.getAdmin(DEFAULT_ADMIN_USERNAME);
-    if (existing) return safeAdmin(existing);
+  async ensureInitialAdmin() {
+    const existing = await this.collection().limit(1).get();
+    if (existing.data && existing.data.length) return safeAdmin(existing.data[0]);
+
+    const username = normalizeUsername(this.config.initialAdminUsername);
+    const initialPassword = String(this.config.initialAdminPassword || '');
+    if (!username) throw initialAdminConfigError('INITIAL_ADMIN_USERNAME_REQUIRED');
+    if (!initialPassword) throw initialAdminConfigError('INITIAL_ADMIN_PASSWORD_REQUIRED');
+    try {
+      validateUsername(username);
+    } catch (err) {
+      throw initialAdminConfigError('INITIAL_ADMIN_USERNAME_INVALID');
+    }
+    try {
+      validatePassword(initialPassword);
+    } catch (err) {
+      throw initialAdminConfigError('INITIAL_ADMIN_PASSWORD_INVALID');
+    }
+
     const stampedAt = nowIso();
-    const password = hashPassword(DEFAULT_ADMIN_PASSWORD);
+    const password = hashPassword(initialPassword);
     const data = {
-      username: DEFAULT_ADMIN_USERNAME,
+      username,
       role: DEFAULT_ADMIN_ROLE,
       enabled: true,
       defaultAdmin: true,
@@ -133,7 +153,7 @@ class AdminService {
       salt: password.salt,
       passwordHash: password.passwordHash,
     };
-    await this.collection().doc(DEFAULT_ADMIN_USERNAME).set({ data });
+    await this.collection().doc(username).set({ data });
     return safeAdmin(data);
   }
 
@@ -216,10 +236,10 @@ class AdminService {
   async disableAdmin(actor, username) {
     this.requireSuperAdmin(actor);
     const id = normalizeUsername(username);
-    if (id === DEFAULT_ADMIN_USERNAME) return { ok: false, error: 'ADMIN_DEFAULT_CANNOT_DISABLE' };
-    if (id === actor.username) return { ok: false, error: 'ADMIN_SELF_CANNOT_DISABLE' };
     const existing = await this.getAdmin(id);
     if (!existing) return { ok: false, error: 'ADMIN_NOT_FOUND' };
+    if (existing.defaultAdmin) return { ok: false, error: 'ADMIN_DEFAULT_CANNOT_DISABLE' };
+    if (id === actor.username) return { ok: false, error: 'ADMIN_SELF_CANNOT_DISABLE' };
     const stampedAt = nowIso();
     await this.collection().doc(id).update({ data: { enabled: false, updatedAt: stampedAt } });
     return { ok: true, admin: safeAdmin(Object.assign({}, existing, { enabled: false, updatedAt: stampedAt })) };
@@ -233,8 +253,6 @@ class AdminService {
 module.exports = {
   ADMIN_COLLECTION,
   AdminService,
-  DEFAULT_ADMIN_PASSWORD,
-  DEFAULT_ADMIN_USERNAME,
   hashPassword,
   verifyPassword,
 };

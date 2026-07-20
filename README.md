@@ -36,6 +36,7 @@
 │   ├── main.js                   // 游戏入口主循环
 │   └── render.js                 // Canvas 初始化和屏幕尺寸
 ├── services
+│   ├── admin-web                 // Vue 3 + Vite 后台管理应用
 │   └── backend                   // 自有 HTTPS API 与 WebSocket 后端
 ├── scripts                       // 本地验证脚本
 │   └── run-huapai-checks.mjs     // 共享规则/布局验证脚本
@@ -66,5 +67,30 @@ node scripts/run-backend-checks.mjs
 node scripts/run-server-core-checks.mjs
 npx --yes esbuild game.js --bundle --format=iife --platform=browser --outfile=/tmp/sdrminigame-rules-bundle.js
 ```
+
+## 后台管理应用
+
+后台管理前端位于 `services/admin-web`，与 Node 后端独立构建。开发服务器在 `/admin/` 下运行，并将 `/api` 代理到 `http://127.0.0.1:8080`。
+
+```bash
+npm --prefix services/admin-web install
+npm --prefix services/admin-web run dev
+npm run check:admin
+```
+
+生产环境由 Nginx 在 `https://www.wangyouk.cn/admin/` 托管版本化静态产物，`/api/admin/*` 仍由后端处理。部署命令：
+
+```bash
+# 仅部署后端（保持原行为）
+npm run deploy:backend
+
+# 仅部署管理端；首次切换 Nginx 时额外传 --install-admin-nginx
+npm run deploy:admin
+
+# 后端和管理端一起部署
+npm run deploy:all
+```
+
+管理员集合为空时，后端只接受运行环境中的 `INITIAL_ADMIN_USERNAME` 和 `INITIAL_ADMIN_PASSWORD` 完成一次性初始化；已有管理员时不会创建、覆盖或重置账号。初始化密码不得提交到仓库、输出到日志或放入前端环境变量，初始化完成后应从长期运行配置中移除。
 
 客户端动画统一由 `js/main.js` 的帧循环更新时间。项目内固定使用 Tween.js 25.0.0 的 ESM 发布文件，位于 `js/vendor/tween/`，许可证为 MIT；动画维护边界见 `js/game/animation/README.md`。

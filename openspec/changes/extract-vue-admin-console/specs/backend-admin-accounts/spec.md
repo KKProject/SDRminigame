@@ -1,9 +1,4 @@
-# backend-admin-accounts Specification
-
-## Purpose
-定义自有后端后台管理员账号的安全初始化、密码登录、签名会话授权、角色边界和管理员维护行为，确保凭据不被暴露且高风险账号操作受到保护。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 管理员账号登录
 系统 SHALL 提供后台管理员账号密码登录能力。系统 MUST 在管理员集合为空时从受保护的运行环境配置创建一个初始超级管理员，并 MUST NOT 在源码、页面、构建产物、文档或日志中提供可用的默认密码。
@@ -37,22 +32,6 @@
 - **WHEN** 请求提交不存在的用户名、错误密码或已禁用账号
 - **THEN** 系统 MUST 拒绝登录
 - **AND** 系统 MUST NOT 返回后台会话 token
-
-### Requirement: 后台会话授权
-系统 SHALL 要求后台管理 API 使用管理员登录后获得的会话 token。系统 MUST 校验 token 签名、过期时间和账号启用状态。
-
-#### Scenario: 有效会话可访问后台 API
-- **WHEN** 请求携带有效后台会话 token
-- **THEN** 系统 MUST 允许访问后台状态、房间数据清理和管理员信息 API
-
-#### Scenario: 无效会话被拒绝
-- **WHEN** 请求未携带 token、token 签名无效、token 已过期或账号已禁用
-- **THEN** 系统 MUST 返回未授权
-- **AND** 系统 MUST NOT 执行任何数据修改操作
-
-#### Scenario: 查询当前管理员
-- **WHEN** 已登录管理员请求当前身份信息
-- **THEN** 系统 MUST 返回当前管理员的用户名和角色
 
 ### Requirement: 管理员账号维护
 系统 SHALL 允许超级管理员维护管理员账号。系统 MUST 只允许 `superadmin` 角色创建或禁用管理员，并 MUST 保护初始管理员和当前操作账号不被禁用。
@@ -92,3 +71,4 @@
 - **WHEN** 超级管理员请求禁用当前操作账号
 - **THEN** 系统 MUST 拒绝请求
 - **AND** 当前操作账号 MUST 保持启用状态
+

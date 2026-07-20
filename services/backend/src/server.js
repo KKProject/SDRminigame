@@ -1,7 +1,6 @@
 const http = require('http');
 const { URL } = require('url');
 
-const { adminPageHtml } = require('./admin-page');
 const { AdminService } = require('./admin-service');
 const { AuthService } = require('./auth-service');
 const { readConfig } = require('./config');
@@ -18,14 +17,6 @@ function sendJson(res, statusCode, payload) {
     'access-control-allow-methods': 'GET,POST,OPTIONS',
   });
   res.end(JSON.stringify(payload));
-}
-
-function sendHtml(res, statusCode, html) {
-  res.writeHead(statusCode, {
-    'content-type': 'text/html; charset=utf-8',
-    'cache-control': 'no-store',
-  });
-  res.end(html);
 }
 
 function readBody(req) {
@@ -160,7 +151,7 @@ async function createBackendServer(options = {}) {
   const config = options.config || readConfig();
   const db = options.db || await createDatabase(config);
   const admin = options.admin || new AdminService({ config, db });
-  await admin.ensureDefaultAdmin();
+  await admin.ensureInitialAdmin();
   const auth = options.auth || new AuthService({ config, db, fetch: options.fetch });
   const game = options.game || new LocalGameService({ db });
   const logger = options.logger || console;
@@ -173,10 +164,6 @@ async function createBackendServer(options = {}) {
     }
     if (req.method === 'GET' && parsedUrl.pathname === '/healthz') {
       sendJson(res, 200, { ok: true, service: 'huapai-backend' });
-      return;
-    }
-    if (req.method === 'GET' && parsedUrl.pathname === '/admin') {
-      sendHtml(res, 200, adminPageHtml());
       return;
     }
     if (parsedUrl.pathname === '/api/client-log' && req.method === 'POST') {
