@@ -4,9 +4,14 @@
   },
   "scripts": {
     "check:admin": "npm --prefix services/admin-web run check",
+    "check:images": "node scripts/optimize-images.mjs --check",
     "deploy:admin": "bash scripts/deploy-backend.sh --only-admin",
     "deploy:all": "bash scripts/deploy-backend.sh --with-admin",
     "deploy:backend": "bash scripts/deploy-backend.sh",
+    "optimize:images": "node scripts/optimize-images.mjs",
     "upload": "node scripts/upload.js"
+  },
+  "devDependencies": {
+    "pngjs": "7.0.0"
   }
 }

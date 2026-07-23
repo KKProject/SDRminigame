@@ -1,0 +1,232 @@
+{
+  "generatedAt": "2026-07-23T13:29:09.929Z",
+  "mode": "optimize",
+  "files": [
+    {
+      "file": "images/actions.png",
+      "width": 1895,
+      "height": 470,
+      "hasAlpha": true,
+      "rgbaSha256": "2472f465e0f6f8151a257253fa9a354a7b077c658487b76b7b79e1276e1b4030",
+      "beforeBytes": 614106,
+      "afterBytes": 614106,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/avatar_border.png",
+      "width": 240,
+      "height": 240,
+      "hasAlpha": true,
+      "rgbaSha256": "a53590590a12bdb48eb04b3413e8daa5db8d6e9de7959939ce9e98af9f16a14a",
+      "beforeBytes": 29040,
+      "afterBytes": 27975,
+      "savedBytes": 1065,
+      "status": "optimized",
+      "reason": "recompressed"
+    },
+    {
+      "file": "images/create_room.png",
+      "width": 600,
+      "height": 171,
+      "hasAlpha": true,
+      "rgbaSha256": "16bf3dd6299bcd541dd7bbecfa408b99e854899fba8b1fd2f032a4fbda5966a7",
+      "beforeBytes": 44746,
+      "afterBytes": 44746,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/element.png",
+      "width": 1281,
+      "height": 1021,
+      "hasAlpha": true,
+      "rgbaSha256": "d566affede6eac783df320a1841bf199d2c668fb4628e129618b78aaa59774fe",
+      "beforeBytes": 294401,
+      "afterBytes": 294064,
+      "savedBytes": 337,
+      "status": "optimized",
+      "reason": "recompressed"
+    },
+    {
+      "file": "images/flwoers.png",
+      "width": 900,
+      "height": 546,
+      "hasAlpha": true,
+      "rgbaSha256": "8b3b330bf99da53e39a721bc9cc6eb0eec7b9187b0eddbecf1c67e63b5f0c0e4",
+      "beforeBytes": 207309,
+      "afterBytes": 207309,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/nickname_bg.png",
+      "width": 300,
+      "height": 60,
+      "hasAlpha": true,
+      "rgbaSha256": "847448bd09b113f92ba9f320795728d3b10d872626f8c9cfd31dc27689a205f2",
+      "beforeBytes": 7339,
+      "afterBytes": 7339,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/round_result_continue.png",
+      "width": 434,
+      "height": 136,
+      "hasAlpha": true,
+      "rgbaSha256": "e8220c779433f551bd3acbc1eab0383048171c823b08be15ce10be01c8402011",
+      "beforeBytes": 26662,
+      "afterBytes": 26662,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/round_result_defeat.png",
+      "width": 446,
+      "height": 140,
+      "hasAlpha": true,
+      "rgbaSha256": "1eb3fcc2df447272f7b0bcb794170ff15e7669db05af1dbe9cf575c7702ad4c5",
+      "beforeBytes": 28013,
+      "afterBytes": 28013,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/round_result_grade.png",
+      "width": 120,
+      "height": 240,
+      "hasAlpha": true,
+      "rgbaSha256": "186ff12deb1d99b5d477ffe4fe4146c3dcd195241afb776eba172ade02c718fc",
+      "beforeBytes": 35746,
+      "afterBytes": 27709,
+      "savedBytes": 8037,
+      "status": "optimized",
+      "reason": "recompressed"
+    },
+    {
+      "file": "images/round_result_hu.png",
+      "width": 192,
+      "height": 192,
+      "hasAlpha": true,
+      "rgbaSha256": "ca9096ce94cc0af3815f74a2606fec58ef55a0dcacbf202adc71475655eea9b3",
+      "beforeBytes": 55876,
+      "afterBytes": 49545,
+      "savedBytes": 6331,
+      "status": "optimized",
+      "reason": "recompressed"
+    },
+    {
+      "file": "images/round_result_panel.png",
+      "width": 2303,
+      "height": 1212,
+      "hasAlpha": true,
+      "rgbaSha256": "5933fff9b0a034586cd6e249f98825fcb0017be9814fa9a532fd6c47e802bbb4",
+      "beforeBytes": 381274,
+      "afterBytes": 381221,
+      "savedBytes": 53,
+      "status": "optimized",
+      "reason": "recompressed"
+    },
+    {
+      "file": "images/round_result_title.png",
+      "width": 1400,
+      "height": 398,
+      "hasAlpha": true,
+      "rgbaSha256": "e05738155ac47bb56b811194dc929139e3b2b2dbc9d1f35135de26baf6366ed2",
+      "beforeBytes": 227200,
+      "afterBytes": 227200,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/round_result_victory.png",
+      "width": 448,
+      "height": 140,
+      "hasAlpha": true,
+      "rgbaSha256": "2b9cb55986377d83c2d2c5cc05b71f540d1dfca991ca528f6fab16a5e5dd44e9",
+      "beforeBytes": 34438,
+      "afterBytes": 34438,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/slogn.png",
+      "width": 900,
+      "height": 300,
+      "hasAlpha": true,
+      "rgbaSha256": "6ab30b37f6f1b4a01caf9dd57b141dc3aa7e431f6faac0813974ece62ee00a74",
+      "beforeBytes": 89789,
+      "afterBytes": 89789,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/userAction.png",
+      "width": 2030,
+      "height": 149,
+      "hasAlpha": true,
+      "rgbaSha256": "698c72223c17318d8bdafa64f573883d58bd7489b5799fedb40bbeb081e05a73",
+      "beforeBytes": 226853,
+      "afterBytes": 226842,
+      "savedBytes": 11,
+      "status": "optimized",
+      "reason": "recompressed"
+    },
+    {
+      "file": "images/wechat_login.png",
+      "width": 600,
+      "height": 168,
+      "hasAlpha": true,
+      "rgbaSha256": "9cfc1bc06d586baf317e35342b412741aa9b94ac19cd7f497f136e6a8b445c29",
+      "beforeBytes": 46843,
+      "afterBytes": 46843,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    }
+  ],
+  "atlases": [
+    {
+      "image": "element.png",
+      "metadata": "element.atlas.json",
+      "expected": {
+        "width": 1281,
+        "height": 1021
+      },
+      "actual": {
+        "width": 1281,
+        "height": 1021
+      }
+    },
+    {
+      "image": "actions.png",
+      "metadata": "action_buttons_named_atlas.json",
+      "expected": {
+        "width": 1895,
+        "height": 470
+      },
+      "actual": {
+        "width": 1895,
+        "height": 470
+      }
+    }
+  ],
+  "totals": {
+    "fileCount": 16,
+    "optimizedCount": 6,
+    "beforeBytes": 2349635,
+    "afterBytes": 2333801,
+    "savedBytes": 15834,
+    "savedPercent": 0.67
+  }
+}
