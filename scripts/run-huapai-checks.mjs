@@ -56,6 +56,7 @@ const {
   CARD_ASPECT_RATIO,
   CARD_SOURCE_HEIGHT,
   HAND_STACK_SOURCE_STEP,
+  rankTableRecordPlayers,
 } = await import(pathToFileURL(join(tempDir, 'layout.mjs')));
 const {
   default: TableRenderer,
@@ -63,6 +64,7 @@ const {
   roundResultDetailWithGrade,
   roundResultGradeLabel,
   roundResultStatusPresentation,
+  tableRecordPlayLabel,
 } = await import(pathToFileURL(join(tempDir, 'renderer.mjs')));
 const {
   default: AssetLoader,
@@ -851,7 +853,62 @@ if (
   finalRoundResultLayout.actionButtons.length !== 1
   || finalRoundResultLayout.actionButtons[0].action.type !== 'viewRecord'
 ) {
-  throw new Error('the final round result should expose only the future record entry');
+  throw new Error('the final round result should expose the table record entry');
+}
+
+const tableRecordPlayers = [
+  { seat: 0, serverSeat: 2, nickName: '同分后座', avatarUrl: '', winRounds: 3, totalScore: 12 },
+  { seat: 1, serverSeat: 0, nickName: '第一名', avatarUrl: 'https://example.test/avatar.png', winRounds: 4, totalScore: 12 },
+  { seat: 2, serverSeat: 1, nickName: '第二名', avatarUrl: '', winRounds: 3, totalScore: 12 },
+  { seat: 3, serverSeat: 3, nickName: '第四名', avatarUrl: '', winRounds: 0, totalScore: -36 },
+];
+const rankedTableRecord = rankTableRecordPlayers(tableRecordPlayers);
+if (
+  rankedTableRecord.map((player) => player.serverSeat).join(',') !== '0,1,2,3'
+  || !rankedTableRecord[0].winner
+  || rankedTableRecord.slice(1).some((player) => player.winner)
+) {
+  throw new Error('table record ranking should use total score, wins, then authoritative seat');
+}
+if (tableRecordPlayLabel({ payType: 'jiahu', repeatRound: true, washTwice: true }) !== '甲胡赔·重局·双洗') {
+  throw new Error('table record settings should render normalized play labels');
+}
+for (const recordCase of [
+  { width: 844, height: 390, insets: { left: 47, top: 0, right: 0, bottom: 21 } },
+  { width: 667, height: 375, insets: { left: 32, top: 0, right: 18, bottom: 16 } },
+]) {
+  const recordLayout = new TableLayout(recordCase.width, recordCase.height, {
+    safeAreaInsets: recordCase.insets,
+  }).build({
+    ...roundResultState,
+    tableFinished: true,
+    tableRecordOpen: true,
+    tableRecord: {
+      roomId: '139240',
+      completedRounds: 2,
+      settings: { payType: 'jiahu', repeatRound: true, washTwice: true },
+      players: tableRecordPlayers,
+    },
+    tableRematch: { active: false, hostDecision: true, canRequest: true },
+  });
+  if (
+    !recordLayout.tableRecord
+    || recordLayout.roundResult
+    || recordLayout.tableRecord.rows.length !== 4
+    || recordLayout.actionButtons.map((button) => button.action.type).join(',') !== 'leaveTable,requestRematch'
+  ) {
+    throw new Error('open table record should replace round result with four ranked rows and rematch actions');
+  }
+  [
+    recordLayout.tableRecord.title,
+    recordLayout.tableRecord.panel,
+    recordLayout.tableRecord.footer,
+    ...recordLayout.tableRecord.actionButtons,
+  ].forEach((region) => assertWithinBounds(region, recordLayout.contentBounds, 'table record safe-area region'));
+  const fallbackRows = recordLayout.tableRecord.rows.filter((row) => !row.player.avatarUrl);
+  if (fallbackRows.length !== 3 || fallbackRows.some((row) => row.avatar.width <= 0)) {
+    throw new Error('table record layout should preserve avatar fallback regions for missing remote images');
+  }
 }
 
 function takeCards(deck, keys) {
@@ -2261,6 +2318,37 @@ if (
   || !finalRecordButtonCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === '查看战绩')
 ) {
   throw new Error('final round should keep the canvas record fallback instead of reusing the continue image');
+}
+const recordRenderState = {
+  ...roundResultState,
+  tableFinished: true,
+  tableRecordOpen: true,
+  tableRecord: {
+    roomId: '139240',
+    completedRounds: 2,
+    settings: { payType: 'jiahu', repeatRound: true, washTwice: true },
+    players: tableRecordPlayers,
+  },
+  tableRematch: { active: false, hostDecision: true, canRequest: true },
+};
+const recordRenderLayout = new TableLayout(667, 375, {
+  safeAreaInsets: { left: 32, top: 0, right: 18, bottom: 16 },
+}).build(recordRenderState);
+const recordRenderCtx = createFakeRenderContext();
+const recordPageRenderer = new TableRenderer({
+  getImage() { return null; },
+  getRemoteImage(url) { return url ? { id: 'remote-avatar' } : null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+recordPageRenderer.drawTableRecordPage(recordRenderCtx, recordRenderState, recordRenderLayout);
+if (
+  !recordRenderCtx.calls.find((call) => call[0] === 'drawImage' && call[1][0].id === 'remote-avatar')
+  || !recordRenderCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === '同')
+  || !recordRenderCtx.calls.find((call) => call[0] === 'fillText' && String(call[1][0]).includes('甲胡赔·重局·双洗'))
+  || recordRenderCtx.calls.find((call) => call[0] === 'fillText' && String(call[1][0]).includes('openid'))
+) {
+  throw new Error('table record renderer should draw remote/fallback avatars, settings, and no sensitive identifiers');
 }
 
 const roundStatsCtx = createFakeRenderContext();

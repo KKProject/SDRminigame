@@ -1,0 +1,92 @@
+# table-record-summary Specification
+
+## Purpose
+TBD - created by archiving change add-table-record-summary-page. Update Purpose after archive.
+## Requirements
+### Requirement: 权威房间累计战绩
+系统 SHALL 在当前房间生命周期内按座位维护累计总积分、胜局数和实际完成局数。统计更新 MUST 与已结算局号绑定并保持幂等；普通胡牌结果 MUST 为唯一赢家增加一局胜局，进圈、流局或其他无唯一赢家结果 MUST NOT 增加胜局。
+
+#### Scenario: 胡牌局累计胜局和积分
+- **WHEN** 一局胡牌结果首次完成权威结算
+- **THEN** 系统 MUST 将本局分数计入各座位累计总积分
+- **AND** 系统 MUST 只为权威赢家的累计胜局增加一
+- **AND** 实际完成局数 MUST 与已完成局号一致
+
+#### Scenario: 重复处理同一局结果
+- **WHEN** 同一局结果因状态写入、重连或生命周期同步被重复处理
+- **THEN** 系统 MUST NOT 重复累计积分或胜局
+
+#### Scenario: 无唯一赢家结果
+- **WHEN** 一局以进圈、流局或其他无唯一赢家结果结束
+- **THEN** 系统 MUST 按现有结算规则累计积分
+- **AND** 所有座位的累计胜局 MUST 保持不变
+
+### Requirement: 脱敏总结算模型
+系统 SHALL 在房间进入 `tableResult` 时向仍在房间内的客户端提供脱敏 `tableRecord`。该模型 MUST 包含房号、实际完成局数、房间玩法配置，以及每个座位的昵称、头像 URL、累计胜局和累计总积分；模型 MUST NOT 包含 `openid`、访问 token 或其他私密身份字段。
+
+#### Scenario: 最终房间生成总结算模型
+- **WHEN** 房间完成最大局数并进入 `tableResult`
+- **THEN** 公共状态 MUST 包含四个座位的权威总结算数据
+- **AND** 总结算数据 MUST 与该房间累计统计和规范化 settings 一致
+
+#### Scenario: AI 座位参与排名
+- **WHEN** 最终房间包含 AI 或托管座位
+- **THEN** 总结算模型 MUST 为该座位提供可展示名称、头像回退信息、胜局和总积分
+- **AND** AI 座位 MUST 与真人座位使用同一排名规则
+
+#### Scenario: 公共模型不泄漏身份
+- **WHEN** 服务端构造 snapshot、delta 或重连恢复状态中的 `tableRecord`
+- **THEN** 模型 MUST NOT 包含任一玩家的 `openid` 或认证信息
+
+### Requirement: 确定性排名
+总结算页 SHALL 将玩家按累计总积分降序、累计胜局降序、权威 seat 升序依次排序，并 MUST 展示唯一且稳定的第 1 至第 4 名。排序第一名 MUST 显示赢家标识。
+
+#### Scenario: 分数不同的玩家排名
+- **WHEN** 四名玩家累计总积分不同
+- **THEN** 总积分较高的玩家 MUST 排在总积分较低的玩家之前
+
+#### Scenario: 玩家累计分数相同
+- **WHEN** 两名或多名玩家累计总积分相同
+- **THEN** 胜局较多者 MUST 排在前面
+- **AND** 总积分和胜局均相同时权威 seat 较小者 MUST 排在前面
+
+### Requirement: 房间总结算页面
+客户端 SHALL 在最终局点击“查看战绩”后打开独立的房间总结算页面。页面 MUST 以设计稿的金红中式风格展示标题、副标题、四行玩家排名、头像、昵称、累计胜局、总积分、赢家标识、房号、实际完成局数和玩法文案，并 MUST 将积分正负号清晰区分。
+
+#### Scenario: 打开总结算页面
+- **WHEN** 玩家在最终局结果页点击“查看战绩”
+- **THEN** 客户端 MUST 打开当前房间总结算页面
+- **AND** 客户端 MUST NOT 再显示“战绩功能待开放”占位提示
+
+#### Scenario: 头像资源不可用
+- **WHEN** 某玩家没有头像或远程头像加载失败
+- **THEN** 页面 MUST 使用昵称首字或默认玩家标识绘制头像占位
+- **AND** 其他战绩内容 MUST 正常展示
+
+#### Scenario: 安全区域和窄横屏适配
+- **WHEN** 页面运行在不同横屏宽高比或存在 safe area inset 的设备
+- **THEN** 标题、四行排名、房间信息和主要操作 MUST 保持在安全内容区域内
+- **AND** 四名玩家信息 MUST 保持可读且不得被操作按钮遮挡
+
+### Requirement: 总结算页面操作
+总结算页 SHALL 复用 `tableResult` 的退出和当前房间重开规则。所有真人玩家 MUST 能退出；房主仅能在有效决策窗口发起再来一局；其他真人 MUST 根据权威重开状态等待、接受或拒绝。
+
+#### Scenario: 玩家退出总结算
+- **WHEN** 任一真人在总结算页点击“退出”
+- **THEN** 客户端 MUST 复用现有退出房间请求
+- **AND** 成功后 MUST 返回在线大厅
+
+#### Scenario: 房主发起再来一局
+- **WHEN** 房主在有效决策窗口且尚未发起重开时点击“再来一局”
+- **THEN** 客户端 MUST 复用现有最终房间重开请求
+- **AND** 页面 MUST 随权威重开状态更新为等待其他真人确认
+
+#### Scenario: 非房主等待房主
+- **WHEN** 重开尚未发起且当前玩家不是房主
+- **THEN** 页面 MUST 显示不可提交的等待房主状态
+- **AND** 客户端 MUST NOT 向服务端发送发起重开请求
+
+#### Scenario: 非房主响应重开
+- **WHEN** 房主已经发起重开且当前真人尚未确认
+- **THEN** 页面 MUST 提供接受与拒绝操作
+- **AND** 接受或拒绝 MUST 复用现有权威确认流程

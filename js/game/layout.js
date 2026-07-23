@@ -47,7 +47,7 @@ function actionButtonWidth(action, buttonHeight) {
 }
 
 export function createRoundResultLayout(contentBounds, state, isLandscape = true, canvasWidth = contentBounds.width) {
-  if (!state || state.phase !== 'result' || !state.roundDetail) return null;
+  if (!state || state.tableRecordOpen || state.phase !== 'result' || !state.roundDetail) return null;
   const titleWidth = Math.max(280, Math.min(
     700,
     Math.floor(contentBounds.width * 0.72),
@@ -179,6 +179,98 @@ export function createRoundResultLayout(contentBounds, state, isLandscape = true
     ),
     button,
     isLandscape,
+  };
+}
+
+export function rankTableRecordPlayers(players = []) {
+  return players.slice()
+    .sort((a, b) => (
+      (Number(b.totalScore) || 0) - (Number(a.totalScore) || 0)
+      || (Number(b.winRounds) || 0) - (Number(a.winRounds) || 0)
+      || (Number(a.serverSeat ?? a.seat) || 0) - (Number(b.serverSeat ?? b.seat) || 0)
+    ))
+    .map((player, index) => Object.assign({}, player, {
+      rank: index + 1,
+      winner: index === 0,
+    }));
+}
+
+export function createTableRecordLayout(contentBounds, state) {
+  if (!state || !state.tableRecordOpen || !state.tableRecord) return null;
+  const record = state.tableRecord;
+  const padX = Math.max(16, Math.floor(contentBounds.width * 0.035));
+  const titleHeight = Math.max(68, Math.min(126, Math.floor(contentBounds.height * 0.18)));
+  const actionsHeight = Math.max(48, Math.min(72, Math.floor(contentBounds.height * 0.105)));
+  const panel = rect(
+    contentBounds.x + padX,
+    contentBounds.y + Math.floor(titleHeight * 0.72),
+    contentBounds.width - padX * 2,
+    contentBounds.height - Math.floor(titleHeight * 0.72) - actionsHeight - 8,
+    { type: 'table-record-panel' }
+  );
+  const footerHeight = Math.max(34, Math.min(48, Math.floor(panel.height * 0.10)));
+  const listTop = panel.y + Math.max(22, Math.floor(panel.height * 0.07));
+  const listBottom = panel.y + panel.height - footerHeight;
+  const rowGap = Math.max(2, Math.floor(panel.height * 0.008));
+  const rowHeight = Math.floor((listBottom - listTop - rowGap * 3) / 4);
+  const ranked = rankTableRecordPlayers(record.players || []);
+  const rows = ranked.map((player, index) => {
+    const row = rect(panel.x + 12, listTop + index * (rowHeight + rowGap), panel.width - 24, rowHeight, {
+      type: 'table-record-row',
+      player,
+    });
+    const rankWidth = Math.max(58, Math.floor(row.width * 0.085));
+    const avatarSize = Math.max(34, Math.min(72, Math.floor(row.height * 0.72)));
+    const scoreWidth = Math.max(112, Math.floor(row.width * 0.19));
+    const statsWidth = Math.max(150, Math.floor(row.width * 0.30));
+    return Object.assign(row, {
+      rank: rect(row.x, row.y, rankWidth, row.height),
+      avatar: rect(row.x + rankWidth + 4, row.y + Math.floor((row.height - avatarSize) / 2), avatarSize, avatarSize),
+      identity: rect(row.x + rankWidth + avatarSize + 14, row.y, Math.max(100, row.width - rankWidth - avatarSize - statsWidth - scoreWidth - 30), row.height),
+      stats: rect(row.x + row.width - statsWidth - scoreWidth, row.y, statsWidth, row.height),
+      score: rect(row.x + row.width - scoreWidth, row.y, scoreWidth, row.height),
+    });
+  });
+
+  const rematch = state.tableRematch || {};
+  let actions;
+  if (rematch.active && rematch.canAccept) {
+    actions = [
+      { type: 'declineRematch', label: '拒绝' },
+      { type: 'requestRematch', label: '同意' },
+    ];
+  } else {
+    let right = { type: 'requestRematch', label: '等待房主', disabled: true };
+    if (rematch.hostDecision && rematch.canRequest) {
+      right = { type: 'requestRematch', label: '再来一局' };
+    } else if (rematch.active) {
+      right = {
+        type: 'requestRematch',
+        label: rematch.selfAgreed ? '等待其他玩家' : '等待确认',
+        disabled: true,
+      };
+    }
+    actions = [{ type: 'leaveTable', label: '退出' }, right];
+  }
+  const buttonWidth = Math.max(150, Math.min(260, Math.floor(contentBounds.width * 0.24)));
+  const buttonHeight = Math.max(42, Math.min(62, actionsHeight - 6));
+  const buttonGap = Math.max(18, Math.floor(contentBounds.width * 0.025));
+  const actionX = contentBounds.x + (contentBounds.width - buttonWidth * 2 - buttonGap) / 2;
+  const actionY = contentBounds.y + contentBounds.height - buttonHeight;
+  const actionButtons = actions.map((action, index) => rect(
+    actionX + index * (buttonWidth + buttonGap),
+    actionY,
+    buttonWidth,
+    buttonHeight,
+    { type: 'action', action }
+  ));
+
+  return {
+    title: rect(contentBounds.x, contentBounds.y, contentBounds.width, titleHeight, { type: 'table-record-title' }),
+    panel,
+    rows,
+    footer: rect(panel.x + 18, panel.y + panel.height - footerHeight, panel.width - 36, footerHeight),
+    actionButtons,
   };
 }
 
@@ -889,8 +981,12 @@ export default class TableLayout {
       return button;
     });
 
+    const tableRecord = createTableRecordLayout(contentBounds, state);
     const roundResult = createRoundResultLayout(contentBounds, state, isLandscape, this.width);
     if (roundResult) actionButtons.push(roundResult.button);
+    if (tableRecord) {
+      actionButtons.splice(0, actionButtons.length, ...tableRecord.actionButtons);
+    }
 
     const seatPanels = createSeatPanels(contentBounds, topBar, handY, isLandscape);
     const seatStatusAreas = createSeatStatusAreas(contentBounds, isLandscape);
@@ -957,6 +1053,7 @@ export default class TableLayout {
       prompt: zones.prompt,
       result: rect(contentBounds.x + contentBounds.width / 2 - resultWidth / 2, resultY, resultWidth, resultHeight, { type: 'result' }),
       roundResult,
+      tableRecord,
     };
   }
 

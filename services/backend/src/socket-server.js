@@ -78,6 +78,7 @@ function publicPatch(publicState = {}) {
     round: publicState.round,
     result: publicState.result || null,
     roundDetail: publicState.roundDetail || null,
+    tableRecord: publicState.tableRecord || null,
     responseSummary: publicState.responseSummary || null,
     pendingActions: [],
     playerActions: [],

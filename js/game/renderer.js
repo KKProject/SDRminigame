@@ -251,6 +251,20 @@ export function roundResultDetailWithGrade(detail = {}, result = {}, isWinner = 
   return fallbackGrade ? Object.assign({}, detail, { huGrade: fallbackGrade }) : detail;
 }
 
+export function tableRecordPlayLabel(settings = {}) {
+  const payType = ({ pihu: '平胡赔', jiahu: '甲胡赔', changhu: '场胡赔' })[settings.payType] || '平胡赔';
+  const flags = [
+    settings.repeatRound ? '重局' : '',
+    settings.washTwice ? '双洗' : '',
+  ].filter(Boolean);
+  return [payType].concat(flags).join('·');
+}
+
+function signedScore(value) {
+  const score = Number(value) || 0;
+  return score > 0 ? `+${score}` : String(score);
+}
+
 export default class TableRenderer {
   constructor(assetLoader) {
     this.assets = assetLoader;
@@ -343,6 +357,12 @@ export default class TableRenderer {
       };
     }
     this.updateEffects(displayState, layout);
+    if (layout.tableRecord) {
+      this.drawTableRecordPage(ctx, displayState, layout);
+      this.drawButtons(ctx, displayState, layout);
+      this.previousHandCards = [];
+      return;
+    }
     if (layout.roundResult) {
       this.drawRoundResultPage(ctx, displayState, layout);
       this.drawButtons(ctx, displayState, layout);
@@ -363,6 +383,131 @@ export default class TableRenderer {
     if (displayState.phase === 'result') this.drawResult(ctx, displayState, layout);
     this.drawButtons(ctx, displayState, layout);
     this.previousHandCards = layout.handCards.map((item) => ({ ...item }));
+  }
+
+  drawTableRecordPage(ctx, state, layout) {
+    const page = layout.tableRecord;
+    const record = state.tableRecord || {};
+    const background = this.assets.getImage('hall') || this.assets.getImage('table');
+    if (background && background.width && background.height) {
+      const sourceRatio = background.width / background.height;
+      const targetRatio = layout.width / layout.height;
+      let sx = 0;
+      let sy = 0;
+      let sw = background.width;
+      let sh = background.height;
+      if (sourceRatio > targetRatio) {
+        sw = background.height * targetRatio;
+        sx = (background.width - sw) / 2;
+      } else {
+        sh = background.width / targetRatio;
+        sy = (background.height - sh) / 2;
+      }
+      ctx.drawImage(background, sx, sy, sw, sh, 0, 0, layout.width, layout.height);
+    } else {
+      ctx.fillStyle = '#35130d';
+      ctx.fillRect(0, 0, layout.width, layout.height);
+    }
+    ctx.fillStyle = 'rgba(35, 8, 3, 0.32)';
+    ctx.fillRect(0, 0, layout.width, layout.height);
+
+    ctx.fillStyle = '#9f2412';
+    roundRect(ctx, page.title.x + page.title.width * 0.25, page.title.y + 5, page.title.width * 0.5, page.title.height * 0.70, 22);
+    ctx.fill();
+    ctx.strokeStyle = '#f5be4b';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffe4a0';
+    ctx.font = `bold ${Math.max(30, Math.floor(page.title.height * 0.36))}px serif`;
+    ctx.fillText('房间总结算', page.title.x + page.title.width / 2, page.title.y + page.title.height * 0.42);
+    ctx.font = `bold ${Math.max(14, Math.floor(page.title.height * 0.17))}px serif`;
+    ctx.fillText('全部对局结束', page.title.x + page.title.width / 2, page.title.y + page.title.height * 0.65);
+
+    ctx.fillStyle = 'rgba(255, 244, 213, 0.96)';
+    roundRect(ctx, page.panel.x, page.panel.y, page.panel.width, page.panel.height, 18);
+    ctx.fill();
+    ctx.strokeStyle = '#d99a32';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    page.rows.forEach((row) => {
+      const player = row.player || {};
+      ctx.fillStyle = player.winner ? 'rgba(255, 211, 92, 0.34)' : 'rgba(255, 250, 232, 0.56)';
+      roundRect(ctx, row.x, row.y, row.width, row.height, 8);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(184, 117, 42, 0.36)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      const rankColors = ['#b32616', '#31506d', '#1f6d43', '#31506d'];
+      ctx.fillStyle = rankColors[player.rank - 1] || '#31506d';
+      roundRect(ctx, row.rank.x + row.rank.width * 0.18, row.rank.y + row.rank.height * 0.18, row.rank.width * 0.64, row.rank.height * 0.64, 8);
+      ctx.fill();
+      ctx.strokeStyle = '#efbd55';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#fff2bd';
+      ctx.font = `bold ${Math.max(20, Math.floor(row.rank.height * 0.38))}px serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(String(player.rank), row.rank.x + row.rank.width / 2, row.rank.y + row.rank.height * 0.62);
+
+      const avatar = player.avatarUrl && this.assets.getRemoteImage
+        ? this.assets.getRemoteImage(player.avatarUrl)
+        : null;
+      ctx.save();
+      roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, row.avatar.width / 2);
+      ctx.clip();
+      if (avatar) {
+        ctx.drawImage(avatar, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height);
+      } else {
+        ctx.fillStyle = '#80452d';
+        ctx.fill();
+        ctx.fillStyle = '#fff0c2';
+        ctx.font = `bold ${Math.max(18, Math.floor(row.avatar.height * 0.42))}px serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText((player.nickName || '玩家').slice(0, 1), row.avatar.x + row.avatar.width / 2, row.avatar.y + row.avatar.height * 0.64);
+      }
+      ctx.restore();
+      ctx.strokeStyle = '#d79328';
+      ctx.lineWidth = 2;
+      roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, row.avatar.width / 2);
+      ctx.stroke();
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#542611';
+      ctx.font = `bold ${Math.max(16, Math.floor(row.height * 0.22))}px Arial`;
+      this.fillClampedText(ctx, player.nickName || `玩家${player.seat + 1}`, row.identity.x + 4, row.identity.y + row.identity.height * 0.44, row.identity.width - 8);
+      ctx.fillStyle = '#835332';
+      ctx.font = `${Math.max(12, Math.floor(row.height * 0.16))}px Arial`;
+      ctx.fillText(player.isHuman === false ? '电脑玩家' : (player.seat === 0 ? '本家' : '在线玩家'), row.identity.x + 4, row.identity.y + row.identity.height * 0.72);
+
+      ctx.fillStyle = '#633317';
+      ctx.font = `${Math.max(13, Math.floor(row.height * 0.18))}px Arial`;
+      ctx.fillText(`总赢局数：${Number(player.winRounds) || 0}局`, row.stats.x + 8, row.stats.y + row.stats.height * 0.42);
+      ctx.fillText(`总积分变化：${signedScore(player.totalScore)}`, row.stats.x + 8, row.stats.y + row.stats.height * 0.72);
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = Number(player.totalScore) >= 0 ? '#b52d1b' : '#2d6947';
+      ctx.font = `bold ${Math.max(28, Math.floor(row.height * 0.42))}px serif`;
+      ctx.fillText(signedScore(player.totalScore), row.score.x + row.score.width / 2, row.score.y + row.score.height * 0.62);
+      if (player.winner) {
+        ctx.fillStyle = '#a32616';
+        ctx.font = `bold ${Math.max(11, Math.floor(row.height * 0.15))}px serif`;
+        ctx.fillText('赢家', row.score.x + row.score.width * 0.82, row.score.y + row.score.height * 0.30);
+      }
+    });
+
+    ctx.fillStyle = '#653719';
+    ctx.font = `${Math.max(12, Math.floor(page.footer.height * 0.42))}px Arial`;
+    ctx.textAlign = 'center';
+    const settings = record.settings || {};
+    ctx.fillText(
+      `房号：${record.roomId || state.tableRoomId || '-'}   ❖   总局数：${record.completedRounds || 0}局   ❖   玩法：${tableRecordPlayLabel(settings)}`,
+      page.footer.x + page.footer.width / 2,
+      page.footer.y + page.footer.height * 0.66
+    );
+    ctx.textAlign = 'left';
   }
 
   drawBackground(ctx, layout) {

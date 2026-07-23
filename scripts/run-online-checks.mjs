@@ -115,6 +115,19 @@ if (
 ) {
   throw new Error('round detail should rotate players and continuation seats while deriving self confirmation');
 }
+const rotatedTableRecord = online.rotateTableRecord({
+  roomId: '139240',
+  completedRounds: 2,
+  settings: { maxRounds: 2 },
+  players: [0, 1, 2, 3].map((seat) => ({ seat, nickName: `玩家${seat}`, totalScore: seat })),
+  rematch: { active: true, status: 'waiting' },
+}, 2);
+if (
+  rotatedTableRecord.players.map((player) => player.seat).join(',') !== '2,3,0,1'
+  || rotatedTableRecord.players.map((player) => player.serverSeat).join(',') !== '0,1,2,3'
+) {
+  throw new Error('table record should rotate local seats while preserving authoritative seats for stable ranking');
+}
 
 if (codec.SYMBOLS.length !== 24 || codec.PHRASES.length !== 8) {
   throw new Error('client codec should define 24 symbols and 8 phrases');
@@ -1116,9 +1129,17 @@ onlineController.socket = {
   close() {},
 };
 onlineDatabus.feedback = '';
+onlineDatabus.tableFinished = true;
+onlineDatabus.tableRecord = {
+  roomId: '139240',
+  completedRounds: 2,
+  settings: { maxRounds: 2 },
+  players: [],
+  rematch: { active: false, status: 'idle' },
+};
 onlineController.handleActionTap({ type: 'viewRecord', label: '查看战绩' });
-if (onlineDatabus.feedback !== '战绩功能待开放') {
-  throw new Error('the future record entry should remain on the result page with placeholder feedback');
+if (!onlineDatabus.tableRecordOpen || onlineDatabus.feedback) {
+  throw new Error('the final result record entry should open the authoritative table record view');
 }
 let leaveRoomRequestSent = false;
 let leaveSocketRequestUsed = false;

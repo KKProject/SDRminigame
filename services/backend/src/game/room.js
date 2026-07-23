@@ -117,6 +117,25 @@ function ensureTableScores(room) {
   return scores;
 }
 
+function emptyTableStats(seatCount = SEAT_COUNT) {
+  const winRounds = {};
+  for (let seat = 0; seat < seatCount; seat += 1) winRounds[seat] = 0;
+  return { completedRounds: 0, winRounds, lastAppliedResultKey: '' };
+}
+
+function ensureTableStats(room) {
+  const seatCount = room && room.seatCount ? room.seatCount : SEAT_COUNT;
+  const source = room && room.tableStats && typeof room.tableStats === 'object' ? room.tableStats : {};
+  const normalized = emptyTableStats(seatCount);
+  normalized.completedRounds = Math.max(0, Number(source.completedRounds) || 0);
+  normalized.lastAppliedResultKey = String(source.lastAppliedResultKey || '');
+  Object.keys(normalized.winRounds).forEach((seat) => {
+    normalized.winRounds[seat] = Math.max(0, Number(source.winRounds && source.winRounds[seat]) || 0);
+  });
+  if (room) room.tableStats = normalized;
+  return normalized;
+}
+
 function roundScoresFromPayments(seatCount, payments = []) {
   const scores = emptyTableScores(seatCount);
   payments.forEach((payment) => {
@@ -131,13 +150,24 @@ function applyRoundSettlementToTableScores(room, engine) {
   const state = engine && engine.state;
   const result = state && state.result;
   ensureTableScores(room);
-  if (!state || state.phase !== 'result' || !result || !result.settlement) return false;
-  if (result.type !== 'win' && result.type !== 'circle-loss') return false;
+  const tableStats = ensureTableStats(room);
+  if (!state || state.phase !== 'result' || !result) return false;
   const round = Number(state.round) || 0;
   const resultKey = `${round}:${result.type}:${result.winner ?? ''}:${result.loser ?? ''}`;
+  let changed = false;
+  if (tableStats.lastAppliedResultKey !== resultKey) {
+    tableStats.completedRounds = Math.max(tableStats.completedRounds, round);
+    if (result.type === 'win' && Number.isInteger(result.winner) && tableStats.winRounds[result.winner] !== undefined) {
+      tableStats.winRounds[result.winner] += 1;
+    }
+    tableStats.lastAppliedResultKey = resultKey;
+    room.tableStats = tableStats;
+    changed = true;
+  }
+  if (!result.settlement || (result.type !== 'win' && result.type !== 'circle-loss')) return changed;
   if (room.lastScoreAppliedResultKey === resultKey) {
     if (!result.tableScores) result.tableScores = normalizeTableScores(room.tableScores, room.seatCount || SEAT_COUNT);
-    return false;
+    return changed;
   }
   const roundScores = result.roundScores || roundScoresFromPayments(room.seatCount || SEAT_COUNT, result.settlement.payments || []);
   result.roundScores = normalizeTableScores(roundScores, room.seatCount || SEAT_COUNT);
@@ -149,6 +179,41 @@ function applyRoundSettlementToTableScores(room, engine) {
   room.lastScoreAppliedResultKey = resultKey;
   result.tableScores = room.tableScores;
   return true;
+}
+
+function buildTableRecord(room, engine) {
+  if (!room || room.status !== 'tableResult' || !engine || !engine.state) return null;
+  const state = engine.state;
+  const stats = ensureTableStats(room);
+  const scores = ensureTableScores(room);
+  const settings = normalizeRoomSettings(room.settings);
+  const rematch = buildRematchState(room);
+  const seats = Array.isArray(state.seats) ? state.seats : [];
+  return {
+    roomId: room._id || '',
+    completedRounds: Math.max(stats.completedRounds, Number(state.round) || 0),
+    settings,
+    players: Array.from({ length: room.seatCount || SEAT_COUNT }, (_, seat) => {
+      const stateSeat = seats[seat] || {};
+      const roomPlayer = (room.players || []).find((player) => player.seat === seat) || {};
+      return {
+        seat,
+        nickName: roomPlayer.nickName || stateSeat.nickName || stateSeat.name || `电脑${seat}`,
+        avatarUrl: roomPlayer.avatarUrl || stateSeat.avatarUrl || '',
+        isHuman: roomPlayer.openid ? roomPlayer.isHuman !== false : Boolean(stateSeat.isHuman),
+        winRounds: Number(stats.winRounds[seat]) || 0,
+        totalScore: Number(scores[seat]) || 0,
+      };
+    }),
+    rematch: {
+      status: rematch.status,
+      active: rematch.active,
+      hostDecision: rematch.hostDecision,
+      deadlineAt: rematch.deadlineAt,
+      agreedCount: rematch.agreedCount,
+      requiredCount: rematch.requiredCount,
+    },
+  };
 }
 
 function buildRoundContinuation(room, engine, openid = null) {
@@ -310,6 +375,7 @@ function publicStateForRoom(room, engine, openid = null) {
   applyRoundSettlementToTableScores(room, engine);
   const state = buildPublicState(engine.state, ensureTableScores(room));
   state.roundDetail = buildRoundDetail(room, engine, openid);
+  state.tableRecord = buildTableRecord(room, engine);
   return state;
 }
 
@@ -317,6 +383,7 @@ function resetTableScores(room) {
   if (!room) return;
   room.tableScores = emptyTableScores(room.seatCount || SEAT_COUNT);
   room.lastScoreAppliedResultKey = '';
+  room.tableStats = emptyTableStats(room.seatCount || SEAT_COUNT);
 }
 
 function recoverableRoomStatus(status) {
@@ -885,6 +952,7 @@ async function writeRoomState(db, roomId, room, engine, version) {
       playerOpenids: roomPlayerOpenids(room),
       settings: normalizeRoomSettings(room.settings),
       tableScores: ensureTableScores(room),
+      tableStats: ensureTableStats(room),
       lastScoreAppliedResultKey: room.lastScoreAppliedResultKey || '',
       rematch: room.rematch || null,
       updatedAt: Date.now(),
@@ -919,6 +987,7 @@ async function persistRoomLifecycle(db, room, engine = null, now = Date.now()) {
     playerOpenids: roomPlayerOpenids(room),
     settings: normalizeRoomSettings(room.settings),
     tableScores: ensureTableScores(room),
+    tableStats: ensureTableStats(room),
     lastScoreAppliedResultKey: room.lastScoreAppliedResultKey || '',
     rematch: room.rematch || null,
     updatedAt: now,
@@ -1076,6 +1145,7 @@ async function quickMatch(event, ctx) {
       settings: normalizeRoomSettings(event.settings || {}),
       hostOpenid: players[0].openid,
       tableScores: emptyTableScores(SEAT_COUNT),
+      tableStats: emptyTableStats(SEAT_COUNT),
       lastScoreAppliedResultKey: '',
       version: 0,
       createdAt: Date.now(),
@@ -1161,6 +1231,7 @@ async function createRoom(event, ctx) {
       playerOpenids: playerOpenids(players),
       settings,
       tableScores: emptyTableScores(SEAT_COUNT),
+      tableStats: emptyTableStats(SEAT_COUNT),
       lastScoreAppliedResultKey: '',
       hostOpenid: OPENID,
       version: 0,
@@ -1394,6 +1465,7 @@ async function startRound(event, ctx) {
         status: room.status,
         settings: normalizeRoomSettings(room.settings),
         tableScores: ensureTableScores(room),
+        tableStats: ensureTableStats(room),
         lastScoreAppliedResultKey: room.lastScoreAppliedResultKey || '',
         updatedAt: Date.now(),
       },

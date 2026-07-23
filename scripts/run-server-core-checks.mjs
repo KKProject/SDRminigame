@@ -911,7 +911,18 @@ rematchEngine.startRound({
 });
 rematchEngine.state.phase = 'result';
 rematchEngine.state.round = 2;
-rematchEngine.state.result = { type: 'draw-round', summary: '测试结束' };
+rematchEngine.state.result = {
+  type: 'win',
+  winner: 0,
+  summary: '测试结束',
+  settlement: {
+    payments: [
+      { from: 1, to: 0, points: 4 },
+      { from: 2, to: 0, points: 4 },
+      { from: 3, to: 0, points: 4 },
+    ],
+  },
+};
 rematchEngine.state.publicEvent = null;
 rematchEngine.state.pendingContinuation = null;
 await rematchDb.collection('rooms').doc(rematchRoomId).set({
@@ -933,9 +944,76 @@ const hostRematch = await room.requestRematch({ roomId: rematchRoomId }, { db: r
 if (!hostRematch.ok || !hostRematch.rematch || !hostRematch.rematch.active || hostRematch.rematchStarted) {
   throw new Error('host should be able to request rematch and wait for other humans');
 }
+if (
+  !hostRematch.public.tableRecord
+  || hostRematch.public.tableRecord.completedRounds !== 2
+  || hostRematch.public.tableRecord.players[0].winRounds !== 1
+  || hostRematch.public.tableRecord.players[0].totalScore !== 12
+  || JSON.stringify(hostRematch.public.tableRecord).includes('openid')
+) {
+  throw new Error('final table record should expose idempotent scores and wins without openid');
+}
+const repeatedHostRematch = await room.requestRematch(
+  { roomId: rematchRoomId },
+  { db: rematchDb, OPENID: 'host-openid' }
+);
+if (
+  repeatedHostRematch.public.tableRecord.players[0].winRounds !== 1
+  || repeatedHostRematch.public.tableRecord.players[0].totalScore !== 12
+) {
+  throw new Error('repeated final-state reads must not apply the same settlement twice');
+}
 const guestRematch = await room.requestRematch({ roomId: rematchRoomId }, { db: rematchDb, OPENID: 'guest-openid' });
 if (!guestRematch.ok || !guestRematch.rematchStarted || guestRematch.status !== 'playing' || guestRematch.public.round !== 1) {
   throw new Error('all human approvals should restart the same room with round counter reset');
+}
+const restartedRematchRoom = (await rematchDb.collection('rooms').doc(rematchRoomId).get()).data;
+if (
+  restartedRematchRoom.tableStats.completedRounds !== 0
+  || Object.values(restartedRematchRoom.tableStats.winRounds).some((count) => count !== 0)
+  || Object.values(restartedRematchRoom.tableScores).some((score) => score !== 0)
+) {
+  throw new Error('starting a rematch should clear table record counters and cumulative scores');
+}
+
+const legacyDrawRoomId = '991119';
+const legacyDrawState = JSON.parse(JSON.stringify(rematchEngine.state));
+legacyDrawState.phase = 'result';
+legacyDrawState.round = 1;
+legacyDrawState.result = { type: 'draw-round', summary: '无赢家' };
+const legacyDrawPlayers = [
+  { seat: 0, openid: 'legacy-draw-host', nickName: '旧房主', avatarUrl: '', isHuman: true, online: true, ready: true },
+  { seat: 1, openid: 'legacy-draw-guest', nickName: '旧客人', avatarUrl: '', isHuman: true, online: true, ready: true },
+];
+legacyDrawState.seats[0].openid = 'legacy-draw-host';
+legacyDrawState.seats[1].openid = 'legacy-draw-guest';
+await rematchDb.collection('rooms').doc(legacyDrawRoomId).set({
+  data: room.documentData({
+    _id: legacyDrawRoomId,
+    status: 'tableResult',
+    seatCount: 4,
+    players: legacyDrawPlayers,
+    playerOpenids: legacyDrawPlayers.map((player) => player.openid),
+    settings: { maxRounds: 1 },
+    hostOpenid: 'legacy-draw-host',
+    version: 1,
+    state: legacyDrawState,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }),
+});
+const legacyDrawResult = await room.requestRematch(
+  { roomId: legacyDrawRoomId },
+  { db: rematchDb, OPENID: 'legacy-draw-host' }
+);
+const persistedLegacyDraw = (await rematchDb.collection('rooms').doc(legacyDrawRoomId).get()).data;
+if (
+  !legacyDrawResult.public.tableRecord
+  || legacyDrawResult.public.tableRecord.completedRounds !== 1
+  || legacyDrawResult.public.tableRecord.players.some((player) => player.winRounds !== 0)
+  || !persistedLegacyDraw.tableStats
+) {
+  throw new Error('legacy rooms and no-winner results should normalize table stats without awarding a win');
 }
 
 const startupFinalRoomId = '991120';

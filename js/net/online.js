@@ -368,6 +368,18 @@ export function rotateRoundDetail(detail, mySeat) {
   return mapped;
 }
 
+export function rotateTableRecord(record, mySeat) {
+  if (!record) return null;
+  return Object.assign({}, record, {
+    players: (record.players || []).map((player) => Object.assign({}, player, {
+      serverSeat: player.seat,
+      seat: rotateSeat(player.seat, mySeat),
+    })),
+    settings: Object.assign({}, record.settings || {}),
+    rematch: Object.assign({}, record.rematch || {}),
+  });
+}
+
 export function onlineErrorMessage(err) {
   const code = cloudErrorCode(err);
   const messages = {
@@ -585,6 +597,7 @@ function rotatePublicPatch(patch = {}, mySeat) {
   if (mapped.responseSummary) mapped.responseSummary = rotateResponseSummary(mapped.responseSummary, mySeat);
   if (mapped.result) mapped.result = rotateResult(mapped.result, mySeat);
   if (mapped.roundDetail) mapped.roundDetail = rotateRoundDetail(mapped.roundDetail, mySeat);
+  if (mapped.tableRecord) mapped.tableRecord = rotateTableRecord(mapped.tableRecord, mySeat);
   if (Array.isArray(mapped.pendingActions)) {
     mapped.pendingActions = mapped.pendingActions.map((action) => rotateAction(action, mySeat));
   }
@@ -665,6 +678,8 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
     feedback: pub.feedback || '',
     result: rotateResult(pub.result, mySeat),
     roundDetail: rotateRoundDetail(pub.roundDetail, mySeat),
+    tableRecord: rotateTableRecord(pub.tableRecord, mySeat),
+    tableRecordOpen: false,
     tableScores: rotateScoreMap(pub.tableScores, mySeat),
     muted: false,
     round: pub.round || 0,
@@ -1502,7 +1517,7 @@ export default class OnlineController {
 
     if (delta.publicPatch) {
       const publicPatch = rotatePublicPatch(delta.publicPatch, this.mySeat);
-      ['phase', 'currentSeat', 'dealerSeat', 'nextDealerSeat', 'feedback', 'responseSummary', 'round', 'result', 'roundDetail'].forEach((key) => {
+      ['phase', 'currentSeat', 'dealerSeat', 'nextDealerSeat', 'feedback', 'responseSummary', 'round', 'result', 'roundDetail', 'tableRecord'].forEach((key) => {
         if (publicPatch[key] !== undefined) target[key] = publicPatch[key];
       });
       if (Array.isArray(publicPatch.pendingActions)) target.pendingActions = publicPatch.pendingActions;
@@ -1764,6 +1779,7 @@ export default class OnlineController {
     local.tableSettings = res.settings || {};
     local.tableFinished = res.status === 'tableResult';
     local.tableRematch = res.rematch || null;
+    local.tableRecordOpen = Boolean(this.databus.tableRecordOpen && local.tableRecord && local.tableFinished);
     this.authoritativeState = clonePlain(local);
     this.scheduleRematchDecisionTimer(local.tableRematch);
     const animation = res.animation || {
@@ -2404,11 +2420,11 @@ export default class OnlineController {
       return;
     }
     if (action.type === 'requestRematch') {
-      this.requestRematch();
+      if (!action.disabled) this.requestRematch();
       return;
     }
     if (action.type === 'declineRematch') {
-      this.requestRematch(false);
+      if (!action.disabled) this.requestRematch(false);
       return;
     }
     if (action.type === 'confirmNextRound') {
@@ -2416,7 +2432,13 @@ export default class OnlineController {
       return;
     }
     if (action.type === 'viewRecord') {
-      this.databus.feedback = '战绩功能待开放';
+      if (!this.databus.tableRecord) {
+        this.databus.feedback = '战绩数据加载中';
+        this.refresh();
+        return;
+      }
+      this.databus.feedback = '';
+      this.databus.tableRecordOpen = true;
       return;
     }
     if (

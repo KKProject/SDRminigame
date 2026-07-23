@@ -29,6 +29,8 @@ export default class DataBus {
   feedback = '';
   result = null;
   roundDetail = null;
+  tableRecord = null;
+  tableRecordOpen = false;
   muted = false;
   round = 0;
   tableStatus = '';
@@ -74,6 +76,8 @@ export default class DataBus {
       feedback: '',
       result: null,
       roundDetail: null,
+      tableRecord: null,
+      tableRecordOpen: false,
       muted: this.muted,
       round: this.round,
       tableStatus: '',
