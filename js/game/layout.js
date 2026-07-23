@@ -48,28 +48,64 @@ function actionButtonWidth(action, buttonHeight) {
 
 export function createRoundResultLayout(contentBounds, state, isLandscape = true, canvasWidth = contentBounds.width) {
   if (!state || state.phase !== 'result' || !state.roundDetail) return null;
-  const headerHeight = Math.max(70, Math.floor(contentBounds.height * 0.18));
-  const footerHeight = Math.max(36, Math.floor(contentBounds.height * 0.10));
-  const contentRight = contentBounds.x + contentBounds.width;
-  const panelLeft = Math.max(contentBounds.x, Math.floor(canvasWidth * 0.112));
-  const panelRight = Math.min(contentRight, Math.ceil(canvasWidth * 0.895));
+  const titleWidth = Math.max(280, Math.min(
+    700,
+    Math.floor(contentBounds.width * 0.72),
+    Math.floor(contentBounds.height * 0.96)
+  ));
+  const titleHeight = Math.round(titleWidth * (398 / 1400));
+  const title = rect(
+    contentBounds.x + Math.floor((contentBounds.width - titleWidth) / 2),
+    contentBounds.y,
+    titleWidth,
+    titleHeight,
+    { type: 'round-result-title' }
+  );
+  const statusWidth = Math.max(116, Math.min(224, Math.floor(titleWidth * 0.34)));
+  const statusHeight = Math.round(statusWidth * (140 / 447));
+  const status = rect(
+    contentBounds.x + Math.floor((contentBounds.width - statusWidth) / 2),
+    title.y + Math.floor(title.height * 0.72),
+    statusWidth,
+    statusHeight,
+    { type: 'round-result-status' }
+  );
+  const footerHeight = Math.max(42, Math.floor(contentBounds.height * 0.105));
+  const footerY = contentBounds.y + contentBounds.height - footerHeight;
+  const panelInsetX = Math.max(4, Math.floor(contentBounds.width * 0.012));
+  const panelLeft = contentBounds.x + panelInsetX;
+  const panelRight = contentBounds.x + contentBounds.width - panelInsetX;
+  const panelTop = title.y + Math.floor(title.height * 0.63);
   const panel = rect(
     panelLeft,
-    contentBounds.y + Math.floor(contentBounds.height * 0.195),
+    panelTop,
     Math.max(1, panelRight - panelLeft),
-    Math.floor(contentBounds.height * 0.665),
+    Math.max(1, footerY - panelTop + Math.floor(footerHeight * 0.08)),
     { type: 'round-result-panel' }
   );
-  const innerPad = Math.max(8, Math.floor(panel.width * 0.012));
-  const rowGap = Math.max(2, Math.floor(panel.height * 0.008));
+  const frameInsetX = Math.max(18, Math.floor(panel.width * 0.038));
+  const frameInsetBottom = Math.max(14, Math.floor(panel.height * 0.045));
+  const listTop = Math.max(
+    panel.y + Math.max(18, Math.floor(panel.height * 0.08)),
+    status.y + status.height - Math.max(1, Math.floor(status.height * 0.08))
+  );
+  const scrollRegion = rect(
+    panel.x + frameInsetX,
+    listTop,
+    Math.max(1, panel.width - frameInsetX * 2),
+    Math.max(1, panel.y + panel.height - frameInsetBottom - listTop),
+    { type: 'round-result-scroll' }
+  );
+  const innerPad = Math.max(5, Math.floor(scrollRegion.width * 0.006));
+  const rowGap = Math.max(3, Math.floor(scrollRegion.height * 0.012));
   const rowHeight = Math.max(92, Math.min(132, Math.floor(contentBounds.height * 0.16)));
   const contentHeight = innerPad * 2 + rowHeight * 4 + rowGap * 3;
-  const identityWidth = Math.max(112, Math.min(176, Math.floor(panel.width * 0.14)));
-  const statsWidth = Math.max(138, Math.min(210, Math.floor(panel.width * 0.17)));
+  const identityWidth = Math.max(112, Math.min(176, Math.floor(scrollRegion.width * 0.15)));
+  const statsWidth = Math.max(126, Math.min(210, Math.floor(scrollRegion.width * 0.17)));
   const displaySeatOrder = [1, 0, 2, 3];
   const rows = displaySeatOrder.map((seat, rowIndex) => {
-    const y = panel.y + innerPad + rowIndex * (rowHeight + rowGap);
-    const row = rect(panel.x + innerPad, y, panel.width - innerPad * 2, rowHeight, {
+    const y = scrollRegion.y + innerPad + rowIndex * (rowHeight + rowGap);
+    const row = rect(scrollRegion.x + innerPad, y, scrollRegion.width - innerPad * 2, rowHeight, {
       type: 'round-result-row',
       seat,
     });
@@ -100,7 +136,6 @@ export function createRoundResultLayout(contentBounds, state, isLandscape = true
       score: rect(stats.x + Math.floor(stats.width * 0.5), row.y + 8, Math.ceil(stats.width * 0.5) - 8, row.height - 16, { seat }),
     };
   });
-  const footerY = contentBounds.y + Math.floor(contentBounds.height * 0.875);
   const detail = state.roundDetail || {};
   const continuation = detail.continuation || {};
   const action = detail.hasNextRound
@@ -110,24 +145,26 @@ export function createRoundResultLayout(contentBounds, state, isLandscape = true
       disabled: Boolean(continuation.selfConfirmed),
     }
     : { type: 'viewRecord', label: '查看战绩' };
-  const buttonWidth = Math.max(136, Math.min(184, Math.floor(contentBounds.width * 0.16)));
-  const buttonHeight = Math.max(40, Math.min(50, footerHeight - 8));
+  const buttonHeight = Math.max(38, Math.min(54, footerHeight - 4));
+  const buttonWidth = Math.round(buttonHeight * (434 / 136));
   const button = rect(
-    panel.x + panel.width - buttonWidth,
+    panel.x + panel.width - frameInsetX - buttonWidth,
     footerY + Math.floor((footerHeight - buttonHeight) / 2),
     buttonWidth,
     buttonHeight,
     { type: 'action', action }
   );
   return {
-    header: rect(contentBounds.x, contentBounds.y, contentBounds.width, headerHeight, { type: 'round-result-header' }),
+    header: title,
+    title,
+    status,
     panel,
-    scrollRegion: rect(panel.x, panel.y, panel.width, panel.height, { type: 'round-result-scroll' }),
+    scrollRegion,
     contentHeight,
-    maxScroll: Math.max(0, contentHeight - panel.height),
+    maxScroll: Math.max(0, contentHeight - scrollRegion.height),
     rows,
     footer: rect(contentBounds.x, footerY, contentBounds.width, footerHeight, { type: 'round-result-footer' }),
-    roomInfo: rect(panel.x, footerY, Math.floor(panel.width * 0.42), footerHeight, { type: 'round-result-room-info' }),
+    roomInfo: rect(panel.x + frameInsetX, footerY, Math.floor(panel.width * 0.42), footerHeight, { type: 'round-result-room-info' }),
     continuation: rect(
       panel.x + Math.floor(panel.width * 0.42),
       footerY,

@@ -57,7 +57,11 @@ const {
   CARD_SOURCE_HEIGHT,
   HAND_STACK_SOURCE_STEP,
 } = await import(pathToFileURL(join(tempDir, 'layout.mjs')));
-const { default: TableRenderer } = await import(pathToFileURL(join(tempDir, 'renderer.mjs')));
+const {
+  default: TableRenderer,
+  drawNineSliceImage,
+  roundResultStatusPresentation,
+} = await import(pathToFileURL(join(tempDir, 'renderer.mjs')));
 const {
   default: AssetLoader,
   ACTION_ATLAS_FRAME_CONFIG,
@@ -706,6 +710,56 @@ const roundResultState = {
   },
 };
 
+for (const [assetName, assetPath] of Object.entries({
+  roundResultTitle: 'images/round_result_title.png',
+  roundResultPanel: 'images/round_result_panel.png',
+  roundResultVictory: 'images/round_result_victory.png',
+  roundResultDefeat: 'images/round_result_defeat.png',
+  roundResultContinue: 'images/round_result_continue.png',
+})) {
+  if (ASSET_MANIFEST.images[assetName] !== assetPath) {
+    throw new Error(`${assetName} should map to ${assetPath}`);
+  }
+  await access(join(root, assetPath));
+}
+if (Object.prototype.hasOwnProperty.call(ASSET_MANIFEST.images, 'roundResult')) {
+  throw new Error('the replaced full-screen round result background should not remain in the asset manifest');
+}
+
+const winningStatus = roundResultStatusPresentation({
+  ...roundResultState,
+  humanSeat: 1,
+});
+const losingStatus = roundResultStatusPresentation(roundResultState);
+const drawStatus = roundResultStatusPresentation({
+  ...roundResultState,
+  result: { type: 'draw-round' },
+});
+if (
+  winningStatus.assetName !== 'roundResultVictory'
+  || losingStatus.assetName !== 'roundResultDefeat'
+  || drawStatus.assetName !== null
+  || drawStatus.text !== '本局流局'
+) {
+  throw new Error('round result status presentation should use local win/loss assets and accurate non-win text');
+}
+
+const nineSliceCalls = [];
+const nineSliceDrawn = drawNineSliceImage(
+  { drawImage(...args) { nineSliceCalls.push(args); } },
+  { width: 2303, height: 1212 },
+  { x: 20, y: 30, width: 760, height: 280 },
+  { left: 170, top: 150, right: 170, bottom: 150 },
+  { left: 36, top: 34, right: 36, bottom: 34 }
+);
+if (
+  !nineSliceDrawn
+  || nineSliceCalls.length !== 9
+  || nineSliceCalls.some((call) => call.slice(1).some((value) => !Number.isFinite(value) || value < 0))
+) {
+  throw new Error('round result panel should render as nine valid source/target slices');
+}
+
 for (const resultCase of [
   { width: 1560, height: 878, insets: null, label: 'canonical result landscape' },
   { width: 844, height: 390, insets: { left: 47, top: 0, right: 0, bottom: 21 }, label: 'narrow notched result landscape' },
@@ -728,6 +782,7 @@ for (const resultCase of [
   [
     resultLayout.roundResult.header,
     resultLayout.roundResult.panel,
+    resultLayout.roundResult.scrollRegion,
     resultLayout.roundResult.footer,
     resultLayout.roundResult.button,
   ].forEach((region) => assertWithinBounds(region, resultLayout.contentBounds, `${region.type} in ${resultCase.label}`));
@@ -755,8 +810,11 @@ for (const resultCase of [
   if (
     resultLayout.roundResult.panel.x > resultCase.width * 0.12
     || resultLayout.roundResult.panel.x + resultLayout.roundResult.panel.width < resultCase.width * 0.89
+    || resultLayout.roundResult.scrollRegion.x <= resultLayout.roundResult.panel.x
+    || resultLayout.roundResult.scrollRegion.x + resultLayout.roundResult.scrollRegion.width
+      >= resultLayout.roundResult.panel.x + resultLayout.roundResult.panel.width
   ) {
-    throw new Error(`${resultCase.label} result viewport should align with the wide blank background panel`);
+    throw new Error(`${resultCase.label} result viewport should align inside the wide sliced background panel`);
   }
 }
 
@@ -1328,7 +1386,7 @@ if (miniPositions.map((item) => item.x).join(',') !== '10,26,42') {
 }
 miniPositions = [];
 directionRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size) => {
-  miniPositions.push({ x, y, size });
+  miniPositions.push({ x, y, size, cardId: card.id, key: card.key, phraseId: card.phraseId });
 };
 directionRenderer.drawClaimedColumns(
   {},
@@ -1371,6 +1429,48 @@ if (
   ))
 ) {
   throw new Error('round result cards should use vertically stacked mini-card columns');
+}
+
+miniPositions = [];
+const samePhraseCards = DEFAULT_RULES.phrases[0].keys.map((key) => (
+  renderDeck.find((card) => card.key === key)
+));
+const otherPhraseCard = renderDeck.find((card) => card.key === DEFAULT_RULES.phrases[1].keys[0]);
+const meldPhraseCards = DEFAULT_RULES.phrases[2].keys.map((key) => (
+  renderDeck.find((card) => card.key === key)
+));
+directionRenderer.drawRoundResultCards(
+  {
+    fillText() {},
+    set fillStyle(value) {},
+    set font(value) {},
+    set textAlign(value) {},
+  },
+  {
+    finalHand: samePhraseCards.concat([otherPhraseCard]),
+    melds: [{ type: 'chi', cards: meldPhraseCards }],
+  },
+  { x: 20, y: 10, width: 320, height: 96 }
+);
+const samePhraseXs = new Set(
+  miniPositions
+    .filter((item) => samePhraseCards.some((card) => card.id === item.cardId))
+    .map((item) => item.x)
+);
+const otherPhrasePosition = miniPositions.find((item) => item.cardId === otherPhraseCard.id);
+const meldXs = new Set(
+  miniPositions
+    .filter((item) => meldPhraseCards.some((card) => card.id === item.cardId))
+    .map((item) => item.x)
+);
+if (
+  samePhraseXs.size !== 1
+  || !otherPhrasePosition
+  || samePhraseXs.has(otherPhrasePosition.x)
+  || meldXs.size !== 1
+  || meldXs.has(Array.from(samePhraseXs)[0])
+) {
+  throw new Error('round result hand should stack cards by phrase while keeping other phrases and melds in separate columns');
 }
 directionRenderer.roundResultScrollMax = 140;
 directionRenderer.roundResultScrollOffset = 0;
@@ -1844,6 +1944,54 @@ const fallbackButtonCtx = createFakeRenderContext();
 imageButtonRenderer.drawButton(fallbackButtonCtx, actionButtonRegion, '再来一局', false, {}, 'restart');
 if (!fallbackButtonCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === '再来一局')) {
   throw new Error('unmapped or missing action sprites should fall back to the existing text button');
+}
+
+const roundResultButtonImage = { id: 'round-result-continue' };
+const roundResultButtonRenderer = new TableRenderer({
+  getImage(name) { return name === 'roundResultContinue' ? roundResultButtonImage : null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+const continueButtonCtx = createFakeRenderContext();
+roundResultButtonRenderer.drawRoundResultButton(
+  continueButtonCtx,
+  { x: 10, y: 20, width: 128, height: 40 },
+  { type: 'confirmNextRound', label: '继续下一局' }
+);
+if (
+  !continueButtonCtx.calls.find((call) => call[0] === 'drawImage' && call[1][0] === roundResultButtonImage)
+  || continueButtonCtx.calls.find((call) => call[0] === 'fillText')
+) {
+  throw new Error('available continue result asset should replace the canvas text button');
+}
+const finalRecordButtonCtx = createFakeRenderContext();
+roundResultButtonRenderer.drawRoundResultButton(
+  finalRecordButtonCtx,
+  { x: 10, y: 20, width: 128, height: 40 },
+  { type: 'viewRecord', label: '查看战绩' }
+);
+if (
+  finalRecordButtonCtx.calls.find((call) => call[0] === 'drawImage' && call[1][0] === roundResultButtonImage)
+  || !finalRecordButtonCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === '查看战绩')
+) {
+  throw new Error('final round should keep the canvas record fallback instead of reusing the continue image');
+}
+
+const roundStatsCtx = createFakeRenderContext();
+roundResultButtonRenderer.drawRoundResultStats(
+  roundStatsCtx,
+  { huCount: 21, roundScore: 3 },
+  {
+    height: 100,
+    hu: { x: 0, y: 0, width: 60, height: 80 },
+    score: { x: 60, y: 0, width: 60, height: 80 },
+  }
+);
+if (
+  !roundStatsCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === '21')
+  || !roundStatsCtx.calls.find((call) => call[0] === 'fillText' && call[1][0] === '+3')
+) {
+  throw new Error('round result stats should draw the authoritative winner hu count and round score');
 }
 
 const comboRenderer = new TableRenderer({

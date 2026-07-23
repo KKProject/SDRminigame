@@ -34,6 +34,12 @@ const ACTION_EFFECT_LABELS = {
 };
 const MELD_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta'];
 const RENDERABLE_RESULT_TYPES = ['win', 'circle-loss', 'draw-round', 'draw'];
+const ROUND_RESULT_PANEL_SOURCE_SLICES = {
+  left: 170,
+  top: 150,
+  right: 170,
+  bottom: 150,
+};
 
 function hasRenderableResult(result) {
   return Boolean(result && RENDERABLE_RESULT_TYPES.indexOf(result.type) >= 0);
@@ -72,6 +78,77 @@ function roundRect(ctx, x, y, width, height, radius) {
   ctx.lineTo(x, y + r);
   ctx.quadraticCurveTo(x, y, x + r, y);
   ctx.closePath();
+}
+
+export function drawNineSliceImage(ctx, image, target, sourceSlices, targetSlices) {
+  if (!ctx || !image || !target || target.width <= 0 || target.height <= 0) return false;
+  const sourceWidth = Number(image.naturalWidth || image.width) || 0;
+  const sourceHeight = Number(image.naturalHeight || image.height) || 0;
+  if (!sourceWidth || !sourceHeight) return false;
+
+  const sourceLeft = Math.max(0, Math.min(sourceWidth, sourceSlices.left || 0));
+  const sourceRight = Math.max(0, Math.min(sourceWidth - sourceLeft, sourceSlices.right || 0));
+  const sourceTop = Math.max(0, Math.min(sourceHeight, sourceSlices.top || 0));
+  const sourceBottom = Math.max(0, Math.min(sourceHeight - sourceTop, sourceSlices.bottom || 0));
+  const targetLeft = Math.max(0, Math.min(target.width / 2, targetSlices.left || 0));
+  const targetRight = Math.max(0, Math.min(target.width - targetLeft, targetSlices.right || 0));
+  const targetTop = Math.max(0, Math.min(target.height / 2, targetSlices.top || 0));
+  const targetBottom = Math.max(0, Math.min(target.height - targetTop, targetSlices.bottom || 0));
+  const sourceXs = [0, sourceLeft, sourceWidth - sourceRight, sourceWidth];
+  const sourceYs = [0, sourceTop, sourceHeight - sourceBottom, sourceHeight];
+  const targetXs = [target.x, target.x + targetLeft, target.x + target.width - targetRight, target.x + target.width];
+  const targetYs = [target.y, target.y + targetTop, target.y + target.height - targetBottom, target.y + target.height];
+
+  const overlap = 0.75;
+  const cells = [
+    [1, 1],
+    [0, 1], [1, 0], [1, 2], [2, 1],
+    [0, 0], [0, 2], [2, 0], [2, 2],
+  ];
+  cells.forEach(([row, column]) => {
+      const sourceX = Math.max(0, sourceXs[column] - (column > 0 ? 1 : 0));
+      const sourceY = Math.max(0, sourceYs[row] - (row > 0 ? 1 : 0));
+      const sourceEndX = Math.min(sourceWidth, sourceXs[column + 1] + (column < 2 ? 1 : 0));
+      const sourceEndY = Math.min(sourceHeight, sourceYs[row + 1] + (row < 2 ? 1 : 0));
+      const targetX = targetXs[column] - (column > 0 ? overlap : 0);
+      const targetY = targetYs[row] - (row > 0 ? overlap : 0);
+      const targetEndX = targetXs[column + 1] + (column < 2 ? overlap : 0);
+      const targetEndY = targetYs[row + 1] + (row < 2 ? overlap : 0);
+      const sourceCellWidth = sourceEndX - sourceX;
+      const sourceCellHeight = sourceEndY - sourceY;
+      const targetCellWidth = targetEndX - targetX;
+      const targetCellHeight = targetEndY - targetY;
+      if (sourceCellWidth <= 0 || sourceCellHeight <= 0 || targetCellWidth <= 0 || targetCellHeight <= 0) return;
+      ctx.drawImage(
+        image,
+        sourceX,
+        sourceY,
+        sourceCellWidth,
+        sourceCellHeight,
+        targetX,
+        targetY,
+        targetCellWidth,
+        targetCellHeight
+      );
+  });
+  return true;
+}
+
+export function roundResultStatusPresentation(state) {
+  const result = (state && state.result) || {};
+  if (result.type === 'win') {
+    const isWinner = result.winner === state.humanSeat;
+    return {
+      assetName: isWinner ? 'roundResultVictory' : 'roundResultDefeat',
+      text: isWinner ? '胜利' : '失败',
+    };
+  }
+  const labels = {
+    'circle-loss': '本局进圈',
+    'draw-round': '本局流局',
+    draw: '本局荒庄',
+  };
+  return { assetName: null, text: labels[result.type] || '本局结束' };
 }
 
 export default class TableRenderer {
@@ -803,13 +880,26 @@ export default class TableRenderer {
     }
     this.roundResultScrollMax = page.maxScroll || 0;
     this.roundResultScrollOffset = Math.max(0, Math.min(this.roundResultScrollOffset, this.roundResultScrollMax));
-    const background = this.assets.getImage('roundResult');
-    if (background) {
-      ctx.drawImage(background, 0, 0, layout.width, layout.height);
-    } else {
-      this.drawBackground(ctx, layout);
-      ctx.fillStyle = 'rgba(32, 10, 4, 0.44)';
-      ctx.fillRect(0, 0, layout.width, layout.height);
+    this.drawBackground(ctx, layout);
+    ctx.fillStyle = 'rgba(32, 10, 4, 0.38)';
+    ctx.fillRect(0, 0, layout.width, layout.height);
+
+    const panelImage = this.assets.getImage('roundResultPanel');
+    const panelEdgeX = Math.max(28, Math.min(90, page.panel.height * 0.13));
+    const panelEdgeY = Math.max(24, Math.min(76, page.panel.height * 0.12));
+    const panelDrawn = drawNineSliceImage(
+      ctx,
+      panelImage,
+      page.panel,
+      ROUND_RESULT_PANEL_SOURCE_SLICES,
+      {
+        left: panelEdgeX,
+        top: panelEdgeY,
+        right: panelEdgeX,
+        bottom: panelEdgeY,
+      }
+    );
+    if (!panelDrawn) {
       ctx.fillStyle = '#f8e6c2';
       roundRect(ctx, page.panel.x, page.panel.y, page.panel.width, page.panel.height, 12);
       ctx.fill();
@@ -819,32 +909,12 @@ export default class TableRenderer {
     }
 
     const result = state.result || {};
-    const titles = {
-      win: '本局胡牌',
-      'circle-loss': '本局进圈',
-      'draw-round': '本局流局',
-      draw: '本局荒庄',
-    };
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.font = `bold ${Math.max(30, Math.floor(page.header.height * 0.36))}px serif`;
-    ctx.lineWidth = 5;
-    ctx.strokeStyle = '#5d2108';
-    ctx.strokeText('对局结果', page.header.x + page.header.width / 2, page.header.y + page.header.height * 0.48);
-    ctx.fillStyle = '#ffe29a';
-    ctx.fillText('对局结果', page.header.x + page.header.width / 2, page.header.y + page.header.height * 0.48);
-    ctx.font = `bold ${Math.max(17, Math.floor(page.header.height * 0.18))}px serif`;
-    ctx.fillStyle = '#fff2c2';
-    ctx.fillText(titles[result.type] || '本局结束', page.header.x + page.header.width / 2, page.header.y + page.header.height * 0.75);
-    ctx.restore();
 
     const detailPlayers = detail.players || [];
     ctx.save();
     ctx.beginPath();
-    ctx.rect(page.panel.x + 3, page.panel.y + 3, page.panel.width - 6, page.panel.height - 6);
+    ctx.rect(page.scrollRegion.x, page.scrollRegion.y, page.scrollRegion.width, page.scrollRegion.height);
     ctx.clip();
-    ctx.fillStyle = '#f8e9ca';
-    ctx.fillRect(page.panel.x + 3, page.panel.y + 3, page.panel.width - 6, page.panel.height - 6);
     ctx.translate(0, -this.roundResultScrollOffset);
     page.rows.forEach((row) => {
       const detail = detailPlayers.find((player) => player.seat === row.seat) || {
@@ -872,18 +942,49 @@ export default class TableRenderer {
     ctx.restore();
 
     if (this.roundResultScrollMax > 0) {
-      const trackHeight = Math.max(28, page.panel.height - 28);
-      const thumbHeight = Math.max(24, trackHeight * (page.panel.height / page.contentHeight));
+      const trackHeight = Math.max(28, page.scrollRegion.height - 20);
+      const thumbHeight = Math.max(24, trackHeight * (page.scrollRegion.height / page.contentHeight));
       const thumbTravel = trackHeight - thumbHeight;
-      const thumbY = page.panel.y + 14
+      const thumbY = page.scrollRegion.y + 10
         + (this.roundResultScrollOffset / this.roundResultScrollMax) * thumbTravel;
-      const trackX = page.panel.x + page.panel.width - 8;
+      const trackX = page.scrollRegion.x + page.scrollRegion.width - 6;
       ctx.fillStyle = 'rgba(117, 65, 27, 0.18)';
-      roundRect(ctx, trackX, page.panel.y + 14, 4, trackHeight, 2);
+      roundRect(ctx, trackX, page.scrollRegion.y + 10, 4, trackHeight, 2);
       ctx.fill();
       ctx.fillStyle = 'rgba(174, 92, 23, 0.72)';
       roundRect(ctx, trackX, thumbY, 4, thumbHeight, 2);
       ctx.fill();
+    }
+
+    const titleImage = this.assets.getImage('roundResultTitle');
+    if (titleImage) {
+      ctx.drawImage(titleImage, page.title.x, page.title.y, page.title.width, page.title.height);
+    } else {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = `bold ${Math.max(30, Math.floor(page.title.height * 0.36))}px serif`;
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = '#5d2108';
+      ctx.strokeText('对局结果', page.title.x + page.title.width / 2, page.title.y + page.title.height * 0.54);
+      ctx.fillStyle = '#ffe29a';
+      ctx.fillText('对局结果', page.title.x + page.title.width / 2, page.title.y + page.title.height * 0.54);
+      ctx.restore();
+    }
+
+    const status = roundResultStatusPresentation(state);
+    const statusImage = status.assetName ? this.assets.getImage(status.assetName) : null;
+    if (statusImage) {
+      ctx.drawImage(statusImage, page.status.x, page.status.y, page.status.width, page.status.height);
+    } else {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = `bold ${Math.max(16, Math.floor(page.status.height * 0.42))}px serif`;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#5d2108';
+      ctx.strokeText(status.text, page.status.x + page.status.width / 2, page.status.y + page.status.height * 0.67);
+      ctx.fillStyle = '#ffe29a';
+      ctx.fillText(status.text, page.status.x + page.status.width / 2, page.status.y + page.status.height * 0.67);
+      ctx.restore();
     }
 
     const roomId = state.tableRoomId || '';
@@ -955,9 +1056,10 @@ export default class TableRenderer {
     (detail.finalHand || []).slice().sort((a, b) => (
       (a.order || 0) - (b.order || 0) || (a.copy || 0) - (b.copy || 0)
     )).forEach((card) => {
-      let group = handGroups.find((item) => item.key === card.key);
+      const phraseId = card.phraseId || card.group || `key:${card.key}`;
+      let group = handGroups.find((item) => item.phraseId === phraseId);
       if (!group) {
-        group = { key: card.key, label: '', cards: [], meld: false };
+        group = { phraseId, label: '', cards: [], meld: false };
         handGroups.push(group);
       }
       group.cards.push(card);
@@ -1017,6 +1119,16 @@ export default class TableRenderer {
 
   drawRoundResultButton(ctx, button, action, visual = {}) {
     const disabled = Boolean(action.disabled);
+    const continueImage = action.type === 'confirmNextRound' && !disabled
+      ? this.assets.getImage('roundResultContinue')
+      : null;
+    if (continueImage) {
+      ctx.save();
+      if (visual.pressed) ctx.globalAlpha *= 0.84;
+      ctx.drawImage(continueImage, button.x, button.y, button.width, button.height);
+      ctx.restore();
+      return;
+    }
     ctx.save();
     ctx.shadowColor = disabled ? 'rgba(53, 31, 20, 0.34)' : 'rgba(55, 10, 2, 0.72)';
     ctx.shadowBlur = disabled ? 4 : 10;
