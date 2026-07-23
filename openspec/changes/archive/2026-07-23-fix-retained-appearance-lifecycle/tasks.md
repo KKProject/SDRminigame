@@ -17,4 +17,4 @@
 - [x] 3.3 补充重连积压跳过 `unclaimed`、重复/已播放消费事件、无当前事件结果快照的回归场景
 - [x] 3.4 运行 `node scripts/run-animation-checks.mjs`、`node scripts/run-online-checks.mjs`、`node scripts/run-server-core-checks.mjs` 和 `node scripts/run-backend-checks.mjs`，确认全部通过
 - [x] 3.5 上传微信小游戏测试版本
-- [ ] 3.6 在两真人两 AI 真机房间复测吃牌后出牌、进圈和流局路径
+- [x] 3.6 在两真人两 AI 真机房间复测吃牌后出牌、进圈和流局路径
