@@ -25,7 +25,13 @@ function rect(x, y, width, height, meta = {}) {
 }
 
 function actionButtonWidth(action, buttonHeight) {
-  if (action && (action.type === 'leaveTable' || action.type === 'requestRematch' || action.type === 'declineRematch')) {
+  if (action && (
+    action.type === 'leaveTable'
+    || action.type === 'requestRematch'
+    || action.type === 'declineRematch'
+    || action.type === 'confirmNextRound'
+    || action.type === 'viewRecord'
+  )) {
     const labelLength = String(action.label || '').length;
     return Math.max(88, labelLength * 18 + 22);
   }
@@ -38,6 +44,100 @@ function actionButtonWidth(action, buttonHeight) {
     return Math.max(68, labelLength * 18 + 16);
   }
   return Math.round(buttonHeight * (ACTION_BUTTON_ASPECT_RATIOS[action.type] || 1));
+}
+
+export function createRoundResultLayout(contentBounds, state, isLandscape = true, canvasWidth = contentBounds.width) {
+  if (!state || state.phase !== 'result' || !state.roundDetail) return null;
+  const headerHeight = Math.max(70, Math.floor(contentBounds.height * 0.18));
+  const footerHeight = Math.max(36, Math.floor(contentBounds.height * 0.10));
+  const contentRight = contentBounds.x + contentBounds.width;
+  const panelLeft = Math.max(contentBounds.x, Math.floor(canvasWidth * 0.112));
+  const panelRight = Math.min(contentRight, Math.ceil(canvasWidth * 0.895));
+  const panel = rect(
+    panelLeft,
+    contentBounds.y + Math.floor(contentBounds.height * 0.195),
+    Math.max(1, panelRight - panelLeft),
+    Math.floor(contentBounds.height * 0.665),
+    { type: 'round-result-panel' }
+  );
+  const innerPad = Math.max(8, Math.floor(panel.width * 0.012));
+  const rowGap = Math.max(2, Math.floor(panel.height * 0.008));
+  const rowHeight = Math.max(92, Math.min(132, Math.floor(contentBounds.height * 0.16)));
+  const contentHeight = innerPad * 2 + rowHeight * 4 + rowGap * 3;
+  const identityWidth = Math.max(112, Math.min(176, Math.floor(panel.width * 0.14)));
+  const statsWidth = Math.max(138, Math.min(210, Math.floor(panel.width * 0.17)));
+  const displaySeatOrder = [1, 0, 2, 3];
+  const rows = displaySeatOrder.map((seat, rowIndex) => {
+    const y = panel.y + innerPad + rowIndex * (rowHeight + rowGap);
+    const row = rect(panel.x + innerPad, y, panel.width - innerPad * 2, rowHeight, {
+      type: 'round-result-row',
+      seat,
+    });
+    const avatarSize = Math.max(38, Math.min(rowHeight - 16, 64));
+    const avatar = rect(
+      row.x + 12,
+      row.y + Math.floor((row.height - avatarSize) / 2),
+      avatarSize,
+      avatarSize,
+      { seat }
+    );
+    const stats = rect(row.x + row.width - statsWidth, row.y, statsWidth, row.height, { seat });
+    const cards = rect(
+      row.x + identityWidth,
+      row.y + 6,
+      Math.max(80, stats.x - (row.x + identityWidth) - 8),
+      row.height - 12,
+      { seat }
+    );
+    return {
+      ...row,
+      avatar,
+      name: rect(avatar.x + avatar.width + 8, row.y + 12, identityWidth - avatar.width - 24, 24, { seat }),
+      role: rect(avatar.x + avatar.width + 8, row.y + row.height - 30, identityWidth - avatar.width - 24, 20, { seat }),
+      cards,
+      stats,
+      hu: rect(stats.x + 8, row.y + 8, Math.floor(stats.width * 0.5) - 12, row.height - 16, { seat }),
+      score: rect(stats.x + Math.floor(stats.width * 0.5), row.y + 8, Math.ceil(stats.width * 0.5) - 8, row.height - 16, { seat }),
+    };
+  });
+  const footerY = contentBounds.y + Math.floor(contentBounds.height * 0.875);
+  const detail = state.roundDetail || {};
+  const continuation = detail.continuation || {};
+  const action = detail.hasNextRound
+    ? {
+      type: 'confirmNextRound',
+      label: continuation.selfConfirmed ? '已继续' : '继续下一局',
+      disabled: Boolean(continuation.selfConfirmed),
+    }
+    : { type: 'viewRecord', label: '查看战绩' };
+  const buttonWidth = Math.max(136, Math.min(184, Math.floor(contentBounds.width * 0.16)));
+  const buttonHeight = Math.max(40, Math.min(50, footerHeight - 8));
+  const button = rect(
+    panel.x + panel.width - buttonWidth,
+    footerY + Math.floor((footerHeight - buttonHeight) / 2),
+    buttonWidth,
+    buttonHeight,
+    { type: 'action', action }
+  );
+  return {
+    header: rect(contentBounds.x, contentBounds.y, contentBounds.width, headerHeight, { type: 'round-result-header' }),
+    panel,
+    scrollRegion: rect(panel.x, panel.y, panel.width, panel.height, { type: 'round-result-scroll' }),
+    contentHeight,
+    maxScroll: Math.max(0, contentHeight - panel.height),
+    rows,
+    footer: rect(contentBounds.x, footerY, contentBounds.width, footerHeight, { type: 'round-result-footer' }),
+    roomInfo: rect(panel.x, footerY, Math.floor(panel.width * 0.42), footerHeight, { type: 'round-result-room-info' }),
+    continuation: rect(
+      panel.x + Math.floor(panel.width * 0.42),
+      footerY,
+      Math.floor(panel.width * 0.26),
+      footerHeight,
+      { type: 'round-result-continuation' }
+    ),
+    button,
+    isLandscape,
+  };
 }
 
 /**
@@ -747,35 +847,8 @@ export default class TableLayout {
       return button;
     });
 
-    if (state.phase === 'result') {
-      if (state.tableFinished) {
-        const rematch = state.tableRematch || {};
-        const resultButtonY = contentBounds.y + contentBounds.height / 2 + (isLandscape ? 58 : 76);
-        const resultActions = [{ type: 'leaveTable', label: '退出' }];
-        if (rematch.hostDecision) {
-          if (rematch.canRequest) resultActions.push({ type: 'requestRematch', label: '再来一局' });
-        } else if (rematch.active) {
-          if (rematch.canAccept) resultActions.push({ type: 'requestRematch', label: '接受' });
-          if (rematch.canDecline) resultActions.push({ type: 'declineRematch', label: '拒绝' });
-        } else if (rematch.isHost && !rematch.active) {
-          resultActions.push({ type: 'requestRematch', label: '再来一局' });
-        }
-        const resultGap = 10;
-        const resultWidths = resultActions.map((action) => actionButtonWidth(action, 40));
-        const totalWidth = resultWidths.reduce((sum, width) => sum + width, 0) + Math.max(0, resultActions.length - 1) * resultGap;
-        let x = Math.floor(contentBounds.x + (contentBounds.width - totalWidth) / 2);
-        resultActions.forEach((action, index) => {
-          const width = resultWidths[index];
-          actionButtons.push(rect(x, resultButtonY, width, 40, { type: 'action', action }));
-          x += width + resultGap;
-        });
-      } else {
-        actionButtons.push(rect(contentBounds.x + contentBounds.width / 2 - 52, contentBounds.y + contentBounds.height / 2 + (isLandscape ? 58 : 76), 104, 40, {
-          type: 'restart',
-          action: { type: 'restart', label: '再来一局' },
-        }));
-      }
-    }
+    const roundResult = createRoundResultLayout(contentBounds, state, isLandscape, this.width);
+    if (roundResult) actionButtons.push(roundResult.button);
 
     const seatPanels = createSeatPanels(contentBounds, topBar, handY, isLandscape);
     const seatStatusAreas = createSeatStatusAreas(contentBounds, isLandscape);
@@ -841,6 +914,7 @@ export default class TableLayout {
       opponents: [seatPanels.left, seatPanels.top, seatPanels.right],
       prompt: zones.prompt,
       result: rect(contentBounds.x + contentBounds.width / 2 - resultWidth / 2, resultY, resultWidth, resultHeight, { type: 'result' }),
+      roundResult,
     };
   }
 
@@ -848,6 +922,7 @@ export default class TableLayout {
     const regions = []
       .concat(layout.actionButtons)
       .concat([layout.muteButton])
+      .concat(layout.roundResult ? [layout.roundResult.scrollRegion] : [])
       .concat(layout.handCards.slice().reverse());
 
     return regions.find((region) => (

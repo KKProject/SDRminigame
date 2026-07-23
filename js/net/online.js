@@ -340,6 +340,25 @@ function rotateResult(result, mySeat) {
   return mapped;
 }
 
+export function rotateRoundDetail(detail, mySeat) {
+  if (!detail) return null;
+  const mapped = Object.assign({}, detail);
+  mapped.players = (detail.players || []).map((player) => Object.assign({}, player, {
+    seat: rotateSeat(player.seat, mySeat),
+    finalHand: (player.finalHand || []).slice(),
+    melds: (player.melds || []).slice(),
+  })).sort((left, right) => left.seat - right.seat);
+  const continuation = detail.continuation || {};
+  const requiredSeats = (continuation.requiredSeats || []).map((seat) => rotateSeat(seat, mySeat));
+  const confirmedSeats = (continuation.confirmedSeats || []).map((seat) => rotateSeat(seat, mySeat));
+  mapped.continuation = Object.assign({}, continuation, {
+    requiredSeats,
+    confirmedSeats,
+    selfConfirmed: confirmedSeats.indexOf(0) >= 0,
+  });
+  return mapped;
+}
+
 export function onlineErrorMessage(err) {
   const code = cloudErrorCode(err);
   const messages = {
@@ -361,6 +380,9 @@ export function onlineErrorMessage(err) {
     CREATE_ROOM_FAILED: '创建牌桌失败，请检查 rooms 数据库集合',
     START_FAILED: '牌桌开局失败，请重试',
     TABLE_FINISHED: '牌桌已结束',
+    NEXT_ROUND_CONFIRM_REQUIRED: '请在对局结果页确认继续',
+    ROUND_STALE: '本局已经变化，正在刷新结果',
+    RESULT_NOT_READY: '请等待本局动画完成',
     JOIN_ROOM_FAILED: '加入房间失败，请重试',
     ROOM_NOT_FOUND: '房间不存在或已失效',
     ROOM_FULL: '房间已满',
@@ -552,6 +574,8 @@ function rotatePublicPatch(patch = {}, mySeat) {
     if (typeof mapped[key] === 'number') mapped[key] = rotateSeat(mapped[key], mySeat);
   });
   if (mapped.responseSummary) mapped.responseSummary = rotateResponseSummary(mapped.responseSummary, mySeat);
+  if (mapped.result) mapped.result = rotateResult(mapped.result, mySeat);
+  if (mapped.roundDetail) mapped.roundDetail = rotateRoundDetail(mapped.roundDetail, mySeat);
   if (Array.isArray(mapped.pendingActions)) {
     mapped.pendingActions = mapped.pendingActions.map((action) => rotateAction(action, mySeat));
   }
@@ -631,6 +655,7 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
     actionState: priv.actionState || (responseSummary && responseSummary.active ? 'closed' : 'closed'),
     feedback: pub.feedback || '',
     result: rotateResult(pub.result, mySeat),
+    roundDetail: rotateRoundDetail(pub.roundDetail, mySeat),
     tableScores: rotateScoreMap(pub.tableScores, mySeat),
     muted: false,
     round: pub.round || 0,
@@ -648,6 +673,9 @@ export default class OnlineController {
     this.version = -1;
     this.watcher = null;
     this.boundTouch = this.handleTouch.bind(this);
+    this.boundTouchMove = this.handleTouchMove.bind(this);
+    this.boundTouchEnd = this.handleTouchEnd.bind(this);
+    this.roundResultScrollTouch = null;
     this.active = false;
     this.onStatus = null;
     this.starting = false;
@@ -807,6 +835,9 @@ export default class OnlineController {
     this.closeWatcher();
     if (this.socket) this.socket.close();
     if (wx.offTouchStart) wx.offTouchStart(this.boundTouch);
+    if (wx.offTouchMove) wx.offTouchMove(this.boundTouchMove);
+    if (wx.offTouchEnd) wx.offTouchEnd(this.boundTouchEnd);
+    this.roundResultScrollTouch = null;
     if (this.databus && typeof this.databus.reset === 'function') this.databus.reset();
     this.setStatus('');
     this.setLobbyState(LOBBY_STATES.IDLE, { profile: this.lobbyProfile });
@@ -994,6 +1025,9 @@ export default class OnlineController {
     this.active = false;
     this.closeWatcher();
     if (wx.offTouchStart) wx.offTouchStart(this.boundTouch);
+    if (wx.offTouchMove) wx.offTouchMove(this.boundTouchMove);
+    if (wx.offTouchEnd) wx.offTouchEnd(this.boundTouchEnd);
+    this.roundResultScrollTouch = null;
     const snapshot = room || (await this.fetchWaitingRoom());
     this.setWaitingRoomState(snapshot || {
       roomId,
@@ -1209,6 +1243,8 @@ export default class OnlineController {
 
   enableInput() {
     wx.onTouchStart(this.boundTouch);
+    if (wx.onTouchMove) wx.onTouchMove(this.boundTouchMove);
+    if (wx.onTouchEnd) wx.onTouchEnd(this.boundTouchEnd);
   }
 
   subscribe() {
@@ -1457,7 +1493,7 @@ export default class OnlineController {
 
     if (delta.publicPatch) {
       const publicPatch = rotatePublicPatch(delta.publicPatch, this.mySeat);
-      ['phase', 'currentSeat', 'dealerSeat', 'nextDealerSeat', 'feedback', 'responseSummary'].forEach((key) => {
+      ['phase', 'currentSeat', 'dealerSeat', 'nextDealerSeat', 'feedback', 'responseSummary', 'round', 'result', 'roundDetail'].forEach((key) => {
         if (publicPatch[key] !== undefined) target[key] = publicPatch[key];
       });
       if (Array.isArray(publicPatch.pendingActions)) target.pendingActions = publicPatch.pendingActions;
@@ -1715,6 +1751,7 @@ export default class OnlineController {
     this.version = res.version;
     const local = buildLocalState(res.public, res.private || { hand: [] }, this.mySeat, this.databus.selectedCardId);
     local.tableStatus = res.status || '';
+    local.tableRoomId = this.roomId || res.roomId || '';
     local.tableSettings = res.settings || {};
     local.tableFinished = res.status === 'tableResult';
     local.tableRematch = res.rematch || null;
@@ -2209,6 +2246,10 @@ export default class OnlineController {
     if (!touch || !this.renderer.lastLayout) return;
     const region = this.renderer.layout.hit(this.renderer.lastLayout, touch.clientX, touch.clientY);
     if (!region) return;
+    if (region.type === 'round-result-scroll') {
+      this.roundResultScrollTouch = { lastY: touch.clientY };
+      return;
+    }
     const responseActionTap = region.type === 'action' && this.canSubmitResponseWhileAnimating(region.action);
     if (region.type === 'action' && isResponseAction(region.action)) {
       this.reportOnlineDiagnostic('online-response-touch', {
@@ -2257,6 +2298,21 @@ export default class OnlineController {
     if (region.type === 'restart') {
       this.nextRound();
     }
+  }
+
+  handleTouchMove(event) {
+    if (!this.active || !this.roundResultScrollTouch) return;
+    const touch = event.touches && event.touches[0];
+    if (!touch) return;
+    const deltaY = touch.clientY - this.roundResultScrollTouch.lastY;
+    this.roundResultScrollTouch.lastY = touch.clientY;
+    if (this.renderer && this.renderer.scrollRoundResultBy) {
+      this.renderer.scrollRoundResultBy(deltaY);
+    }
+  }
+
+  handleTouchEnd() {
+    this.roundResultScrollTouch = null;
   }
 
   handleCardTap(cardId) {
@@ -2346,6 +2402,14 @@ export default class OnlineController {
       this.requestRematch(false);
       return;
     }
+    if (action.type === 'confirmNextRound') {
+      if (!action.disabled) this.confirmNextRound();
+      return;
+    }
+    if (action.type === 'viewRecord') {
+      this.databus.feedback = '战绩功能待开放';
+      return;
+    }
     if (
       RESPONSE_ACTION_TYPES.indexOf(animationActionType(action.type)) >= 0
       && this.databus.responseWindowId
@@ -2377,16 +2441,32 @@ export default class OnlineController {
   }
 
   async nextRound() {
+    return this.confirmNextRound();
+  }
+
+  async confirmNextRound() {
+    const detail = this.databus.roundDetail;
+    if (!detail || !detail.hasNextRound) {
+      this.databus.feedback = '战绩功能待开放';
+      return false;
+    }
+    if (detail.continuation && detail.continuation.selfConfirmed) return true;
     this.setStatus('');
     try {
-      const started = await this.callGame('startRound');
-      if (!started || !started.ok) {
-        this.databus.feedback = onlineErrorMessage({ code: started && started.error });
-        return;
+      const res = await this.callGame('confirmNextRound', { round: detail.round });
+      if (!res || !res.ok) {
+        this.databus.feedback = onlineErrorMessage({ code: res && res.error });
+        if (res && res.error === 'ROUND_STALE') await this.refresh();
+        return false;
       }
-      await this.refresh();
+      if (!this.applyServerSnapshot(res)) {
+        await this.refresh();
+      }
+      if (!res.nextRoundStarted) this.databus.feedback = '已继续，等待其他玩家';
+      return true;
     } catch (err) {
       this.databus.feedback = onlineErrorMessage(err);
+      return false;
     }
   }
 
@@ -2449,6 +2529,9 @@ export default class OnlineController {
     this.active = false;
     this.stopWaitingRefresh();
     if (wx.offTouchStart) wx.offTouchStart(this.boundTouch);
+    if (wx.offTouchMove) wx.offTouchMove(this.boundTouchMove);
+    if (wx.offTouchEnd) wx.offTouchEnd(this.boundTouchEnd);
+    this.roundResultScrollTouch = null;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.stopReconnectFallbackRefresh();

@@ -98,6 +98,9 @@ export default class TableRenderer {
     this.viewportSignature = '';
     this.restoreAnimationsAfterLayout = false;
     this.currentJiangPhraseId = null;
+    this.roundResultScrollOffset = 0;
+    this.roundResultScrollMax = 0;
+    this.roundResultScrollSignature = '';
   }
 
   setViewport(metrics, options = {}) {
@@ -116,6 +119,9 @@ export default class TableRenderer {
       this.lastLayout = null;
       this.buttonPanelSignature = '';
       this.buttonPress = null;
+      this.roundResultScrollOffset = 0;
+      this.roundResultScrollMax = 0;
+      this.roundResultScrollSignature = '';
       return true;
     }
 
@@ -128,6 +134,9 @@ export default class TableRenderer {
     this.previousHandCards = [];
     this.buttonPanelSignature = '';
     this.buttonPress = null;
+    this.roundResultScrollOffset = 0;
+    this.roundResultScrollMax = 0;
+    this.roundResultScrollSignature = '';
     this.restoreAnimationsAfterLayout = true;
     return true;
   }
@@ -157,6 +166,12 @@ export default class TableRenderer {
       };
     }
     this.updateEffects(displayState, layout);
+    if (layout.roundResult) {
+      this.drawRoundResultPage(ctx, displayState, layout);
+      this.drawButtons(ctx, displayState, layout);
+      this.previousHandCards = [];
+      return;
+    }
     this.drawBackground(ctx, layout);
     this.drawHeader(ctx, displayState, layout);
     this.drawSeatStatuses(ctx, displayState, layout);
@@ -757,6 +772,15 @@ export default class TableRenderer {
       ctx.globalAlpha = visual.alpha;
       ctx.translate(centerX, centerY);
       if (ctx.scale) ctx.scale(visual.scale, visual.scale);
+      if (button.action.type === 'confirmNextRound' || button.action.type === 'viewRecord') {
+        this.drawRoundResultButton(ctx, {
+          ...button,
+          x: -button.width / 2,
+          y: -button.height / 2,
+        }, button.action, visual);
+        ctx.restore();
+        return;
+      }
       const actionSpriteType = (button.action.zhaoSize || button.action.type === 'zhaoBack')
         ? null
         : button.action.type;
@@ -767,6 +791,263 @@ export default class TableRenderer {
       }, button.action.label || button.action.type, false, visual, actionSpriteType);
       ctx.restore();
     });
+  }
+
+  drawRoundResultPage(ctx, state, layout) {
+    const page = layout.roundResult;
+    const detail = state.roundDetail || {};
+    const scrollSignature = `${state.tableRoomId || ''}:${detail.round || state.round || 0}`;
+    if (scrollSignature !== this.roundResultScrollSignature) {
+      this.roundResultScrollSignature = scrollSignature;
+      this.roundResultScrollOffset = 0;
+    }
+    this.roundResultScrollMax = page.maxScroll || 0;
+    this.roundResultScrollOffset = Math.max(0, Math.min(this.roundResultScrollOffset, this.roundResultScrollMax));
+    const background = this.assets.getImage('roundResult');
+    if (background) {
+      ctx.drawImage(background, 0, 0, layout.width, layout.height);
+    } else {
+      this.drawBackground(ctx, layout);
+      ctx.fillStyle = 'rgba(32, 10, 4, 0.44)';
+      ctx.fillRect(0, 0, layout.width, layout.height);
+      ctx.fillStyle = '#f8e6c2';
+      roundRect(ctx, page.panel.x, page.panel.y, page.panel.width, page.panel.height, 12);
+      ctx.fill();
+      ctx.strokeStyle = '#c78b2a';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+
+    const result = state.result || {};
+    const titles = {
+      win: '本局胡牌',
+      'circle-loss': '本局进圈',
+      'draw-round': '本局流局',
+      draw: '本局荒庄',
+    };
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = `bold ${Math.max(30, Math.floor(page.header.height * 0.36))}px serif`;
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = '#5d2108';
+    ctx.strokeText('对局结果', page.header.x + page.header.width / 2, page.header.y + page.header.height * 0.48);
+    ctx.fillStyle = '#ffe29a';
+    ctx.fillText('对局结果', page.header.x + page.header.width / 2, page.header.y + page.header.height * 0.48);
+    ctx.font = `bold ${Math.max(17, Math.floor(page.header.height * 0.18))}px serif`;
+    ctx.fillStyle = '#fff2c2';
+    ctx.fillText(titles[result.type] || '本局结束', page.header.x + page.header.width / 2, page.header.y + page.header.height * 0.75);
+    ctx.restore();
+
+    const detailPlayers = detail.players || [];
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(page.panel.x + 3, page.panel.y + 3, page.panel.width - 6, page.panel.height - 6);
+    ctx.clip();
+    ctx.fillStyle = '#f8e9ca';
+    ctx.fillRect(page.panel.x + 3, page.panel.y + 3, page.panel.width - 6, page.panel.height - 6);
+    ctx.translate(0, -this.roundResultScrollOffset);
+    page.rows.forEach((row) => {
+      const detail = detailPlayers.find((player) => player.seat === row.seat) || {
+        seat: row.seat,
+        finalHand: [],
+        melds: [],
+        roundScore: 0,
+        huCount: null,
+      };
+      const seat = state.seats[row.seat] || { name: `玩家${row.seat + 1}` };
+      const isSelf = row.seat === state.humanSeat;
+      const isWinner = result.type === 'win' && result.winner === row.seat;
+      ctx.fillStyle = isSelf
+        ? 'rgba(255, 190, 64, 0.24)'
+        : (isWinner ? 'rgba(220, 52, 32, 0.10)' : 'rgba(255, 250, 236, 0.68)');
+      roundRect(ctx, row.x, row.y, row.width, row.height, 8);
+      ctx.fill();
+      ctx.strokeStyle = isSelf ? 'rgba(211, 128, 20, 0.80)' : 'rgba(179, 109, 45, 0.34)';
+      ctx.lineWidth = isSelf ? 2 : 1;
+      ctx.stroke();
+      this.drawRoundResultIdentity(ctx, seat, row, { isSelf, isWinner });
+      this.drawRoundResultCards(ctx, detail, row.cards);
+      this.drawRoundResultStats(ctx, detail, row);
+    });
+    ctx.restore();
+
+    if (this.roundResultScrollMax > 0) {
+      const trackHeight = Math.max(28, page.panel.height - 28);
+      const thumbHeight = Math.max(24, trackHeight * (page.panel.height / page.contentHeight));
+      const thumbTravel = trackHeight - thumbHeight;
+      const thumbY = page.panel.y + 14
+        + (this.roundResultScrollOffset / this.roundResultScrollMax) * thumbTravel;
+      const trackX = page.panel.x + page.panel.width - 8;
+      ctx.fillStyle = 'rgba(117, 65, 27, 0.18)';
+      roundRect(ctx, trackX, page.panel.y + 14, 4, trackHeight, 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(174, 92, 23, 0.72)';
+      roundRect(ctx, trackX, thumbY, 4, thumbHeight, 2);
+      ctx.fill();
+    }
+
+    const roomId = state.tableRoomId || '';
+    ctx.fillStyle = '#f7d88b';
+    ctx.font = `${Math.max(13, Math.floor(page.footer.height * 0.28))}px Arial`;
+    ctx.textAlign = 'left';
+    ctx.fillText(
+      `${roomId ? `房号：${roomId}   ` : ''}第${detail.round || state.round || 0}/${detail.maxRounds || (state.tableSettings && state.tableSettings.maxRounds) || '-'}局`,
+      page.roomInfo.x,
+      page.roomInfo.y + page.roomInfo.height * 0.62
+    );
+    const continuation = detail.continuation || {};
+    if (detail.hasNextRound && continuation.requiredCount) {
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        `已继续 ${continuation.confirmedCount || 0}/${continuation.requiredCount}`,
+        page.continuation.x + page.continuation.width / 2,
+        page.continuation.y + page.continuation.height * 0.62
+      );
+    }
+    ctx.textAlign = 'left';
+  }
+
+  drawRoundResultIdentity(ctx, seat, row, flags = {}) {
+    const avatarImage = seat.avatarUrl && this.assets.getRemoteImage
+      ? this.assets.getRemoteImage(seat.avatarUrl)
+      : null;
+    if (avatarImage) {
+      ctx.save();
+      roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, row.avatar.width / 2);
+      ctx.clip();
+      ctx.drawImage(avatarImage, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = flags.isSelf ? '#2f80c9' : '#9a5a32';
+      roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, row.avatar.width / 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff5d5';
+      ctx.font = `bold ${Math.max(16, Math.floor(row.avatar.height * 0.38))}px serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText((seat.name || seat.nickName || '?').slice(0, 1), row.avatar.x + row.avatar.width / 2, row.avatar.y + row.avatar.height * 0.62);
+      ctx.textAlign = 'left';
+    }
+    ctx.strokeStyle = flags.isSelf ? '#db8f18' : '#b7792b';
+    ctx.lineWidth = 2;
+    roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, row.avatar.width / 2);
+    ctx.stroke();
+    ctx.fillStyle = '#5c2c16';
+    ctx.font = `bold ${Math.max(12, Math.floor(row.height * 0.13))}px Arial`;
+    this.fillClampedText(ctx, seat.name || seat.nickName || `玩家${row.seat + 1}`, row.name.x, row.name.y + 17, row.name.width);
+    const role = flags.isSelf ? '本家' : (flags.isWinner ? '本局玩家' : '');
+    if (role) {
+      ctx.fillStyle = flags.isSelf ? '#a94818' : '#b52e20';
+      roundRect(ctx, row.role.x, row.role.y, Math.min(row.role.width, role.length * 16 + 14), row.role.height, 4);
+      ctx.fill();
+      ctx.fillStyle = '#fff0bd';
+      ctx.font = `bold ${Math.max(10, Math.floor(row.role.height * 0.58))}px Arial`;
+      ctx.fillText(role, row.role.x + 7, row.role.y + row.role.height * 0.72);
+    }
+  }
+
+  drawRoundResultCards(ctx, detail, area) {
+    const meldColumns = (detail.melds || []).map((meld) => ({
+      label: ({ chi: '吃', peng: '碰', zhao: '招', ta: '踏' })[meld.type] || meld.label || '',
+      cards: meld.cards || [],
+      meld: true,
+    }));
+    const handGroups = [];
+    (detail.finalHand || []).slice().sort((a, b) => (
+      (a.order || 0) - (b.order || 0) || (a.copy || 0) - (b.copy || 0)
+    )).forEach((card) => {
+      let group = handGroups.find((item) => item.key === card.key);
+      if (!group) {
+        group = { key: card.key, label: '', cards: [], meld: false };
+        handGroups.push(group);
+      }
+      group.cards.push(card);
+    });
+    const columns = meldColumns.concat(handGroups).filter((column) => column.cards.length);
+    if (!columns.length) return;
+    const gap = Math.max(2, Math.floor(area.width * 0.004));
+    const cardWidth = Math.max(16, Math.min(29, Math.floor((area.width - gap * (columns.length - 1)) / columns.length)));
+    const cardHeight = Math.round(cardWidth / CARD_ASPECT_RATIO);
+    const labelHeight = Math.max(11, Math.floor(area.height * 0.17));
+    let x = area.x;
+    columns.forEach((column) => {
+      const maxStackHeight = Math.max(cardHeight, area.height - labelHeight - 2);
+      const step = column.cards.length > 1
+        ? Math.max(3, Math.min(Math.floor(cardHeight * 0.42), Math.floor((maxStackHeight - cardHeight) / (column.cards.length - 1))))
+        : 0;
+      if (column.label) {
+        ctx.fillStyle = '#6b341b';
+        ctx.font = `bold ${Math.max(10, Math.floor(labelHeight * 0.72))}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.fillText(column.label, x + cardWidth / 2, area.y + labelHeight - 2);
+        ctx.textAlign = 'left';
+      }
+      column.cards.forEach((card, index) => {
+        this.drawCard(ctx, card, x, area.y + labelHeight + index * step, cardWidth, cardHeight, true, false, 'mini');
+      });
+      x += cardWidth + gap + (column.meld ? gap : 0);
+    });
+  }
+
+  scrollRoundResultBy(deltaY) {
+    if (!this.roundResultScrollMax || !Number.isFinite(deltaY)) return false;
+    const next = Math.max(0, Math.min(
+      this.roundResultScrollMax,
+      this.roundResultScrollOffset - deltaY
+    ));
+    if (next === this.roundResultScrollOffset) return false;
+    this.roundResultScrollOffset = next;
+    return true;
+  }
+
+  drawRoundResultStats(ctx, detail, row) {
+    const huText = detail.huCount === null || detail.huCount === undefined ? '--' : String(detail.huCount);
+    const score = Number(detail.roundScore) || 0;
+    ctx.fillStyle = '#6b341b';
+    ctx.textAlign = 'center';
+    ctx.font = `${Math.max(11, Math.floor(row.height * 0.12))}px Arial`;
+    ctx.fillText('胡数', row.hu.x + row.hu.width / 2, row.hu.y + row.hu.height * 0.30);
+    ctx.fillText('分数', row.score.x + row.score.width / 2, row.score.y + row.score.height * 0.30);
+    ctx.font = `bold ${Math.max(18, Math.floor(row.height * 0.24))}px Arial`;
+    ctx.fillStyle = detail.huCount === null || detail.huCount === undefined ? '#8d7a68' : '#a53a13';
+    ctx.fillText(huText, row.hu.x + row.hu.width / 2, row.hu.y + row.hu.height * 0.70);
+    ctx.fillStyle = score > 0 ? '#bd6414' : (score < 0 ? '#2477b5' : '#8d7a68');
+    ctx.fillText(`${score > 0 ? '+' : ''}${score}`, row.score.x + row.score.width / 2, row.score.y + row.score.height * 0.70);
+    ctx.textAlign = 'left';
+  }
+
+  drawRoundResultButton(ctx, button, action, visual = {}) {
+    const disabled = Boolean(action.disabled);
+    ctx.save();
+    ctx.shadowColor = disabled ? 'rgba(53, 31, 20, 0.34)' : 'rgba(55, 10, 2, 0.72)';
+    ctx.shadowBlur = disabled ? 4 : 10;
+    ctx.shadowOffsetY = 3;
+    ctx.fillStyle = disabled ? '#725846' : '#f6bd4b';
+    roundRect(ctx, button.x - 4, button.y - 4, button.width + 8, button.height + 8, 13);
+    ctx.fill();
+    ctx.restore();
+    const gradient = ctx.createLinearGradient(button.x, button.y, button.x, button.y + button.height);
+    if (disabled) {
+      gradient.addColorStop(0, '#8f7257');
+      gradient.addColorStop(1, '#5e4838');
+    } else {
+      gradient.addColorStop(0, visual.pressed ? '#e76a31' : '#d83c24');
+      gradient.addColorStop(1, visual.pressed ? '#a72b1d' : '#8e170f');
+    }
+    ctx.fillStyle = gradient;
+    roundRect(ctx, button.x, button.y, button.width, button.height, 10);
+    ctx.fill();
+    ctx.strokeStyle = disabled ? '#b99a70' : '#ffd273';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.strokeStyle = disabled ? 'rgba(87, 63, 43, 0.55)' : 'rgba(92, 24, 9, 0.78)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, button.x + 4, button.y + 4, button.width - 8, button.height - 8, 7);
+    ctx.stroke();
+    ctx.fillStyle = disabled ? '#e6d2b5' : '#ffe6a0';
+    ctx.font = `bold ${Math.max(15, Math.floor(button.height * 0.38))}px serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(action.label, button.x + button.width / 2, button.y + button.height * 0.63);
+    ctx.textAlign = 'left';
   }
 
   actionSpriteBounds(sprite, button, padding = 0) {

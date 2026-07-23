@@ -28,9 +28,11 @@ export default class DataBus {
   zhaoSizePicker = null;
   feedback = '';
   result = null;
+  roundDetail = null;
   muted = false;
   round = 0;
   tableStatus = '';
+  tableRoomId = '';
   tableSettings = {};
   tableFinished = false;
   tableRematch = null;
@@ -71,9 +73,11 @@ export default class DataBus {
       zhaoSizePicker: null,
       feedback: '',
       result: null,
+      roundDetail: null,
       muted: this.muted,
       round: this.round,
       tableStatus: '',
+      tableRoomId: '',
       tableSettings: {},
       tableFinished: false,
       tableRematch: null,

@@ -677,6 +677,104 @@ const layoutState = {
   ],
 };
 
+const resultDeck = createDeck(DEFAULT_RULES);
+const roundResultState = {
+  ...layoutState,
+  phase: PHASES.RESULT,
+  result: { type: 'win', winner: 1 },
+  playerActions: [],
+  tableRoomId: '139240',
+  tableSettings: { maxRounds: 2 },
+  roundDetail: {
+    round: 1,
+    maxRounds: 2,
+    hasNextRound: true,
+    players: [0, 1, 2, 3].map((seat) => ({
+      seat,
+      finalHand: resultDeck.slice(seat * 18, seat * 18 + 18),
+      melds: seat === 1 ? [{ type: 'peng', cards: resultDeck.slice(80, 83) }] : [],
+      huCount: seat === 1 ? 21 : null,
+      roundScore: seat === 1 ? 3 : -1,
+    })),
+    continuation: {
+      requiredSeats: [0, 1],
+      confirmedSeats: [1],
+      confirmedCount: 1,
+      requiredCount: 2,
+      selfConfirmed: false,
+    },
+  },
+};
+
+for (const resultCase of [
+  { width: 1560, height: 878, insets: null, label: 'canonical result landscape' },
+  { width: 844, height: 390, insets: { left: 47, top: 0, right: 0, bottom: 21 }, label: 'narrow notched result landscape' },
+  { width: 932, height: 430, insets: { left: 0, top: 8, right: 59, bottom: 24 }, label: 'right-notched result landscape' },
+]) {
+  const resultLayoutBuilder = new TableLayout(resultCase.width, resultCase.height, {
+    safeAreaInsets: resultCase.insets,
+  });
+  const resultLayout = resultLayoutBuilder.build(roundResultState);
+  if (!resultLayout.roundResult || resultLayout.roundResult.rows.length !== 4) {
+    throw new Error(`${resultCase.label} should expose four full-screen result rows`);
+  }
+  if (
+    resultLayout.actionButtons.length !== 1
+    || resultLayout.actionButtons[0].action.type !== 'confirmNextRound'
+    || resultLayout.roundResult.rows[1].seat !== 0
+  ) {
+    throw new Error(`${resultCase.label} should place the local player second and expose only continue`);
+  }
+  [
+    resultLayout.roundResult.header,
+    resultLayout.roundResult.panel,
+    resultLayout.roundResult.footer,
+    resultLayout.roundResult.button,
+  ].forEach((region) => assertWithinBounds(region, resultLayout.contentBounds, `${region.type} in ${resultCase.label}`));
+  resultLayout.roundResult.rows.forEach((row) => {
+    if (row.height < 92 || row.cards.width <= 0 || intersects(row.cards, row.stats)) {
+      throw new Error(`${resultCase.label} result cards must remain readable and separate from stats`);
+    }
+  });
+  const panelHit = resultLayoutBuilder.hit(
+    resultLayout,
+    resultLayout.roundResult.panel.x + resultLayout.roundResult.panel.width / 2,
+    resultLayout.roundResult.panel.y + resultLayout.roundResult.panel.height / 2
+  );
+  const buttonHit = resultLayoutBuilder.hit(
+    resultLayout,
+    resultLayout.roundResult.button.x + resultLayout.roundResult.button.width / 2,
+    resultLayout.roundResult.button.y + resultLayout.roundResult.button.height / 2
+  );
+  if (!panelHit || panelHit.type !== 'round-result-scroll' || !buttonHit || buttonHit.type !== 'action') {
+    throw new Error(`${resultCase.label} should separate vertical result scrolling from the fixed action button`);
+  }
+  if (resultCase.height <= 430 && resultLayout.roundResult.maxScroll <= 0) {
+    throw new Error(`${resultCase.label} should vertically scroll taller player result entries`);
+  }
+  if (
+    resultLayout.roundResult.panel.x > resultCase.width * 0.12
+    || resultLayout.roundResult.panel.x + resultLayout.roundResult.panel.width < resultCase.width * 0.89
+  ) {
+    throw new Error(`${resultCase.label} result viewport should align with the wide blank background panel`);
+  }
+}
+
+const finalRoundResultLayout = new TableLayout(844, 390).build({
+  ...roundResultState,
+  roundDetail: {
+    ...roundResultState.roundDetail,
+    round: 2,
+    hasNextRound: false,
+  },
+});
+if (
+  finalRoundResultLayout.actionButtons.length !== 1
+  || finalRoundResultLayout.actionButtons[0].action.type !== 'viewRecord'
+) {
+  throw new Error('the final round result should expose only the future record entry');
+}
+
 function takeCards(deck, keys) {
   return keys.map((key) => {
     const index = deck.findIndex((card) => card.key === key);
@@ -1173,6 +1271,8 @@ function createFakeRenderContext() {
     fillRect: (...args) => calls.push(['fillRect', args]),
     drawImage: (...args) => calls.push(['drawImage', args]),
     beginPath: () => calls.push(['beginPath']),
+    rect: (...args) => calls.push(['rect', args]),
+    clip: () => calls.push(['clip']),
     moveTo: (...args) => calls.push(['moveTo', args]),
     lineTo: (...args) => calls.push(['lineTo', args]),
     quadraticCurveTo: (...args) => calls.push(['quadraticCurveTo', args]),
@@ -1248,6 +1348,41 @@ directionRenderer.drawClaimedColumns(
 );
 if (miniPositions.map((item) => `${item.x}:${item.y}`).join(',') !== '100:20,100:40,100:60,116:20,116:40,116:60') {
   throw new Error('claimed melds should render each meld as one left-to-right vertical column with no gap');
+}
+miniPositions = [];
+directionRenderer.drawRoundResultCards(
+  {
+    fillText() {},
+    set fillStyle(value) {},
+    set font(value) {},
+    set textAlign(value) {},
+  },
+  { finalHand: renderDeck.slice(0, 12), melds: [] },
+  { x: 20, y: 10, width: 320, height: 96 }
+);
+const resultColumnXs = new Set(miniPositions.map((item) => item.x));
+if (
+  resultColumnXs.size >= miniPositions.length
+  || !miniPositions.some((item, index) => (
+    index > 0
+    && item.x === miniPositions[index - 1].x
+    && item.y > miniPositions[index - 1].y
+    && item.size === 'mini'
+  ))
+) {
+  throw new Error('round result cards should use vertically stacked mini-card columns');
+}
+directionRenderer.roundResultScrollMax = 140;
+directionRenderer.roundResultScrollOffset = 0;
+if (
+  !directionRenderer.scrollRoundResultBy(-50)
+  || directionRenderer.roundResultScrollOffset !== 50
+  || !directionRenderer.scrollRoundResultBy(-500)
+  || directionRenderer.roundResultScrollOffset !== 140
+  || !directionRenderer.scrollRoundResultBy(500)
+  || directionRenderer.roundResultScrollOffset !== 0
+) {
+  throw new Error('round result vertical scrolling should move and clamp the shared player list');
 }
 
 function makeSprite(name, imageId = name, width = 10, height = 20) {

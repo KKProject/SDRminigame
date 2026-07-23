@@ -69,6 +69,32 @@ const online = await import(pathToFileURL(join(tempDir, 'online.mjs')));
 const profile = await import(pathToFileURL(join(tempDir, 'profile.mjs')));
 const socketModule = await import(pathToFileURL(join(tempDir, 'socket.mjs')));
 
+const rotatedRoundDetail = online.rotateRoundDetail({
+  round: 1,
+  maxRounds: 2,
+  hasNextRound: true,
+  players: [
+    { seat: 0, finalHand: [], melds: [], roundScore: 3, huCount: 21 },
+    { seat: 1, finalHand: [], melds: [], roundScore: -1, huCount: null },
+    { seat: 2, finalHand: [], melds: [], roundScore: -1, huCount: null },
+    { seat: 3, finalHand: [], melds: [], roundScore: -1, huCount: null },
+  ],
+  continuation: {
+    requiredSeats: [0, 2],
+    confirmedSeats: [2],
+    confirmedCount: 1,
+    requiredCount: 2,
+  },
+}, 2);
+if (
+  rotatedRoundDetail.players.find((player) => player.huCount === 21).seat !== 2
+  || rotatedRoundDetail.continuation.requiredSeats.join(',') !== '2,0'
+  || rotatedRoundDetail.continuation.confirmedSeats.join(',') !== '0'
+  || !rotatedRoundDetail.continuation.selfConfirmed
+) {
+  throw new Error('round detail should rotate players and continuation seats while deriving self confirmation');
+}
+
 if (codec.SYMBOLS.length !== 24 || codec.PHRASES.length !== 8) {
   throw new Error('client codec should define 24 symbols and 8 phrases');
 }
@@ -1026,6 +1052,26 @@ const onlineMusic = {
 const onlineController = new online.default(onlineDatabus, onlineRenderer, onlineMusic);
 onlineController.roomId = 'animation-room';
 onlineController.mySeat = 0;
+let roundResultScrollDelta = 0;
+const roundResultScrollController = new online.default(
+  { feedback: '' },
+  {
+    lastLayout: {},
+    layout: {
+      hit() { return { type: 'round-result-scroll' }; },
+    },
+    scrollRoundResultBy(deltaY) { roundResultScrollDelta += deltaY; },
+  },
+  { playCue() { throw new Error('scrolling the result list should not trigger a tap cue'); } }
+);
+roundResultScrollController.active = true;
+roundResultScrollController.socket = { isReady() { return true; } };
+roundResultScrollController.handleTouch({ touches: [{ clientX: 100, clientY: 180 }] });
+roundResultScrollController.handleTouchMove({ touches: [{ clientX: 100, clientY: 145 }] });
+roundResultScrollController.handleTouchEnd();
+if (roundResultScrollDelta !== -35 || roundResultScrollController.roundResultScrollTouch) {
+  throw new Error('result panel gestures should vertically scroll the shared player list and end cleanly');
+}
 let fakeSocketReady = true;
 let fakeSocketFailAck = false;
 let fakeSocketRejectOp = false;
@@ -1048,6 +1094,11 @@ onlineController.socket = {
   heartbeat() { return Promise.resolve({ ok: true }); },
   close() {},
 };
+onlineDatabus.feedback = '';
+onlineController.handleActionTap({ type: 'viewRecord', label: '查看战绩' });
+if (onlineDatabus.feedback !== '战绩功能待开放') {
+  throw new Error('the future record entry should remain on the result page with placeholder feedback');
+}
 let leaveRoomRequestSent = false;
 let leaveSocketRequestUsed = false;
 let leaveSocketClosed = false;
@@ -1409,6 +1460,7 @@ async function verifyResultDeltaGate({
     phase: 'human-discard',
     currentSeat: 0,
     result: null,
+    roundDetail: null,
     seats: [
       { hand: [{ id: `result-delta-hand-${eventSeq}`, key: 'da' }], discards: [], melds: [] },
       { hand: [], discards: [], melds: [] },
@@ -1442,6 +1494,26 @@ async function verifyResultDeltaGate({
       });
     },
   };
+  const roundDetail = {
+    round: 1,
+    maxRounds: 2,
+    hasNextRound: true,
+    resultType: result.type,
+    players: [0, 1, 2, 3].map((seat) => ({
+      seat,
+      finalHand: seat === 0 ? [{ id: `result-card-${eventSeq}`, key: 'da' }] : [],
+      melds: [],
+      roundScore: seat === result.winner ? 3 : -1,
+      huCount: seat === result.winner ? 21 : null,
+    })),
+    continuation: {
+      requiredSeats: [0, 1],
+      confirmedSeats: [],
+      confirmedCount: 0,
+      requiredCount: 2,
+      selfConfirmed: false,
+    },
+  };
   if (!resultDeltaController.applySocketDelta({
     roomId: resultDeltaController.roomId,
     baseVersion: eventSeq - 1,
@@ -1459,6 +1531,7 @@ async function verifyResultDeltaGate({
         currentSeat: 0,
         pendingActions: [],
         playerActions: [],
+        roundDetail,
       },
     },
   })) {
@@ -1467,6 +1540,7 @@ async function verifyResultDeltaGate({
   if (
     resultDeltaDatabus.phase === 'result'
     || resultDeltaDatabus.result
+    || resultDeltaDatabus.roundDetail
     || !resultDeltaController.authoritativeState
     || !resultDeltaController.authoritativeState.result
     || resultDeltaController.authoritativeState.result.type !== result.type
@@ -1480,6 +1554,8 @@ async function verifyResultDeltaGate({
     resultDeltaDatabus.phase !== 'result'
     || !resultDeltaDatabus.result
     || resultDeltaDatabus.result.type !== result.type
+    || !resultDeltaDatabus.roundDetail
+    || resultDeltaDatabus.roundDetail.players.length !== 4
     || resultDeltaAckCount !== 1
   ) {
     throw new Error(`${eventType} result delta should commit the correct result after its timeline event`);
@@ -2963,6 +3039,13 @@ if (
 ) {
   throw new Error('final table result should initialize a host rematch decision window');
 }
+const blockedFinalConfirmation = await roomFunction.confirmNextRound({
+  roomId: 'max-round-room',
+  round: 2,
+}, { db: maxRoundDb, OPENID: 'max-round-openid' });
+if (blockedFinalConfirmation.ok || blockedFinalConfirmation.error !== 'TABLE_FINISHED') {
+  throw new Error('final table results must reject ordinary next-round confirmation');
+}
 const resultDriftDb = createRoomDb({
   'result-drift-room': {
     _id: 'result-drift-room',
@@ -2998,11 +3081,31 @@ const resultDriftDb = createRoomDb({
     },
   },
 });
-const recoveredNextRound = await roomFunction.startRound({
+const blockedDirectNextRound = await roomFunction.startRound({
   roomId: 'result-drift-room',
 }, { db: resultDriftDb, OPENID: 'result-drift-host' });
+if (blockedDirectNextRound.ok || blockedDirectNextRound.error !== 'NEXT_ROUND_CONFIRM_REQUIRED') {
+  throw new Error('startRound should require the round-result confirmation flow for non-final finished rooms');
+}
+const hostConfirmedNextRound = await roomFunction.confirmNextRound({
+  roomId: 'result-drift-room',
+  round: 1,
+}, { db: resultDriftDb, OPENID: 'result-drift-host' });
+if (
+  !hostConfirmedNextRound.ok
+  || hostConfirmedNextRound.nextRoundStarted
+  || hostConfirmedNextRound.public.roundDetail.continuation.confirmedCount !== 1
+  || hostConfirmedNextRound.public.roundDetail.continuation.requiredCount !== 2
+) {
+  throw new Error('the first human confirmation should keep the finished room on its result detail');
+}
+const recoveredNextRound = await roomFunction.confirmNextRound({
+  roomId: 'result-drift-room',
+  round: 1,
+}, { db: resultDriftDb, OPENID: 'result-drift-guest' });
 if (
   !recoveredNextRound.ok
+  || !recoveredNextRound.nextRoundStarted
   || resultDriftDb.documents.rooms['result-drift-room'].status !== 'playing'
   || resultDriftDb.documents.rooms['result-drift-room'].state.round !== 2
   || resultDriftDb.documents.rooms['result-drift-room'].state.seats.length !== 4
@@ -3010,7 +3113,146 @@ if (
   || resultDriftDb.documents.rooms['result-drift-room'].tableScores[1] !== -4
   || recoveredNextRound.public.seats[0].score !== 12
 ) {
-  throw new Error('startRound should recover result drift rooms, apply settlement scores, and open the next non-final round');
+  throw new Error('all human confirmations should recover result drift, apply scores, and open the next non-final round');
+}
+
+const detailCard = (id, key, text, order, copy = 0) => ({
+  id,
+  key,
+  text,
+  phraseId: 'sdr',
+  phraseText: '上大人',
+  phraseIndex: 0,
+  position: order,
+  group: 'sdr',
+  order,
+  color: '#202020',
+  copy,
+});
+const roundDetailDb = createRoomDb({
+  'round-detail-room': {
+    _id: 'round-detail-room',
+    status: 'finished',
+    version: 12,
+    updatedAt: 12,
+    hostOpenid: 'detail-host',
+    players: [
+      { seat: 0, openid: 'detail-host', ready: true, online: true, isHuman: true },
+      { seat: 1, openid: 'detail-guest', ready: true, online: true, isHuman: true },
+    ],
+    playerOpenids: ['detail-host', 'detail-guest'],
+    settings: { maxRounds: 2 },
+    state: {
+      phase: 'result',
+      round: 1,
+      currentSeat: 0,
+      dealerSeat: 0,
+      nextDealerSeat: 1,
+      seats: [
+        { id: 0, hand: [detailCard('shang-0', 'shang', '上', 0)], melds: [], discards: [], history: {} },
+        { id: 1, hand: [detailCard('da-0', 'da', '大', 1)], melds: [], discards: [], history: {} },
+        { id: 2, hand: [detailCard('ren-0', 'ren', '人', 2)], melds: [], discards: [], history: {} },
+        { id: 3, hand: [], melds: [], discards: [], history: {} },
+      ],
+      deck: [],
+      eventSeq: 4,
+      publicEvent: null,
+      pendingContinuation: null,
+      result: {
+        type: 'win',
+        winner: 0,
+        card: detailCard('da-1', 'da', '大', 1, 1),
+        scoring: { totalFu: 21 },
+        roundScores: { 0: 3, 1: -1, 2: -1, 3: -1 },
+        settlement: {
+          point: 1,
+          payments: [
+            { from: 1, to: 0, points: 1 },
+            { from: 2, to: 0, points: 1 },
+            { from: 3, to: 0, points: 1 },
+          ],
+        },
+      },
+    },
+  },
+});
+const concurrentRoundDetailFixture = JSON.parse(JSON.stringify(
+  roundDetailDb.documents.rooms['round-detail-room']
+));
+const roundDetailPull = await roomFunction.pull({
+  roomId: 'round-detail-room',
+}, { db: roundDetailDb, OPENID: 'detail-host' });
+if (
+  !roundDetailPull.ok
+  || !roundDetailPull.public.roundDetail
+  || roundDetailPull.public.roundDetail.players.length !== 4
+  || roundDetailPull.public.roundDetail.players[0].huCount !== 21
+  || roundDetailPull.public.roundDetail.players[1].huCount !== null
+  || roundDetailPull.public.roundDetail.players[0].finalHand.length !== 2
+  || roundDetailPull.public.roundDetail.players[0].roundScore !== 3
+  || 'hand' in roundDetailPull.public.seats[1]
+) {
+  throw new Error('result snapshots should reveal frozen final hands and winner hu count without weakening live seat privacy');
+}
+const duplicateDetailConfirm = await roomFunction.confirmNextRound({
+  roomId: 'round-detail-room',
+  round: 1,
+}, { db: roundDetailDb, OPENID: 'detail-host' });
+const duplicateDetailConfirmAgain = await roomFunction.confirmNextRound({
+  roomId: 'round-detail-room',
+  round: 1,
+}, { db: roundDetailDb, OPENID: 'detail-host' });
+if (
+  !duplicateDetailConfirm.ok
+  || !duplicateDetailConfirmAgain.ok
+  || duplicateDetailConfirmAgain.nextRoundStarted
+  || duplicateDetailConfirmAgain.public.roundDetail.continuation.confirmedCount !== 1
+) {
+  throw new Error('duplicate next-round confirmations should remain idempotent');
+}
+const detailGuestConfirm = await roomFunction.confirmNextRound({
+  roomId: 'round-detail-room',
+  round: 1,
+}, { db: roundDetailDb, OPENID: 'detail-guest' });
+if (
+  !detailGuestConfirm.ok
+  || !detailGuestConfirm.nextRoundStarted
+  || detailGuestConfirm.public.roundDetail !== null
+  || detailGuestConfirm.public.seats.some((seat) => 'hand' in seat)
+) {
+  throw new Error('the last human confirmation should start a fresh private-hand round and clear roundDetail');
+}
+const lateDetailConfirm = await roomFunction.confirmNextRound({
+  roomId: 'round-detail-room',
+  round: 1,
+}, { db: roundDetailDb, OPENID: 'detail-host' });
+if (
+  lateDetailConfirm.ok
+  || roundDetailDb.documents.rooms['round-detail-room'].state.round !== 2
+  || roundDetailDb.documents.rooms['round-detail-room'].version !== 15
+) {
+  throw new Error('a late previous-round confirmation must not advance the already-started round');
+}
+concurrentRoundDetailFixture._id = 'concurrent-round-detail-room';
+const concurrentRoundDetailDb = createRoomDb({
+  'concurrent-round-detail-room': concurrentRoundDetailFixture,
+});
+const concurrentConfirmations = await Promise.all([
+  roomFunction.confirmNextRound({
+    roomId: 'concurrent-round-detail-room',
+    round: 1,
+  }, { db: concurrentRoundDetailDb, OPENID: 'detail-host' }),
+  roomFunction.confirmNextRound({
+    roomId: 'concurrent-round-detail-room',
+    round: 1,
+  }, { db: concurrentRoundDetailDb, OPENID: 'detail-guest' }),
+]);
+if (
+  concurrentConfirmations.filter((response) => response.nextRoundStarted).length !== 1
+  || concurrentRoundDetailDb.documents.rooms['concurrent-round-detail-room'].state.round !== 2
+  || concurrentRoundDetailDb.documents.rooms['concurrent-round-detail-room'].version !== 14
+) {
+  throw new Error('concurrent final confirmations should start the next round exactly once');
 }
 const finalEventDriftDb = createRoomDb({
   'final-event-drift-room': {
@@ -3090,6 +3332,20 @@ function finalRoom(id, overrides = {}) {
     state: finalResultState(2),
     rematch: null,
   }, overrides);
+}
+const nonWinDetailDb = createRoomDb({
+  'non-win-detail': finalRoom('non-win-detail'),
+});
+const nonWinDetail = await roomFunction.pull({
+  roomId: 'non-win-detail',
+}, { db: nonWinDetailDb, OPENID: 'rematch-host' });
+if (
+  !nonWinDetail.ok
+  || !nonWinDetail.public.roundDetail
+  || nonWinDetail.public.roundDetail.resultType !== 'draw-round'
+  || nonWinDetail.public.roundDetail.players.some((player) => player.huCount !== null)
+) {
+  throw new Error('non-win result details should keep every player hu count empty');
 }
 const leaveFinalDriftDb = createRoomDb({
   'leave-final-drift': finalRoom('leave-final-drift', { status: 'playing', rematch: null }),

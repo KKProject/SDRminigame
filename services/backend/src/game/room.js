@@ -40,6 +40,7 @@ const DEFAULT_MAX_ROUNDS = 2;
 const SUPPORTED_PAY_TYPES = ['pihu', 'jiahu', 'changhu'];
 const RECOVERABLE_ROOM_STATUSES = ['waiting', 'playing', 'finished'];
 const PLAYER_ROOM_LOCKS = new Map();
+const ROOM_MUTATION_LOCKS = new Map();
 
 function buildPrivateViewsBySeat(state) {
   if (!state || !Array.isArray(state.seats)) return {};
@@ -150,10 +151,88 @@ function applyRoundSettlementToTableScores(room, engine) {
   return true;
 }
 
-function publicStateForRoom(room, engine) {
+function buildRoundContinuation(room, engine, openid = null) {
+  const state = engine && engine.state;
+  const round = state && Number(state.round) || 0;
+  const maxRounds = normalizeRoomSettings(room && room.settings).maxRounds;
+  const hasNextRound = Boolean(state && state.phase === 'result' && round < maxRounds);
+  if (!hasNextRound) {
+    return {
+      round,
+      requiredSeats: [],
+      confirmedSeats: [],
+      confirmedCount: 0,
+      requiredCount: 0,
+      selfConfirmed: false,
+    };
+  }
+  const ready = room && room.nextRoundReady && Number(room.nextRoundReady.round) === round
+    ? room.nextRoundReady
+    : null;
+  const confirmedOpenids = ready && Array.isArray(ready.confirmedOpenids)
+    ? ready.confirmedOpenids
+    : [];
+  const requiredPlayers = humanPlayers(room);
+  const confirmedSeats = requiredPlayers
+    .filter((player) => confirmedOpenids.indexOf(player.openid) >= 0)
+    .map((player) => player.seat);
+  return {
+    round,
+    requiredSeats: requiredPlayers.map((player) => player.seat),
+    confirmedSeats,
+    confirmedCount: confirmedSeats.length,
+    requiredCount: requiredPlayers.length,
+    selfConfirmed: Boolean(openid && confirmedOpenids.indexOf(openid) >= 0),
+  };
+}
+
+function buildRoundDetail(room, engine, openid = null) {
+  const state = engine && engine.state;
+  if (!state || state.phase !== 'result' || !state.result) return null;
+  const result = state.result;
+  const maxRounds = normalizeRoomSettings(room && room.settings).maxRounds;
+  const roundScores = normalizeTableScores(
+    result.roundScores || {},
+    room && room.seatCount ? room.seatCount : SEAT_COUNT
+  );
+  return {
+    round: Number(state.round) || 0,
+    maxRounds,
+    hasNextRound: (Number(state.round) || 0) < maxRounds,
+    resultType: result.type || '',
+    players: (state.seats || []).map((seat, seatIndex) => {
+      const finalHand = Array.isArray(seat.hand) ? seat.hand.slice() : [];
+      if (
+        result.type === 'win'
+        && result.winner === seatIndex
+        && result.card
+        && !finalHand.some((card) => card.id === result.card.id)
+      ) {
+        finalHand.push(result.card);
+      }
+      return {
+        seat: seatIndex,
+        finalHand,
+        melds: Array.isArray(seat.melds) ? seat.melds.slice() : [],
+        roundScore: Number(roundScores[seatIndex]) || 0,
+        huCount: result.type === 'win'
+          && result.winner === seatIndex
+          && result.scoring
+          && Number.isFinite(Number(result.scoring.totalFu))
+          ? Number(result.scoring.totalFu)
+          : null,
+      };
+    }),
+    continuation: buildRoundContinuation(room, engine, openid),
+  };
+}
+
+function publicStateForRoom(room, engine, openid = null) {
   if (!engine || !engine.state) return null;
   applyRoundSettlementToTableScores(room, engine);
-  return buildPublicState(engine.state, ensureTableScores(room));
+  const state = buildPublicState(engine.state, ensureTableScores(room));
+  state.roundDetail = buildRoundDetail(room, engine, openid);
+  return state;
 }
 
 function resetTableScores(room) {
@@ -178,6 +257,21 @@ async function withPlayerRoomLock(openid, task) {
   } finally {
     release();
     if (PLAYER_ROOM_LOCKS.get(key) === current) PLAYER_ROOM_LOCKS.delete(key);
+  }
+}
+
+async function withRoomMutationLock(roomId, task) {
+  const key = String(roomId || 'unknown-room');
+  const previous = ROOM_MUTATION_LOCKS.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => { release = resolve; });
+  ROOM_MUTATION_LOCKS.set(key, current);
+  await previous.catch(() => {});
+  try {
+    return await task();
+  } finally {
+    release();
+    if (ROOM_MUTATION_LOCKS.get(key) === current) ROOM_MUTATION_LOCKS.delete(key);
   }
 }
 
@@ -377,9 +471,12 @@ function expireFinalRematchDecision(room, now = Date.now()) {
 function settleRoomStatus(room, engine) {
   if (reachedMaxRounds(room, engine)) {
     room.status = 'tableResult';
+    room.nextRoundReady = null;
     ensureFinalRematchDecision(room);
   } else if (engine && engine.state && engine.state.phase === 'result') {
     room.status = 'finished';
+  } else if (engine && engine.state && engine.state.phase !== 'result') {
+    room.nextRoundReady = null;
   }
   return room.status;
 }
@@ -1246,9 +1343,12 @@ async function startRound(event, ctx) {
         room: buildWaitingRoomSnapshot(room, OPENID),
       };
     }
-  } else if (room.status !== 'finished') {
+  } else if (room.status === 'finished') {
+    return { ok: false, error: 'NEXT_ROUND_CONFIRM_REQUIRED', status: room.status };
+  } else {
     return { ok: false, error: 'ROOM_ALREADY_PLAYING', status: room.status };
   }
+  room.nextRoundReady = null;
   engine.startRound({ players: buildSeatPlayers(room) });
   room.status = 'playing';
   const version = (room.version || 0) + 1;
@@ -1267,6 +1367,82 @@ async function startRound(event, ctx) {
     privateViewsBySeat: buildPrivateViewsBySeat(engine.state),
     animation: animationState(room, engine, OPENID),
   };
+}
+
+async function confirmNextRound(event, ctx) {
+  const { db, OPENID } = ctx;
+  const roomId = event.roomId;
+  return withRoomMutationLock(roomId, async () => {
+    const room = await getRoom(db, roomId);
+    if (!room) return { ok: false, error: 'ROOM_NOT_FOUND' };
+    const seat = seatOfOpenid(room, OPENID);
+    if (seat < 0) return { ok: false, error: 'NOT_IN_ROOM' };
+    const engine = loadEngine(room.state || null, room.settings);
+    settleRoomStatus(room, engine);
+    applyRoundSettlementToTableScores(room, engine);
+    const state = engine.state;
+    if (!state || state.phase !== 'result') {
+      return { ok: false, error: 'ROOM_NOT_FINISHED', status: room.status };
+    }
+    const round = Number(state.round) || 0;
+    if (Number(event.round) !== round) {
+      return { ok: false, error: 'ROUND_STALE', round, status: room.status };
+    }
+    if (reachedMaxRounds(room, engine) || room.status === 'tableResult') {
+      return { ok: false, error: 'TABLE_FINISHED', round, status: 'tableResult' };
+    }
+    if (state.publicEvent || room.animationBarrier) {
+      return { ok: false, error: 'RESULT_NOT_READY', round, status: room.status };
+    }
+    if (room.status !== 'finished') {
+      return { ok: false, error: 'ROOM_NOT_FINISHED', round, status: room.status };
+    }
+
+    const requiredPlayers = humanPlayers(room);
+    const requiredOpenids = playerOpenids(requiredPlayers);
+    if (requiredOpenids.indexOf(OPENID) < 0) {
+      return { ok: false, error: 'NOT_IN_ROOM', round, status: room.status };
+    }
+    if (!room.nextRoundReady || Number(room.nextRoundReady.round) !== round) {
+      room.nextRoundReady = {
+        round,
+        confirmedOpenids: [],
+        createdAt: Date.now(),
+      };
+    }
+    if (room.nextRoundReady.confirmedOpenids.indexOf(OPENID) < 0) {
+      room.nextRoundReady.confirmedOpenids.push(OPENID);
+    }
+
+    const confirmed = new Set(room.nextRoundReady.confirmedOpenids);
+    const allConfirmed = requiredOpenids.every((openid) => confirmed.has(openid));
+    let nextRoundStarted = false;
+    if (allConfirmed) {
+      room.nextRoundReady = null;
+      room.status = 'playing';
+      engine.startRound({ players: buildSeatPlayers(room) });
+      nextRoundStarted = true;
+    }
+    const version = (room.version || 0) + 1;
+    const publicState = await writeRoomState(db, roomId, room, engine, version);
+    if (publicState && publicState.roundDetail) {
+      publicState.roundDetail = buildRoundDetail(room, engine, OPENID);
+    }
+    return {
+      ok: true,
+      roomId,
+      version,
+      yourSeat: seat,
+      status: room.status,
+      settings: normalizeRoomSettings(room.settings),
+      public: publicState,
+      private: buildPrivateView(engine.state, seat),
+      privateViewsBySeat: buildPrivateViewsBySeat(engine.state),
+      animation: animationState(room, engine, OPENID),
+      rematch: buildRematchState(room, OPENID),
+      nextRoundStarted,
+    };
+  });
 }
 
 async function leaveRoom(event, ctx) {
@@ -1723,6 +1899,9 @@ async function pull(event, ctx) {
       data: { players: room.players, updatedAt: now },
     });
   }
+  if (publicState && publicState.roundDetail) {
+    publicState.roundDetail = buildRoundDetail(room, engine, OPENID);
+  }
   return {
     ok: true,
     roomId,
@@ -2031,6 +2210,7 @@ module.exports = {
   requestSeatSwap,
   respondSeatSwap,
   startRound,
+  confirmNextRound,
   leaveRoom,
   requestRematch,
   op,

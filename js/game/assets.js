@@ -12,6 +12,7 @@ export const ASSET_MANIFEST = {
     cardFront: 'images/element.png',
     button: 'images/actions.png',
     result: 'images/element.png',
+    roundResult: 'images/round_result_bg.jpg',
   },
   atlases: {
     cards: {

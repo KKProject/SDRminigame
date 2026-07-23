@@ -75,6 +75,9 @@ function publicPatch(publicState = {}) {
     dealerSeat: publicState.dealerSeat,
     nextDealerSeat: publicState.nextDealerSeat,
     feedback: publicState.feedback || '',
+    round: publicState.round,
+    result: publicState.result || null,
+    roundDetail: publicState.roundDetail || null,
     responseSummary: publicState.responseSummary || null,
     pendingActions: [],
     playerActions: [],
@@ -296,6 +299,7 @@ function createSocketLayer({ server, config, game, registry, logger = console } 
       ackAnimation: () => game.ackAnimation(connection.openid, request),
       setReady: () => game.setReady(connection.openid, request),
       startRound: () => game.startRound(connection.openid, request),
+      confirmNextRound: () => game.confirmNextRound(connection.openid, request),
       leaveRoom: () => game.leaveRoom(connection.openid, request),
       requestRematch: () => game.requestRematch(connection.openid, request),
     };

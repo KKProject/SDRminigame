@@ -27,6 +27,7 @@ const handlers = {
   requestSeatSwap: room.requestSeatSwap,
   respondSeatSwap: room.respondSeatSwap,
   startRound: room.startRound,
+  confirmNextRound: room.confirmNextRound,
   leaveRoom: room.leaveRoom,
   requestRematch: room.requestRematch,
   op: room.op,
@@ -107,6 +108,13 @@ class LocalGameService {
 
   startRound(openid, request) {
     return this.callAction('startRound', openid, { roomId: request.roomId });
+  }
+
+  confirmNextRound(openid, request) {
+    return this.callAction('confirmNextRound', openid, {
+      roomId: request.roomId,
+      round: request.payload ? request.payload.round : request.round,
+    });
   }
 
   leaveRoom(openid, request) {
