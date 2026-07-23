@@ -33,6 +33,11 @@ const ACTION_EFFECT_LABELS = {
   pass: '过',
 };
 const MELD_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta'];
+const RENDERABLE_RESULT_TYPES = ['win', 'circle-loss', 'draw-round', 'draw'];
+
+function hasRenderableResult(result) {
+  return Boolean(result && RENDERABLE_RESULT_TYPES.indexOf(result.type) >= 0);
+}
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
@@ -128,10 +133,13 @@ export default class TableRenderer {
   }
 
   render(ctx, state) {
-    const layout = this.layout.build(state);
+    const displayState = state.phase === 'result' && !hasRenderableResult(state.result)
+      ? Object.assign({}, state, { phase: 'ai-thinking' })
+      : state;
+    const layout = this.layout.build(displayState);
     this.lastLayout = layout;
-    this.lastState = state;
-    this.currentJiangPhraseId = state.jiangPhraseId || null;
+    this.lastState = displayState;
+    this.currentJiangPhraseId = displayState.jiangPhraseId || null;
     if (this.restoreAnimationsAfterLayout) {
       this.restoreAnimationsAfterLayout = false;
       this.animationController.restoreAfterLayoutChange();
@@ -139,8 +147,8 @@ export default class TableRenderer {
 
     ctx.clearRect(0, 0, layout.width, layout.height);
     const blockStateAnimation = this.animationController.isBlockingStateAnimation()
-      || Boolean(state.animationWaiting);
-    this.stateAnimationController.observe(state, layout, blockStateAnimation);
+      || Boolean(displayState.animationWaiting);
+    this.stateAnimationController.observe(displayState, layout, blockStateAnimation);
     if (this.stateAnimationController.active && this.stateAnimationController.active.event.card) {
       this.lastDiscardEvent = {
         seat: this.stateAnimationController.active.event.seat,
@@ -148,20 +156,20 @@ export default class TableRenderer {
         holdPosition: this.stateAnimationController.active.position,
       };
     }
-    this.updateEffects(state, layout);
+    this.updateEffects(displayState, layout);
     this.drawBackground(ctx, layout);
-    this.drawHeader(ctx, state, layout);
-    this.drawSeatStatuses(ctx, state, layout);
-    this.drawDiscardArea(ctx, state, layout);
-    this.drawMeldArea(ctx, state, layout);
-    this.drawCenterFocus(ctx, state, layout);
-    this.drawPlayerHand(ctx, state, layout);
-    this.drawPrompt(ctx, state, layout);
-    this.drawHeldDiscardFallback(ctx, state, layout);
-    this.drawHeldDrawFallback(ctx, state, layout);
+    this.drawHeader(ctx, displayState, layout);
+    this.drawSeatStatuses(ctx, displayState, layout);
+    this.drawDiscardArea(ctx, displayState, layout);
+    this.drawMeldArea(ctx, displayState, layout);
+    this.drawCenterFocus(ctx, displayState, layout);
+    this.drawPlayerHand(ctx, displayState, layout);
+    this.drawPrompt(ctx, displayState, layout);
+    this.drawHeldDiscardFallback(ctx, displayState, layout);
+    this.drawHeldDrawFallback(ctx, displayState, layout);
     this.drawManagedAnimations(ctx, layout);
-    if (state.phase === 'result') this.drawResult(ctx, state, layout);
-    this.drawButtons(ctx, state, layout);
+    if (displayState.phase === 'result') this.drawResult(ctx, displayState, layout);
+    this.drawButtons(ctx, displayState, layout);
     this.previousHandCards = layout.handCards.map((item) => ({ ...item }));
   }
 
@@ -816,6 +824,7 @@ export default class TableRenderer {
   }
 
   drawResult(ctx, state, layout) {
+    if (!hasRenderableResult(state.result)) return;
     const area = layout.result;
     ctx.fillStyle = 'rgba(10, 24, 20, 0.92)';
     roundRect(ctx, area.x, area.y, area.width, area.height, 8);
@@ -831,7 +840,9 @@ export default class TableRenderer {
       ? '牌局已结束'
       : (result.type === 'win'
       ? '本局胡牌'
-      : (result.type === 'circle-loss' ? '进圈' : (result.type === 'draw-round' ? '流局' : '荒庄')));
+      : (result.type === 'circle-loss'
+        ? '进圈'
+        : (result.type === 'draw-round' ? '流局' : (result.type === 'draw' ? '荒庄' : ''))));
     ctx.fillText(title, area.x + 24, area.y + 44);
     ctx.font = '16px Arial';
     if (result.type === 'win') {
@@ -854,7 +865,7 @@ export default class TableRenderer {
       ctx.fillText(`${result.reason || ''}${result.settlement ? `，每家赔${result.settlement.point}分` : ''}`, area.x + 24, area.y + 142);
     } else if (result.type === 'draw-round') {
       ctx.fillText(result.summary || '流局，重新开局', area.x + 24, area.y + 86);
-    } else {
+    } else if (result.type === 'draw') {
       ctx.fillText('牌堆摸完，无人胡牌', area.x + 24, area.y + 86);
     }
     if (state.tableFinished) {

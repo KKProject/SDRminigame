@@ -12,6 +12,7 @@ const WAITING_REFRESH_INTERVAL_MS = 2000;
 const RESPONSE_ACTION_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'];
 const MELD_ACTION_TYPES = ['chi', 'peng', 'zhao', 'ta'];
 const RESULT_EVENT_TYPES = ['hu', 'circle-loss', 'draw-round', 'settlement'];
+const SUPPORTED_RESULT_TYPES = ['win', 'circle-loss', 'draw-round', 'draw'];
 const BEHAVIOR_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'circle-loss', 'draw-round'];
 const OBSERVATIONAL_EVENT_TYPES = ['pass', 'settlement', 'unclaimed'];
 const TIMELINE_FAST_QUEUE_THRESHOLD = 2;
@@ -96,6 +97,10 @@ function clonePlain(value) {
 
 function isResultEvent(event = {}) {
   return event && RESULT_EVENT_TYPES.indexOf(event.type) >= 0;
+}
+
+function hasSupportedResult(result = null) {
+  return Boolean(result && SUPPORTED_RESULT_TYPES.indexOf(result.type) >= 0);
 }
 
 function isResponseCriticalEvent(event = {}) {
@@ -1372,6 +1377,7 @@ export default class OnlineController {
       if (!this.applyPublicDelta(null, delta.delta || {})) return this.resyncFromDelta('delta-rejected');
       this.version = delta.version;
       if (eventSeq) this.lastServerEventSeq = Math.max(this.lastServerEventSeq, eventSeq);
+      this.authoritativeState = clonePlain(this.databus);
       return true;
     }
     if (this.lastServerEventSeq && eventSeq > this.lastServerEventSeq + 1) {
@@ -1379,7 +1385,23 @@ export default class OnlineController {
     }
     const event = rotatePublicEvent(delta.event || {}, this.mySeat);
     if (!event || event.eventSeq !== eventSeq) return this.resyncFromDelta('event-invalid');
-    if (!this.applyPublicDelta(event, delta.delta || {})) return this.resyncFromDelta('delta-rejected');
+    const publicPatch = delta.delta && delta.delta.publicPatch;
+    const gateResultDisplay = isResultEvent(event) && publicPatch && publicPatch.phase === 'result';
+    let displayCommit = null;
+    if (gateResultDisplay) {
+      if (!hasSupportedResult(event.result)) return this.resyncFromDelta('result-missing');
+      const candidate = clonePlain(this.authoritativeState || this.databus);
+      if (!candidate || !Array.isArray(candidate.seats)) return this.resyncFromDelta('result-state-missing');
+      if (!this.applyPublicDelta(event, delta.delta || {}, candidate)) return this.resyncFromDelta('delta-rejected');
+      candidate.result = clonePlain(event.result);
+      candidate.animationWaiting = false;
+      this.authoritativeState = clonePlain(candidate);
+      displayCommit = candidate;
+      this.animationWaiting = true;
+      this.databus.animationWaiting = true;
+    } else if (!this.applyPublicDelta(event, delta.delta || {})) {
+      return this.resyncFromDelta('delta-rejected');
+    }
     this.version = delta.version;
     this.lastServerEventSeq = Math.max(this.lastServerEventSeq, eventSeq);
     this.consumeAnimationState({
@@ -1388,8 +1410,10 @@ export default class OnlineController {
       currentEvent: delta.event,
       latestEventSeq: eventSeq,
     }, {
+      displayCommit,
       source: 'delta',
     });
+    if (!gateResultDisplay) this.authoritativeState = clonePlain(this.databus);
     return true;
   }
 
@@ -1399,12 +1423,12 @@ export default class OnlineController {
     return false;
   }
 
-  applyPublicDelta(event, delta = {}) {
-    if (!this.databus || !Array.isArray(this.databus.seats)) return false;
+  applyPublicDelta(event, delta = {}, target = this.databus) {
+    if (!target || !Array.isArray(target.seats)) return false;
     const appendDiscard = delta.appendDiscard || null;
     if (appendDiscard && appendDiscard.card) {
       const seatIndex = rotateSeat(appendDiscard.seat, this.mySeat);
-      const seat = this.databus.seats[seatIndex];
+      const seat = target.seats[seatIndex];
       if (!seat || !Array.isArray(seat.discards)) return false;
       const expectedIndex = typeof appendDiscard.index === 'number' ? appendDiscard.index : seat.discards.length;
       const alreadyAtIndex = seat.discards[expectedIndex] && seat.discards[expectedIndex].id === appendDiscard.card.id;
@@ -1419,7 +1443,7 @@ export default class OnlineController {
     const appendMeld = delta.appendMeld || delta.extendMeld || null;
     if (appendMeld && appendMeld.meld) {
       const seatIndex = rotateSeat(appendMeld.seat, this.mySeat);
-      const seat = this.databus.seats[seatIndex];
+      const seat = target.seats[seatIndex];
       if (!seat || !Array.isArray(seat.melds)) return false;
       const expectedIndex = typeof appendMeld.index === 'number' ? appendMeld.index : seat.melds.length;
       const existingIndex = seat.melds.findIndex((meld) => meld.id && meld.id === appendMeld.meld.id);
@@ -1434,21 +1458,24 @@ export default class OnlineController {
     if (delta.publicPatch) {
       const publicPatch = rotatePublicPatch(delta.publicPatch, this.mySeat);
       ['phase', 'currentSeat', 'dealerSeat', 'nextDealerSeat', 'feedback', 'responseSummary'].forEach((key) => {
-        if (publicPatch[key] !== undefined) this.databus[key] = publicPatch[key];
+        if (publicPatch[key] !== undefined) target[key] = publicPatch[key];
       });
-      if (Array.isArray(publicPatch.pendingActions)) this.databus.pendingActions = publicPatch.pendingActions;
-      if (Array.isArray(publicPatch.playerActions)) this.databus.playerActions = publicPatch.playerActions;
+      if (Array.isArray(publicPatch.pendingActions)) target.pendingActions = publicPatch.pendingActions;
+      if (Array.isArray(publicPatch.playerActions)) target.playerActions = publicPatch.playerActions;
     }
     if (delta.privatePatch && Array.isArray(delta.privatePatch.playerActions)) {
-      this.databus.playerActions = delta.privatePatch.playerActions
+      target.playerActions = delta.privatePatch.playerActions
         .map((action, index) => rotateAction(action, this.mySeat, index));
-      this.databus.responseWindowId = delta.privatePatch.responseWindowId || null;
-      this.databus.actionState = delta.privatePatch.actionState || 'closed';
-      if (!this.databus.responseWindowId || this.databus.actionState !== 'available') {
-        this.clearPendingResponseIntent(this.databus.responseWindowId);
+      target.responseWindowId = delta.privatePatch.responseWindowId || null;
+      target.actionState = delta.privatePatch.actionState || 'closed';
+      if (
+        target === this.databus
+        && (!target.responseWindowId || target.actionState !== 'available')
+      ) {
+        this.clearPendingResponseIntent(target.responseWindowId);
       }
     }
-    this.syncZhaoPicker();
+    if (target === this.databus) this.syncZhaoPicker();
     return true;
   }
 
@@ -1747,8 +1774,10 @@ export default class OnlineController {
     if (!local.responseWindowId || local.actionState !== 'available') {
       this.clearPendingResponseIntent(local.responseWindowId);
     }
+    const displayCommit = gateDisplay ? clonePlain(local) : null;
+    if (displayCommit) displayCommit.animationWaiting = false;
     this.consumeAnimationState({ ...animation, selfAcked }, {
-      displayCommit: gateDisplay ? local : null,
+      displayCommit,
       source: 'snapshot',
     });
     this.setStatus('');

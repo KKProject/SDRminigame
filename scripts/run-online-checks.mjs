@@ -1398,6 +1398,144 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 if (gatedDatabus.phase !== 'result' || !gatedDatabus.result || gatedDatabus.result.type !== 'win' || gatedAckCount !== 1) {
   throw new Error('result display checkpoint should commit after the hu animation completes and acknowledges');
 }
+async function verifyResultDeltaGate({
+  eventType,
+  result,
+  eventSeq,
+}) {
+  const resultDeltaDatabus = {
+    feedback: '',
+    selectedCardId: null,
+    phase: 'human-discard',
+    currentSeat: 0,
+    result: null,
+    seats: [
+      { hand: [{ id: `result-delta-hand-${eventSeq}`, key: 'da' }], discards: [], melds: [] },
+      { hand: [], discards: [], melds: [] },
+      { hand: [], discards: [], melds: [] },
+      { hand: [], discards: [], melds: [] },
+    ],
+    setRoundState(state) { Object.assign(this, state); },
+  };
+  let completeResultDelta = null;
+  let resultDeltaAckCount = 0;
+  const resultDeltaController = new online.default(resultDeltaDatabus, {
+    playOnlineEvent(event, onComplete) {
+      completeResultDelta = onComplete;
+      return true;
+    },
+    releaseOnlineEvent() {},
+  }, null);
+  resultDeltaController.active = true;
+  resultDeltaController.roomId = `result-delta-room-${eventSeq}`;
+  resultDeltaController.mySeat = 0;
+  resultDeltaController.version = eventSeq - 1;
+  resultDeltaController.lastServerEventSeq = eventSeq - 1;
+  resultDeltaController.socket = {
+    isReady() { return true; },
+    request(type) {
+      if (type === 'ackAnimation') resultDeltaAckCount += 1;
+      return Promise.resolve({
+        ok: true,
+        version: resultDeltaController.version,
+        animation: { waiting: false, selfAcked: false, currentEvent: null },
+      });
+    },
+  };
+  if (!resultDeltaController.applySocketDelta({
+    roomId: resultDeltaController.roomId,
+    baseVersion: eventSeq - 1,
+    version: eventSeq,
+    eventSeq,
+    event: {
+      eventSeq,
+      type: eventType,
+      seat: typeof result.winner === 'number' ? result.winner : (typeof result.loser === 'number' ? result.loser : 0),
+      result,
+    },
+    delta: {
+      publicPatch: {
+        phase: 'result',
+        currentSeat: 0,
+        pendingActions: [],
+        playerActions: [],
+      },
+    },
+  })) {
+    throw new Error(`${eventType} result delta should be accepted`);
+  }
+  if (
+    resultDeltaDatabus.phase === 'result'
+    || resultDeltaDatabus.result
+    || !resultDeltaController.authoritativeState
+    || !resultDeltaController.authoritativeState.result
+    || resultDeltaController.authoritativeState.result.type !== result.type
+    || typeof completeResultDelta !== 'function'
+  ) {
+    throw new Error(`${eventType} result delta should update authority while gating the visible result`);
+  }
+  completeResultDelta({ eventSeq });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (
+    resultDeltaDatabus.phase !== 'result'
+    || !resultDeltaDatabus.result
+    || resultDeltaDatabus.result.type !== result.type
+    || resultDeltaAckCount !== 1
+  ) {
+    throw new Error(`${eventType} result delta should commit the correct result after its timeline event`);
+  }
+}
+await verifyResultDeltaGate({
+  eventType: 'hu',
+  result: { type: 'win', winner: 0, summary: '增量胡牌结算' },
+  eventSeq: 61,
+});
+await verifyResultDeltaGate({
+  eventType: 'circle-loss',
+  result: { type: 'circle-loss', loser: 1, winners: [0, 2, 3], summary: '增量进圈结算' },
+  eventSeq: 71,
+});
+await verifyResultDeltaGate({
+  eventType: 'draw-round',
+  result: { type: 'draw-round', summary: '增量低牌堆流局' },
+  eventSeq: 81,
+});
+await verifyResultDeltaGate({
+  eventType: 'draw-round',
+  result: { type: 'draw', summary: '增量荒庄' },
+  eventSeq: 91,
+});
+const invalidResultDeltaDatabus = {
+  phase: 'human-discard',
+  result: null,
+  selectedCardId: null,
+  seats: [
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+  ],
+};
+let invalidResultDeltaResyncCount = 0;
+const invalidResultDeltaController = new online.default(invalidResultDeltaDatabus, {
+  playOnlineEvent() { return true; },
+  releaseOnlineEvent() {},
+}, null);
+invalidResultDeltaController.active = true;
+invalidResultDeltaController.roomId = 'invalid-result-delta-room';
+invalidResultDeltaController.version = 100;
+invalidResultDeltaController.lastServerEventSeq = 100;
+invalidResultDeltaController.scheduleReconnect = () => { invalidResultDeltaResyncCount += 1; };
+if (invalidResultDeltaController.applySocketDelta({
+  roomId: 'invalid-result-delta-room',
+  baseVersion: 100,
+  version: 101,
+  eventSeq: 101,
+  event: { eventSeq: 101, type: 'hu', seat: 0 },
+  delta: { publicPatch: { phase: 'result', currentSeat: 0 } },
+}) || invalidResultDeltaResyncCount !== 1 || invalidResultDeltaDatabus.phase === 'result') {
+  throw new Error('result deltas without a valid result should request snapshot recovery without exposing result phase');
+}
 const skippedDatabus = {
   feedback: '',
   selectedCardId: null,
@@ -3459,6 +3597,13 @@ if (!/leaveTable/.test(layoutSource) || !/requestRematch/.test(layoutSource) || 
 }
 if (!/state\.tableFinished[\s\S]*?牌局已结束/.test(rendererSource)) {
   throw new Error('final table settlement should render an explicit table result title');
+}
+if (
+  !/RENDERABLE_RESULT_TYPES/.test(rendererSource)
+  || !/result\.type === 'draw'/.test(rendererSource)
+  || /result\.type === 'draw-round' \? '流局' : '荒庄'/.test(rendererSource)
+) {
+  throw new Error('renderer should only show draw-game copy for an explicit supported draw result');
 }
 if (!/buildActionItems/.test(layoutSource) || !/zhaoPicker/.test(layoutSource)) {
   throw new Error('layout should fold multiple zhao actions into a single picker entry');
