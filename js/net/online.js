@@ -343,11 +343,20 @@ function rotateResult(result, mySeat) {
 export function rotateRoundDetail(detail, mySeat) {
   if (!detail) return null;
   const mapped = Object.assign({}, detail);
-  mapped.players = (detail.players || []).map((player) => Object.assign({}, player, {
-    seat: rotateSeat(player.seat, mySeat),
-    finalHand: (player.finalHand || []).slice(),
-    melds: (player.melds || []).slice(),
-  })).sort((left, right) => left.seat - right.seat);
+  mapped.players = (detail.players || []).map((player) => {
+    const mappedPlayer = Object.assign({}, player, {
+      seat: rotateSeat(player.seat, mySeat),
+      finalHand: (player.finalHand || []).slice(),
+      melds: (player.melds || []).slice(),
+    });
+    if (player.winningCard) mappedPlayer.winningCard = Object.assign({}, player.winningCard);
+    if (Array.isArray(player.winningGroups)) {
+      mappedPlayer.winningGroups = player.winningGroups.map((group) => Object.assign({}, group, {
+        cards: (group.cards || []).slice(),
+      }));
+    }
+    return mappedPlayer;
+  }).sort((left, right) => left.seat - right.seat);
   const continuation = detail.continuation || {};
   const requiredSeats = (continuation.requiredSeats || []).map((seat) => rotateSeat(seat, mySeat));
   const confirmedSeats = (continuation.confirmedSeats || []).map((seat) => rotateSeat(seat, mySeat));

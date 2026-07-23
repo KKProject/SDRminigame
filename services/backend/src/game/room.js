@@ -186,6 +186,77 @@ function buildRoundContinuation(room, engine, openid = null) {
   };
 }
 
+const ROUND_RESULT_GROUP_LABELS = {
+  chi: '吃',
+  peng: '碰',
+  zhao: '招',
+  ta: '踏',
+  xyz: '吃',
+  same: '碰',
+  xx: '对',
+  xy: '口',
+};
+
+function resolveRoundResultGroupLabel(type, size = 0, fallback = '') {
+  if (type === 'same') return size >= 4 ? '招' : '碰';
+  return ROUND_RESULT_GROUP_LABELS[type] || fallback || '';
+}
+
+function sameCardKeys(cards = [], keys = []) {
+  if (cards.length !== keys.length) return false;
+  const left = cards.map((card) => card.key).sort();
+  const right = keys.slice().sort();
+  return left.every((key, index) => key === right[index]);
+}
+
+function takeCardsByKeys(pool, keys = []) {
+  const working = pool.slice();
+  const cards = [];
+  for (let index = 0; index < keys.length; index += 1) {
+    const cardIndex = working.findIndex((card) => card && card.key === keys[index]);
+    if (cardIndex < 0) return null;
+    cards.push(working[cardIndex]);
+    working.splice(cardIndex, 1);
+  }
+  pool.splice(0, pool.length, ...working);
+  return cards;
+}
+
+function buildWinningGroups(seat, finalHand, doors = []) {
+  if (!seat || !Array.isArray(doors) || !doors.length) return [];
+  const hiddenPool = finalHand.slice();
+  const exposedPool = (seat.melds || []).slice();
+  const groups = [];
+
+  for (let index = 0; index < doors.length; index += 1) {
+    const door = doors[index] || {};
+    const keys = Array.isArray(door.keys) ? door.keys : [];
+    let cards = null;
+    let type = door.meldType || door.type || '';
+    let label = resolveRoundResultGroupLabel(type, keys.length, door.label);
+
+    if (door.exposed) {
+      const meldIndex = exposedPool.findIndex((meld) => sameCardKeys(meld.cards || [], keys));
+      if (meldIndex < 0) return [];
+      const meld = exposedPool.splice(meldIndex, 1)[0];
+      cards = (meld.cards || []).slice();
+      type = meld.type || type;
+      label = resolveRoundResultGroupLabel(type, cards.length, meld.label || label);
+    } else {
+      cards = takeCardsByKeys(hiddenPool, keys);
+      if (!cards) return [];
+    }
+
+    groups.push({
+      type,
+      label,
+      cards,
+      exposed: Boolean(door.exposed),
+    });
+  }
+  return groups;
+}
+
 function buildRoundDetail(room, engine, openid = null) {
   const state = engine && engine.state;
   if (!state || state.phase !== 'result' || !state.result) return null;
@@ -202,26 +273,33 @@ function buildRoundDetail(room, engine, openid = null) {
     resultType: result.type || '',
     players: (state.seats || []).map((seat, seatIndex) => {
       const finalHand = Array.isArray(seat.hand) ? seat.hand.slice() : [];
+      const isWinner = result.type === 'win' && result.winner === seatIndex;
       if (
-        result.type === 'win'
-        && result.winner === seatIndex
+        isWinner
         && result.card
         && !finalHand.some((card) => card.id === result.card.id)
       ) {
         finalHand.push(result.card);
       }
-      return {
+      const detail = {
         seat: seatIndex,
         finalHand,
         melds: Array.isArray(seat.melds) ? seat.melds.slice() : [],
         roundScore: Number(roundScores[seatIndex]) || 0,
-        huCount: result.type === 'win'
-          && result.winner === seatIndex
+        huCount: isWinner
           && result.scoring
           && Number.isFinite(Number(result.scoring.totalFu))
           ? Number(result.scoring.totalFu)
           : null,
+        huGrade: isWinner
+          ? (result.grade || (result.scoring && result.scoring.grade) || null)
+          : null,
       };
+      if (isWinner && result.card) {
+        detail.winningCard = result.card;
+        detail.winningGroups = buildWinningGroups(seat, finalHand, result.doors);
+      }
+      return detail;
     }),
     continuation: buildRoundContinuation(room, engine, openid),
   };

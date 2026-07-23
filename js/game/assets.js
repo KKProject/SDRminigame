@@ -17,6 +17,8 @@ export const ASSET_MANIFEST = {
     roundResultVictory: 'images/round_result_victory.png',
     roundResultDefeat: 'images/round_result_defeat.png',
     roundResultContinue: 'images/round_result_continue.png',
+    roundResultHu: 'images/round_result_hu.png',
+    roundResultGrade: 'images/round_result_grade.png',
   },
   atlases: {
     cards: {

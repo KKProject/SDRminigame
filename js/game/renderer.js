@@ -40,6 +40,89 @@ const ROUND_RESULT_PANEL_SOURCE_SLICES = {
   right: 170,
   bottom: 150,
 };
+const ROUND_RESULT_MAX_COLUMN_CARDS = 5;
+const ROUND_RESULT_GROUP_LABELS = {
+  chi: '吃',
+  peng: '碰',
+  zhao: '招',
+  ta: '踏',
+  xyz: '吃',
+  xx: '对',
+  xy: '口',
+};
+
+function roundResultGroupLabel(group = {}) {
+  const type = group.meldType || group.type || '';
+  if (type === 'same') return (group.cards || []).length >= 4 ? '招' : '碰';
+  return ROUND_RESULT_GROUP_LABELS[type] || group.label || '';
+}
+
+function splitLargeRoundResultDoor(cards) {
+  if (cards.length <= ROUND_RESULT_MAX_COLUMN_CARDS) return [cards];
+  const columnCount = Math.ceil(cards.length / ROUND_RESULT_MAX_COLUMN_CARDS);
+  const baseSize = Math.floor(cards.length / columnCount);
+  const remainder = cards.length % columnCount;
+  const columns = [];
+  let offset = 0;
+  for (let index = 0; index < columnCount; index += 1) {
+    const size = baseSize + (index < remainder ? 1 : 0);
+    columns.push(cards.slice(offset, offset + size));
+    offset += size;
+  }
+  return columns;
+}
+
+function splitRoundResultCardsAtDoorBoundaries(cards) {
+  const runs = [];
+  cards.forEach((card) => {
+    const currentRun = runs[runs.length - 1];
+    if (currentRun && currentRun[0] && currentRun[0].key === card.key) {
+      currentRun.push(card);
+    } else {
+      runs.push([card]);
+    }
+  });
+
+  const columns = [];
+  let pending = [];
+  const flushPending = () => {
+    if (!pending.length) return;
+    columns.push(pending);
+    pending = [];
+  };
+
+  runs.forEach((run) => {
+    if (run.length >= 3) {
+      flushPending();
+      splitLargeRoundResultDoor(run).forEach((door) => columns.push(door));
+      return;
+    }
+    if (pending.length + run.length > ROUND_RESULT_MAX_COLUMN_CARDS) {
+      flushPending();
+    }
+    pending = pending.concat(run);
+  });
+  flushPending();
+  return columns;
+}
+
+function splitRoundResultColumns(columns = []) {
+  return columns.reduce((result, column) => {
+    const cards = column.cards || [];
+    if (cards.length <= ROUND_RESULT_MAX_COLUMN_CARDS) {
+      result.push(column);
+      return result;
+    }
+    splitRoundResultCardsAtDoorBoundaries(cards).forEach((door, index) => {
+      result.push(Object.assign({}, column, {
+        label: index === 0 ? column.label : '',
+        cards: door,
+        continuation: index > 0,
+      }));
+    });
+    return result;
+  }, []);
+}
 
 function hasRenderableResult(result) {
   return Boolean(result && RENDERABLE_RESULT_TYPES.indexOf(result.type) >= 0);
@@ -149,6 +232,23 @@ export function roundResultStatusPresentation(state) {
     draw: '本局荒庄',
   };
   return { assetName: null, text: labels[result.type] || '本局结束' };
+}
+
+export function roundResultGradeLabel(grade) {
+  return ({
+    屁胡: '平胡',
+    平胡: '平胡',
+    小甲: '小甲',
+    大甲: '大甲',
+    场: '场胡',
+    场胡: '场胡',
+  })[grade] || '';
+}
+
+export function roundResultDetailWithGrade(detail = {}, result = {}, isWinner = false) {
+  if (!isWinner || detail.huGrade) return detail;
+  const fallbackGrade = result.grade || (result.scoring && result.scoring.grade) || '';
+  return fallbackGrade ? Object.assign({}, detail, { huGrade: fallbackGrade }) : detail;
 }
 
 export default class TableRenderer {
@@ -923,6 +1023,7 @@ export default class TableRenderer {
         melds: [],
         roundScore: 0,
         huCount: null,
+        huGrade: null,
       };
       const seat = state.seats[row.seat] || { name: `玩家${row.seat + 1}` };
       const isSelf = row.seat === state.humanSeat;
@@ -936,7 +1037,11 @@ export default class TableRenderer {
       ctx.lineWidth = isSelf ? 2 : 1;
       ctx.stroke();
       this.drawRoundResultIdentity(ctx, seat, row, { isSelf, isWinner });
-      this.drawRoundResultCards(ctx, detail, row.cards);
+      this.drawRoundResultCards(
+        ctx,
+        roundResultDetailWithGrade(detail, result, isWinner),
+        row.cards
+      );
       this.drawRoundResultStats(ctx, detail, row);
     });
     ctx.restore();
@@ -1012,38 +1117,51 @@ export default class TableRenderer {
     const avatarImage = seat.avatarUrl && this.assets.getRemoteImage
       ? this.assets.getRemoteImage(seat.avatarUrl)
       : null;
+    const avatarRadius = Math.max(2, Math.min(4, Math.floor(row.avatar.width * 0.10)));
     if (avatarImage) {
       ctx.save();
-      roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, row.avatar.width / 2);
+      roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, avatarRadius);
       ctx.clip();
       ctx.drawImage(avatarImage, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height);
       ctx.restore();
     } else {
       ctx.fillStyle = flags.isSelf ? '#2f80c9' : '#9a5a32';
-      roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, row.avatar.width / 2);
+      roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, avatarRadius);
       ctx.fill();
       ctx.fillStyle = '#fff5d5';
-      ctx.font = `bold ${Math.max(16, Math.floor(row.avatar.height * 0.38))}px serif`;
+      ctx.font = `bold ${Math.max(13, Math.floor(row.avatar.height * 0.38))}px serif`;
       ctx.textAlign = 'center';
       ctx.fillText((seat.name || seat.nickName || '?').slice(0, 1), row.avatar.x + row.avatar.width / 2, row.avatar.y + row.avatar.height * 0.62);
       ctx.textAlign = 'left';
     }
     ctx.strokeStyle = flags.isSelf ? '#db8f18' : '#b7792b';
     ctx.lineWidth = 2;
-    roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, row.avatar.width / 2);
+    roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, avatarRadius);
     ctx.stroke();
     ctx.fillStyle = '#5c2c16';
-    ctx.font = `bold ${Math.max(12, Math.floor(row.height * 0.13))}px Arial`;
-    this.fillClampedText(ctx, seat.name || seat.nickName || `玩家${row.seat + 1}`, row.name.x, row.name.y + 17, row.name.width);
-    const role = flags.isSelf ? '本家' : (flags.isWinner ? '本局玩家' : '');
+    ctx.font = `bold ${Math.max(10, Math.floor(row.name.height * 0.68))}px Arial`;
+    ctx.textAlign = 'center';
+    this.fillClampedText(
+      ctx,
+      seat.name || seat.nickName || `玩家${row.seat + 1}`,
+      row.name.x + row.name.width / 2,
+      row.name.y + row.name.height * 0.76,
+      row.name.width
+    );
+    const role = flags.isSelf && flags.isWinner
+      ? '本家·胡牌'
+      : (flags.isSelf ? '本家' : (flags.isWinner ? '胡牌玩家' : ''));
     if (role) {
+      const roleWidth = Math.min(row.role.width, role.length * 12 + 12);
+      const roleX = row.role.x + (row.role.width - roleWidth) / 2;
       ctx.fillStyle = flags.isSelf ? '#a94818' : '#b52e20';
-      roundRect(ctx, row.role.x, row.role.y, Math.min(row.role.width, role.length * 16 + 14), row.role.height, 4);
+      roundRect(ctx, roleX, row.role.y, roleWidth, row.role.height, 4);
       ctx.fill();
       ctx.fillStyle = '#fff0bd';
-      ctx.font = `bold ${Math.max(10, Math.floor(row.role.height * 0.58))}px Arial`;
-      ctx.fillText(role, row.role.x + 7, row.role.y + row.role.height * 0.72);
+      ctx.font = `bold ${Math.max(9, Math.floor(row.role.height * 0.56))}px Arial`;
+      ctx.fillText(role, roleX + roleWidth / 2, row.role.y + row.role.height * 0.72);
     }
+    ctx.textAlign = 'left';
   }
 
   drawRoundResultCards(ctx, detail, area) {
@@ -1064,10 +1182,42 @@ export default class TableRenderer {
       }
       group.cards.push(card);
     });
-    const columns = meldColumns.concat(handGroups).filter((column) => column.cards.length);
+    const winningGroups = Array.isArray(detail.winningGroups) && detail.winningGroups.length
+      ? detail.winningGroups.map((group) => ({
+        label: roundResultGroupLabel(group),
+        cards: group.cards || [],
+        authoritative: true,
+      }))
+      : null;
+    const columns = splitRoundResultColumns(
+      (winningGroups || meldColumns.concat(handGroups))
+        .filter((column) => column.cards.length)
+    );
+    if (detail.winningCard) {
+      columns.push({
+        label: '',
+        cards: [detail.winningCard],
+        winning: true,
+      });
+    }
     if (!columns.length) return;
-    const gap = Math.max(2, Math.floor(area.width * 0.004));
-    const cardWidth = Math.max(16, Math.min(29, Math.floor((area.width - gap * (columns.length - 1)) / columns.length)));
+    const gradeText = roundResultGradeLabel(detail.huGrade);
+    const winnerDecorated = Boolean(detail.winningCard);
+    const decorationGap = Math.max(3, Math.floor(area.width * 0.004));
+    const huMarkSize = winnerDecorated
+      ? Math.max(34, Math.min(50, Math.floor(area.height * 0.48)))
+      : 0;
+    const gradeMarkHeight = winnerDecorated && gradeText
+      ? Math.max(52, Math.min(74, Math.floor(area.height * 0.72)))
+      : 0;
+    const gradeMarkWidth = gradeMarkHeight ? Math.round(gradeMarkHeight * 0.5) : 0;
+    const decorationWidth = winnerDecorated
+      ? huMarkSize + (gradeMarkWidth ? gradeMarkWidth + decorationGap : 0) + decorationGap * 2
+      : 0;
+    const cardAreaWidth = Math.max(80, area.width - decorationWidth);
+    const gap = Math.max(1, Math.floor(area.width * 0.002));
+    const availableCardWidth = Math.floor((cardAreaWidth - gap * (columns.length - 1)) / columns.length);
+    const cardWidth = Math.max(13, Math.min(23, availableCardWidth));
     const cardHeight = Math.round(cardWidth / CARD_ASPECT_RATIO);
     const labelHeight = Math.max(11, Math.floor(area.height * 0.17));
     let x = area.x;
@@ -1088,6 +1238,79 @@ export default class TableRenderer {
       });
       x += cardWidth + gap + (column.meld ? gap : 0);
     });
+    const winnerDecoration = winnerDecorated
+      ? this.drawRoundResultWinnerDecoration(ctx, detail, {
+        x: area.x + cardAreaWidth + decorationGap,
+        y: area.y,
+        width: Math.max(1, decorationWidth - decorationGap),
+        height: area.height,
+        huSize: huMarkSize,
+        gradeWidth: gradeMarkWidth,
+        gradeHeight: gradeMarkHeight,
+        gap: decorationGap,
+      })
+      : null;
+    return {
+      columns,
+      cardWidth,
+      cardHeight,
+      gap,
+      contentRight: winnerDecorated ? area.x + area.width : x,
+      winnerDecoration,
+    };
+  }
+
+  drawRoundResultWinnerDecoration(ctx, detail, area) {
+    const gradeText = roundResultGradeLabel(detail.huGrade);
+    const huImage = this.assets.getImage('roundResultHu');
+    const gradeImage = gradeText ? this.assets.getImage('roundResultGrade') : null;
+    const hu = {
+      x: area.x,
+      y: area.y + Math.floor((area.height - area.huSize) / 2),
+      width: area.huSize,
+      height: area.huSize,
+    };
+    if (huImage && ctx.drawImage) {
+      ctx.drawImage(huImage, hu.x, hu.y, hu.width, hu.height);
+    } else {
+      ctx.fillStyle = '#d88a16';
+      ctx.font = `bold ${Math.max(24, Math.floor(hu.height * 0.72))}px serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText('胡', hu.x + hu.width / 2, hu.y + hu.height * 0.72);
+    }
+
+    let grade = null;
+    if (gradeText) {
+      grade = {
+        x: hu.x + hu.width + area.gap,
+        y: area.y + Math.floor((area.height - area.gradeHeight) / 2),
+        width: area.gradeWidth,
+        height: area.gradeHeight,
+      };
+      if (gradeImage && ctx.drawImage) {
+        ctx.drawImage(gradeImage, grade.x, grade.y, grade.width, grade.height);
+      } else if (ctx.beginPath) {
+        ctx.fillStyle = '#a82112';
+        roundRect(ctx, grade.x, grade.y, grade.width, grade.height, Math.max(4, Math.floor(grade.width * 0.18)));
+        ctx.fill();
+        ctx.strokeStyle = '#e7a72b';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      const characters = gradeText.slice(0, 2).split('');
+      ctx.textAlign = 'center';
+      ctx.font = `bold ${Math.max(13, Math.floor(grade.width * 0.54))}px serif`;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#67220b';
+      ctx.fillStyle = '#ffe7a0';
+      characters.forEach((character, index) => {
+        const textY = grade.y + grade.height * (index === 0 ? 0.38 : 0.68);
+        if (ctx.strokeText) ctx.strokeText(character, grade.x + grade.width / 2, textY);
+        ctx.fillText(character, grade.x + grade.width / 2, textY);
+      });
+    }
+    ctx.textAlign = 'left';
+    return { hu, grade, gradeText };
   }
 
   scrollRoundResultBy(deltaY) {

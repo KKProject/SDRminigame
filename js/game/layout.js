@@ -100,7 +100,7 @@ export function createRoundResultLayout(contentBounds, state, isLandscape = true
   const rowGap = Math.max(3, Math.floor(scrollRegion.height * 0.012));
   const rowHeight = Math.max(92, Math.min(132, Math.floor(contentBounds.height * 0.16)));
   const contentHeight = innerPad * 2 + rowHeight * 4 + rowGap * 3;
-  const identityWidth = Math.max(112, Math.min(176, Math.floor(scrollRegion.width * 0.15)));
+  const identityWidth = Math.max(72, Math.min(104, Math.floor(scrollRegion.width * 0.10)));
   const statsWidth = Math.max(126, Math.min(210, Math.floor(scrollRegion.width * 0.17)));
   const displaySeatOrder = [1, 0, 2, 3];
   const rows = displaySeatOrder.map((seat, rowIndex) => {
@@ -109,10 +109,14 @@ export function createRoundResultLayout(contentBounds, state, isLandscape = true
       type: 'round-result-row',
       seat,
     });
-    const avatarSize = Math.max(38, Math.min(rowHeight - 16, 64));
+    const avatarSize = Math.max(30, Math.min(44, Math.floor(rowHeight * 0.36)));
+    const identityTextHeight = Math.max(16, Math.min(19, Math.floor(rowHeight * 0.15)));
+    const roleHeight = Math.max(15, Math.min(18, Math.floor(rowHeight * 0.14)));
+    const identityStackHeight = avatarSize + 3 + identityTextHeight + 3 + roleHeight;
+    const identityTop = row.y + Math.max(5, Math.floor((row.height - identityStackHeight) / 2));
     const avatar = rect(
-      row.x + 12,
-      row.y + Math.floor((row.height - avatarSize) / 2),
+      row.x + Math.floor((identityWidth - avatarSize) / 2),
+      identityTop,
       avatarSize,
       avatarSize,
       { seat }
@@ -128,8 +132,9 @@ export function createRoundResultLayout(contentBounds, state, isLandscape = true
     return {
       ...row,
       avatar,
-      name: rect(avatar.x + avatar.width + 8, row.y + 12, identityWidth - avatar.width - 24, 24, { seat }),
-      role: rect(avatar.x + avatar.width + 8, row.y + row.height - 30, identityWidth - avatar.width - 24, 20, { seat }),
+      identity: rect(row.x, row.y, identityWidth, row.height, { seat }),
+      name: rect(row.x + 4, avatar.y + avatar.height + 3, identityWidth - 8, identityTextHeight, { seat }),
+      role: rect(row.x + 4, avatar.y + avatar.height + 6 + identityTextHeight, identityWidth - 8, roleHeight, { seat }),
       cards,
       stats,
       hu: rect(stats.x + 8, row.y + 8, Math.floor(stats.width * 0.5) - 12, row.height - 16, { seat }),

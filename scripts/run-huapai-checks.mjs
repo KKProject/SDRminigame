@@ -60,6 +60,8 @@ const {
 const {
   default: TableRenderer,
   drawNineSliceImage,
+  roundResultDetailWithGrade,
+  roundResultGradeLabel,
   roundResultStatusPresentation,
 } = await import(pathToFileURL(join(tempDir, 'renderer.mjs')));
 const {
@@ -698,7 +700,16 @@ const roundResultState = {
       finalHand: resultDeck.slice(seat * 18, seat * 18 + 18),
       melds: seat === 1 ? [{ type: 'peng', cards: resultDeck.slice(80, 83) }] : [],
       huCount: seat === 1 ? 21 : null,
+      huGrade: seat === 1 ? '小甲' : null,
       roundScore: seat === 1 ? 3 : -1,
+      ...(seat === 1 ? {
+        winningCard: resultDeck[18],
+        winningGroups: [{
+          type: 'xyz',
+          label: '吃',
+          cards: resultDeck.slice(18, 21),
+        }],
+      } : {}),
     })),
     continuation: {
       requiredSeats: [0, 1],
@@ -716,6 +727,8 @@ for (const [assetName, assetPath] of Object.entries({
   roundResultVictory: 'images/round_result_victory.png',
   roundResultDefeat: 'images/round_result_defeat.png',
   roundResultContinue: 'images/round_result_continue.png',
+  roundResultHu: 'images/round_result_hu.png',
+  roundResultGrade: 'images/round_result_grade.png',
 })) {
   if (ASSET_MANIFEST.images[assetName] !== assetPath) {
     throw new Error(`${assetName} should map to ${assetPath}`);
@@ -787,7 +800,15 @@ for (const resultCase of [
     resultLayout.roundResult.button,
   ].forEach((region) => assertWithinBounds(region, resultLayout.contentBounds, `${region.type} in ${resultCase.label}`));
   resultLayout.roundResult.rows.forEach((row) => {
-    if (row.height < 92 || row.cards.width <= 0 || intersects(row.cards, row.stats)) {
+    if (
+      row.height < 92
+      || row.cards.width <= 0
+      || intersects(row.cards, row.stats)
+      || row.avatar.width !== row.avatar.height
+      || row.avatar.width > 44
+      || row.name.y < row.avatar.y + row.avatar.height
+      || intersects(row.identity, row.cards)
+    ) {
       throw new Error(`${resultCase.label} result cards must remain readable and separate from stats`);
     }
   });
@@ -1371,6 +1392,30 @@ const directionRenderer = new TableRenderer({
   getCardSprite() { return null; },
   getCardBackSprite() { return null; },
 });
+const identityLayout = new TableLayout(844, 390).build(roundResultState);
+const winnerIdentityRow = identityLayout.roundResult.rows.find((row) => row.seat === 1);
+const identityContext = createFakeRenderContext();
+directionRenderer.drawRoundResultIdentity(
+  identityContext,
+  { name: '胡牌玩家昵称' },
+  winnerIdentityRow,
+  { isSelf: true, isWinner: true }
+);
+const identityMove = identityContext.calls.find((call) => call[0] === 'moveTo');
+const identityTexts = identityContext.calls
+  .filter((call) => call[0] === 'fillText')
+  .map((call) => call[1]);
+const nicknameDraw = identityTexts.find((args) => String(args[0]).includes('胡牌玩家'));
+const roleDraw = identityTexts.find((args) => args[0] === '本家·胡牌');
+if (
+  !identityMove
+  || identityMove[1][0] - winnerIdentityRow.avatar.x > 4
+  || !nicknameDraw
+  || nicknameDraw[2] <= winnerIdentityRow.avatar.y + winnerIdentityRow.avatar.height
+  || !roleDraw
+) {
+  throw new Error('round result identity should use a small-radius square avatar with centered nickname and winner role below it');
+}
 let miniPositions = [];
 directionRenderer.drawCard = (ctx, card, x, y, cardWidth, cardHeight, front, selected, size) => {
   miniPositions.push({ x, cardWidth, size });
@@ -1472,6 +1517,247 @@ if (
 ) {
   throw new Error('round result hand should stack cards by phrase while keeping other phrases and melds in separate columns');
 }
+
+miniPositions = [];
+const winningLabels = [];
+const winningCard = samePhraseCards[0];
+const winningMetrics = directionRenderer.drawRoundResultCards(
+  {
+    fillText(text, x, y) { winningLabels.push({ text, x, y }); },
+    set fillStyle(value) {},
+    set font(value) {},
+    set textAlign(value) {},
+  },
+  {
+    finalHand: samePhraseCards.slice(),
+    melds: [],
+    winningCard,
+    huGrade: '小甲',
+    winningGroups: [{
+      type: 'xyz',
+      label: '吃',
+      cards: samePhraseCards.slice(),
+    }],
+  },
+  { x: 20, y: 10, width: 320, height: 96 }
+);
+const duplicatedWinningCards = miniPositions.filter((item) => item.cardId === winningCard.id);
+if (
+  !winningMetrics
+  || winningMetrics.cardWidth < 13
+  || winningMetrics.cardWidth > 23
+  || winningLabels.map((item) => item.text).join(',') !== '吃,胡,小,甲'
+  || duplicatedWinningCards.length !== 2
+  || duplicatedWinningCards[0].x === duplicatedWinningCards[1].x
+  || miniPositions.filter((item) => samePhraseCards.some((card) => card.id === item.cardId)).length !== 4
+) {
+  throw new Error('round result winner should keep the complete chi phrase and repeat the winning card in a separate hu column at readable reduced size');
+}
+
+if (
+  roundResultGradeLabel('屁胡') !== '平胡'
+  || roundResultGradeLabel('小甲') !== '小甲'
+  || roundResultGradeLabel('大甲') !== '大甲'
+  || roundResultGradeLabel('场') !== '场胡'
+) {
+  throw new Error('round result grade labels should normalize to two-character 平胡/小甲/大甲/场胡 badges');
+}
+const fallbackGradeDetail = roundResultDetailWithGrade(
+  { winningCard, huGrade: null },
+  { type: 'win', grade: '屁胡' },
+  true
+);
+if (
+  fallbackGradeDetail.huGrade !== '屁胡'
+  || roundResultGradeLabel(fallbackGradeDetail.huGrade) !== '平胡'
+  || roundResultDetailWithGrade({ huGrade: null }, { grade: '屁胡' }, false).huGrade !== null
+) {
+  throw new Error('winner result rows should fall back to public result.grade without assigning a grade to non-winners');
+}
+const huMarkImage = { id: 'round-result-hu-mark' };
+const gradeMarkImage = { id: 'round-result-grade-mark' };
+const winnerDecorationRenderer = new TableRenderer({
+  getImage(name) {
+    if (name === 'roundResultHu') return huMarkImage;
+    if (name === 'roundResultGrade') return gradeMarkImage;
+    return null;
+  },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+winnerDecorationRenderer.drawCard = () => {};
+const winnerDecorationCtx = createFakeRenderContext();
+const winnerDecorationMetrics = winnerDecorationRenderer.drawRoundResultCards(
+  winnerDecorationCtx,
+  {
+    finalHand: samePhraseCards.slice(),
+    melds: [],
+    winningCard,
+    huGrade: '大甲',
+    winningGroups: [{
+      type: 'xyz',
+      label: '吃',
+      cards: samePhraseCards.slice(),
+    }],
+  },
+  { x: 20, y: 10, width: 320, height: 96 }
+);
+const winnerDecorationImages = winnerDecorationCtx.calls
+  .filter((call) => call[0] === 'drawImage')
+  .map((call) => call[1][0]);
+const winnerDecorationTexts = winnerDecorationCtx.calls
+  .filter((call) => call[0] === 'fillText')
+  .map((call) => call[1][0]);
+if (
+  !winnerDecorationMetrics.winnerDecoration
+  || winnerDecorationImages[0] !== huMarkImage
+  || winnerDecorationImages[1] !== gradeMarkImage
+  || !winnerDecorationTexts.includes('大')
+  || !winnerDecorationTexts.includes('甲')
+) {
+  throw new Error('winner cards should end with the sliced hu mark and a two-character vertical grade badge');
+}
+
+const resultMeldLabels = [];
+directionRenderer.drawRoundResultCards(
+  {
+    fillText(text) { resultMeldLabels.push(text); },
+    set fillStyle(value) {},
+    set font(value) {},
+    set textAlign(value) {},
+  },
+  {
+    finalHand: [],
+    melds: [],
+    winningGroups: [
+      {
+        type: 'same',
+        label: '碰',
+        cards: renderDeck.filter((card) => card.key === 'er').slice(0, 4),
+      },
+      {
+        type: 'ta',
+        label: '碰',
+        cards: renderDeck.filter((card) => card.key === 'shang').slice(0, 5),
+      },
+      {
+        type: 'xx',
+        label: '对',
+        cards: renderDeck.filter((card) => card.key === 'sheng').slice(0, 2),
+      },
+      {
+        type: 'xy',
+        label: '对',
+        cards: [
+          renderDeck.find((card) => card.key === 'shang'),
+          renderDeck.find((card) => card.key === 'da'),
+        ],
+      },
+    ],
+  },
+  { x: 20, y: 10, width: 320, height: 96 }
+);
+if (resultMeldLabels.join(',') !== '招,踏,对,口') {
+  throw new Error(`round result should preserve 招/踏/对/口 door labels, received ${resultMeldLabels.join(',')}`);
+}
+
+miniPositions = [];
+const nonWinnerLabels = [];
+const nonWinnerMetrics = directionRenderer.drawRoundResultCards(
+  {
+    fillText(text) { nonWinnerLabels.push(text); },
+    set fillStyle(value) {},
+    set font(value) {},
+    set textAlign(value) {},
+  },
+  {
+    finalHand: samePhraseCards.slice(),
+    melds: [],
+  },
+  { x: 20, y: 10, width: 320, height: 96 }
+);
+if (
+  !nonWinnerMetrics
+  || nonWinnerMetrics.cardWidth < 13
+  || nonWinnerMetrics.cardWidth > 23
+  || nonWinnerLabels.includes('胡')
+  || nonWinnerMetrics.columns.some((column) => column.winning)
+) {
+  throw new Error('non-winners should use reduced result cards without reserving a hu column');
+}
+
+const longPhraseCards = [
+  ...renderDeck.filter((card) => card.key === 'shang').slice(0, 3),
+  ...renderDeck.filter((card) => card.key === 'da').slice(0, 2),
+  ...renderDeck.filter((card) => card.key === 'ren').slice(0, 1),
+];
+miniPositions = [];
+const splitColumnMetrics = directionRenderer.drawRoundResultCards(
+  {
+    fillText() {},
+    set fillStyle(value) {},
+    set font(value) {},
+    set textAlign(value) {},
+  },
+  { finalHand: longPhraseCards, melds: [] },
+  { x: 20, y: 10, width: 320, height: 96 }
+);
+if (
+  longPhraseCards.length !== 6
+  || !splitColumnMetrics
+  || splitColumnMetrics.columns.length !== 2
+  || splitColumnMetrics.columns.some((column) => column.cards.length > 5)
+  || splitColumnMetrics.columns.map((column) => column.cards.map((card) => card.text).join('')).join('|') !== '上上上|大大人'
+) {
+  throw new Error('six same-phrase result cards should split at the 上上上 / 大大人 door boundary');
+}
+
+const erXiaoCards = [
+  ...renderDeck.filter((card) => card.key === 'er').slice(0, 3),
+  ...renderDeck.filter((card) => card.key === 'xiao').slice(0, 4),
+];
+miniPositions = [];
+const doorBoundaryMetrics = directionRenderer.drawRoundResultCards(
+  {
+    fillText() {},
+    set fillStyle(value) {},
+    set font(value) {},
+    set textAlign(value) {},
+  },
+  { finalHand: erXiaoCards, melds: [] },
+  { x: 20, y: 10, width: 320, height: 96 }
+);
+const doorBoundaryText = doorBoundaryMetrics
+  && doorBoundaryMetrics.columns.map((column) => column.cards.map((card) => card.text).join('')).join('|');
+if (
+  erXiaoCards.length !== 7
+  || !doorBoundaryMetrics
+  || doorBoundaryMetrics.columns.length !== 2
+  || doorBoundaryMetrics.columns.some((column) => column.cards.length > 5)
+  || doorBoundaryText !== '尔尔尔|小小小小'
+) {
+  throw new Error(`same-key doors should remain intact as 尔尔尔 / 小小小小, received ${doorBoundaryText || 'no columns'}`);
+}
+
+miniPositions = [];
+const fiveCardMetrics = directionRenderer.drawRoundResultCards(
+  {
+    fillText() {},
+    set fillStyle(value) {},
+    set font(value) {},
+    set textAlign(value) {},
+  },
+  { finalHand: longPhraseCards.slice(0, 5), melds: [] },
+  { x: 20, y: 10, width: 320, height: 96 }
+);
+if (
+  !fiveCardMetrics
+  || fiveCardMetrics.columns.length !== 1
+  || fiveCardMetrics.columns[0].cards.length !== 5
+) {
+  throw new Error('result card groups with five or fewer cards should remain in one column');
+}
+
 directionRenderer.roundResultScrollMax = 140;
 directionRenderer.roundResultScrollOffset = 0;
 if (

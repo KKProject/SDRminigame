@@ -2,8 +2,8 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.6",
-  "desc": "修复对局结果同一句牌纵向叠放",
+  "version": "1.0.9",
+  "desc": "优化结果牌尺寸与门子分列",
   "ignores": [],
   "setting": {
     "es6": true,

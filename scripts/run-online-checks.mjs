@@ -74,7 +74,24 @@ const rotatedRoundDetail = online.rotateRoundDetail({
   maxRounds: 2,
   hasNextRound: true,
   players: [
-    { seat: 0, finalHand: [], melds: [], roundScore: 3, huCount: 21 },
+    {
+      seat: 0,
+      finalHand: [{ id: 'rotate-win-card', key: 'shang' }],
+      melds: [],
+      roundScore: 3,
+      huCount: 21,
+      huGrade: '大甲',
+      winningCard: { id: 'rotate-win-card', key: 'shang' },
+      winningGroups: [{
+        type: 'xyz',
+        label: '吃',
+        cards: [
+          { id: 'rotate-win-card', key: 'shang' },
+          { id: 'rotate-da', key: 'da' },
+          { id: 'rotate-ren', key: 'ren' },
+        ],
+      }],
+    },
     { seat: 1, finalHand: [], melds: [], roundScore: -1, huCount: null },
     { seat: 2, finalHand: [], melds: [], roundScore: -1, huCount: null },
     { seat: 3, finalHand: [], melds: [], roundScore: -1, huCount: null },
@@ -88,6 +105,10 @@ const rotatedRoundDetail = online.rotateRoundDetail({
 }, 2);
 if (
   rotatedRoundDetail.players.find((player) => player.huCount === 21).seat !== 2
+  || rotatedRoundDetail.players.find((player) => player.huCount === 21).huGrade !== '大甲'
+  || rotatedRoundDetail.players.find((player) => player.huCount === 21).winningCard.id !== 'rotate-win-card'
+  || rotatedRoundDetail.players.find((player) => player.huCount === 21).winningGroups[0].cards.map((card) => card.key).join(',') !== 'shang,da,ren'
+  || 'winningCard' in rotatedRoundDetail.players.find((player) => player.seat === 0)
   || rotatedRoundDetail.continuation.requiredSeats.join(',') !== '2,0'
   || rotatedRoundDetail.continuation.confirmedSeats.join(',') !== '0'
   || !rotatedRoundDetail.continuation.selfConfirmed
@@ -1505,6 +1526,18 @@ async function verifyResultDeltaGate({
       melds: [],
       roundScore: seat === result.winner ? 3 : -1,
       huCount: seat === result.winner ? 21 : null,
+      ...(eventType === 'hu' && seat === result.winner ? {
+        winningCard: { id: `result-card-${eventSeq}`, key: 'da' },
+        winningGroups: [{
+          type: 'xyz',
+          label: '吃',
+          cards: [
+            { id: `result-shang-${eventSeq}`, key: 'shang' },
+            { id: `result-card-${eventSeq}`, key: 'da' },
+            { id: `result-ren-${eventSeq}`, key: 'ren' },
+          ],
+        }],
+      } : {}),
     })),
     continuation: {
       requiredSeats: [0, 1],
@@ -1556,6 +1589,10 @@ async function verifyResultDeltaGate({
     || resultDeltaDatabus.result.type !== result.type
     || !resultDeltaDatabus.roundDetail
     || resultDeltaDatabus.roundDetail.players.length !== 4
+    || (eventType === 'hu' && (
+      resultDeltaDatabus.roundDetail.players[result.winner].winningCard.id !== `result-card-${eventSeq}`
+      || resultDeltaDatabus.roundDetail.players[result.winner].winningGroups[0].cards.map((card) => card.key).join(',') !== 'shang,da,ren'
+    ))
     || resultDeltaAckCount !== 1
   ) {
     throw new Error(`${eventType} result delta should commit the correct result after its timeline event`);
@@ -3149,7 +3186,16 @@ const roundDetailDb = createRoomDb({
       dealerSeat: 0,
       nextDealerSeat: 1,
       seats: [
-        { id: 0, hand: [detailCard('shang-0', 'shang', '上', 0)], melds: [], discards: [], history: {} },
+        {
+          id: 0,
+          hand: [
+            detailCard('shang-0', 'shang', '上', 0),
+            detailCard('ren-0', 'ren', '人', 2),
+          ],
+          melds: [],
+          discards: [],
+          history: {},
+        },
         { id: 1, hand: [detailCard('da-0', 'da', '大', 1)], melds: [], discards: [], history: {} },
         { id: 2, hand: [detailCard('ren-0', 'ren', '人', 2)], melds: [], discards: [], history: {} },
         { id: 3, hand: [], melds: [], discards: [], history: {} },
@@ -3162,7 +3208,9 @@ const roundDetailDb = createRoomDb({
         type: 'win',
         winner: 0,
         card: detailCard('da-1', 'da', '大', 1, 1),
-        scoring: { totalFu: 21 },
+        doors: [{ type: 'xyz', keys: ['shang', 'da', 'ren'], supportNeeded: 0 }],
+        scoring: { totalFu: 21, grade: '小甲' },
+        grade: '小甲',
         roundScores: { 0: 3, 1: -1, 2: -1, 3: -1 },
         settlement: {
           point: 1,
@@ -3187,13 +3235,85 @@ if (
   || !roundDetailPull.public.roundDetail
   || roundDetailPull.public.roundDetail.players.length !== 4
   || roundDetailPull.public.roundDetail.players[0].huCount !== 21
+  || roundDetailPull.public.roundDetail.players[0].huGrade !== '小甲'
   || roundDetailPull.public.roundDetail.players[1].huCount !== null
-  || roundDetailPull.public.roundDetail.players[0].finalHand.length !== 2
+  || roundDetailPull.public.roundDetail.players[0].finalHand.length !== 3
+  || roundDetailPull.public.roundDetail.players[0].winningCard.id !== 'da-1'
+  || roundDetailPull.public.roundDetail.players[0].winningGroups.length !== 1
+  || roundDetailPull.public.roundDetail.players[0].winningGroups[0].label !== '吃'
+  || roundDetailPull.public.roundDetail.players[0].winningGroups[0].cards.map((card) => card.text).join('') !== '上大人'
+  || !roundDetailPull.public.roundDetail.players[0].winningGroups[0].cards.some((card) => card.id === 'da-1')
+  || roundDetailPull.public.roundDetail.players.slice(1).some((player) => (
+    'winningCard' in player || 'winningGroups' in player
+  ))
   || roundDetailPull.public.roundDetail.players[0].roundScore !== 3
   || 'hand' in roundDetailPull.public.seats[1]
 ) {
   throw new Error('result snapshots should reveal frozen final hands and winner hu count without weakening live seat privacy');
 }
+
+const groupLabelRoom = JSON.parse(JSON.stringify(concurrentRoundDetailFixture));
+groupLabelRoom._id = 'round-detail-label-room';
+groupLabelRoom.state.seats[0].hand = [
+  detailCard('er-label-0', 'er', '尔', 0),
+  detailCard('er-label-1', 'er', '尔', 0, 1),
+  detailCard('er-label-2', 'er', '尔', 0, 2),
+  detailCard('sheng-label-0', 'sheng', '生', 2),
+  detailCard('sheng-label-1', 'sheng', '生', 2, 1),
+  detailCard('hidden-shang-label', 'shang', '上', 0, 5),
+  detailCard('hidden-da-label', 'da', '大', 1, 5),
+];
+groupLabelRoom.state.seats[0].melds = [
+  {
+    id: 'zhao-label-meld',
+    type: 'zhao',
+    label: '招4张1对',
+    key: 'xiao',
+    cards: Array.from({ length: 4 }, (_, index) => detailCard(`xiao-label-${index}`, 'xiao', '小', 1, index)),
+  },
+  {
+    id: 'ta-label-meld',
+    type: 'ta',
+    label: '踏',
+    key: 'shang',
+    cards: Array.from({ length: 5 }, (_, index) => detailCard(`shang-label-${index}`, 'shang', '上', 2, index)),
+  },
+];
+groupLabelRoom.state.result.card = detailCard('er-label-3', 'er', '尔', 0, 3);
+groupLabelRoom.state.result.doors = [
+  { type: 'same', key: 'er', keys: ['er', 'er', 'er', 'er'], supportNeeded: 1 },
+  {
+    type: 'same',
+    key: 'xiao',
+    keys: ['xiao', 'xiao', 'xiao', 'xiao'],
+    supportNeeded: 1,
+    exposed: true,
+    meldType: 'zhao',
+    label: '招4张1对',
+  },
+  {
+    type: 'same',
+    key: 'shang',
+    keys: ['shang', 'shang', 'shang', 'shang', 'shang'],
+    supportNeeded: 2,
+    exposed: true,
+    meldType: 'ta',
+    label: '踏',
+  },
+  { type: 'xx', key: 'sheng', keys: ['sheng', 'sheng'], supportNeeded: 0 },
+  { type: 'xy', keys: ['shang', 'da'], supportNeeded: 0 },
+];
+const groupLabelDb = createRoomDb({ 'round-detail-label-room': groupLabelRoom });
+const groupLabelPull = await roomFunction.pull({
+  roomId: 'round-detail-label-room',
+}, { db: groupLabelDb, OPENID: 'detail-host' });
+const frozenGroupLabels = groupLabelPull.public.roundDetail.players[0].winningGroups
+  .map((group) => group.label)
+  .join(',');
+if (frozenGroupLabels !== '招,招,踏,对,口') {
+  throw new Error(`frozen result groups should preserve 招/踏/对/口 labels, received ${frozenGroupLabels}`);
+}
+
 const duplicateDetailConfirm = await roomFunction.confirmNextRound({
   roomId: 'round-detail-room',
   round: 1,
@@ -3344,6 +3464,9 @@ if (
   || !nonWinDetail.public.roundDetail
   || nonWinDetail.public.roundDetail.resultType !== 'draw-round'
   || nonWinDetail.public.roundDetail.players.some((player) => player.huCount !== null)
+  || nonWinDetail.public.roundDetail.players.some((player) => (
+    'winningCard' in player || 'winningGroups' in player
+  ))
 ) {
   throw new Error('non-win result details should keep every player hu count empty');
 }
