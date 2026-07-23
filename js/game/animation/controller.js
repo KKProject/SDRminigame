@@ -3,6 +3,8 @@ import { eventPlan } from './presets';
 // 属于“吃碰杠”类型的动作，本地预览和网络事件都会用到。
 const MELD_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta'];
 const RESPONSE_EVENT_TYPES = ['chi', 'peng', 'zhao', 'ta', 'hu', 'pass'];
+const HELD_RESOLUTION_EVENT_TYPES = ['unclaimed', 'chi', 'peng', 'zhao', 'ta', 'hu'];
+const HELD_TERMINAL_EVENT_TYPES = ['circle-loss', 'draw-round', 'settlement'];
 const FAST_PLAYBACK_DURATION_SCALE = 0.35;
 
 function scaleAnimationStepDuration(step, scale) {
@@ -25,6 +27,16 @@ function isResponseActionForCard(action, cardId) {
   return action
     && RESPONSE_EVENT_TYPES.indexOf(action.type) >= 0
     && (!action.card || action.card.id === cardId);
+}
+
+function eventReferencesCard(event, cardId) {
+  if (!event || !cardId) return false;
+  if (event.card && event.card.id === cardId) return true;
+  return Boolean(
+    event.meld
+    && Array.isArray(event.meld.cards)
+    && event.meld.cards.some((card) => card && card.id === cardId)
+  );
 }
 
 function inferAppearanceResolution(event, renderer) {
@@ -195,11 +207,8 @@ export default class TableAnimationController {
     if (event.card && held && held.card.id === event.card.id && held.holdPosition) context.start = held.holdPosition;
     if (event.type === 'unclaimed' && this.heldAppearance && event.card && this.heldAppearance.card.id === event.card.id) {
       context.start = this.heldAppearance.position;
-      this.releaseHeldAppearance();
     }
-    if ((MELD_EVENT_TYPES.indexOf(event.type) >= 0 || event.type === 'hu') && this.heldAppearance) {
-      this.releaseHeldAppearance();
-    }
+    this.settleHeldAppearanceForEvent(event);
 
     // 某些事件不带 event.card，但带 meld（例如吃碰时亮出的组合）。
     // 这种情况下需要从 meld 中找到上一张被打出的那张牌，并设置它的起点/终点。
@@ -273,14 +282,102 @@ export default class TableAnimationController {
     this.heldAppearance = null;
   }
 
+  /**
+   * 即使权威事件不需要在本机播放，也要应用它对 retained 出现牌的最终语义。
+   * 该操作必须幂等，并且旧事件不得清除更晚事件持有的新牌。
+   */
+  settleHeldAppearanceForEvent(event) {
+    if (!event || !event.type) return false;
+    if (
+      (event.type === 'draw' || event.type === 'discard')
+      && event.appearanceResolution === 'await-response'
+    ) return false;
+    if (event.type === 'pass') return false;
+
+    const resolvesHeld = HELD_RESOLUTION_EVENT_TYPES.indexOf(event.type) >= 0
+      || HELD_TERMINAL_EVENT_TYPES.indexOf(event.type) >= 0;
+    if (!resolvesHeld) return false;
+
+    const stateController = this.renderer && this.renderer.stateAnimationController;
+    const terminal = HELD_TERMINAL_EVENT_TYPES.indexOf(event.type) >= 0;
+    let settled = false;
+    const held = this.heldAppearance;
+    if (held) {
+      const heldSeq = held.event && typeof held.event.eventSeq === 'number'
+        ? held.event.eventSeq
+        : null;
+      const eventIsOlder = heldSeq !== null
+        && typeof event.eventSeq === 'number'
+        && event.eventSeq < heldSeq;
+      const cardMismatch = event.type === 'unclaimed'
+        && event.card
+        && held.card
+        && event.card.id !== held.card.id;
+      if (!eventIsOlder && !cardMismatch) {
+        this.releaseHeldAppearance();
+        settled = true;
+      }
+    }
+
+    const stateActiveCard = stateController
+      && stateController.active
+      && stateController.active.event
+      && stateController.active.event.card;
+    if (
+      stateActiveCard
+      && stateController.releaseActiveCard
+      && (terminal || eventReferencesCard(event, stateActiveCard.id))
+    ) {
+      settled = stateController.releaseActiveCard(stateActiveCard.id) || settled;
+    }
+    return settled;
+  }
+
+  /** 根据最新权威快照判断 held 牌是否仍属于活动响应窗口。 */
+  reconcileHeldAppearance(state = {}) {
+    const held = this.heldAppearance;
+    if (!held || !held.card) return false;
+    const cardId = held.card.id;
+    const activeResponse = Boolean(
+      state.responseSummary
+      && state.responseSummary.active
+      && state.responseSummary.cardId === cardId
+    );
+    const activeAppearing = Boolean(
+      state.appearingCard
+      && state.appearingCard.card
+      && state.appearingCard.card.id === cardId
+    );
+    const recent = state.recentDiscard;
+    const activeDiscard = Boolean(
+      recent
+      && recent.card
+      && recent.card.id === cardId
+      && !recent.unclaimed
+      && !recent.resolved
+    );
+    if (state.phase !== 'result' && (activeResponse || activeAppearing || activeDiscard)) return false;
+    this.releaseHeldAppearance();
+    return true;
+  }
+
   restoreHeldAppearance(event) {
     if (
       !event
       || !event.card
       || event.appearanceResolution !== 'await-response'
-      || this.heldAppearance
       || !this.renderer.lastLayout
     ) return false;
+    if (this.heldAppearance) {
+      const heldEvent = this.heldAppearance.event || {};
+      if (this.heldAppearance.card && this.heldAppearance.card.id === event.card.id) return false;
+      if (
+        typeof heldEvent.eventSeq === 'number'
+        && typeof event.eventSeq === 'number'
+        && heldEvent.eventSeq > event.eventSeq
+      ) return false;
+      this.releaseHeldAppearance();
+    }
     const plan = eventPlan(event, { layout: this.renderer.lastLayout });
     (plan.visuals || []).forEach((visual) => {
       if (visual.kind === 'card') visual.scale = 1;

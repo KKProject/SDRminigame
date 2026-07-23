@@ -2,25 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(node:*)",
-      "Bash(git add:*)",
-      "Bash(git push:*)",
       "Bash(mv:*)",
-      "Bash(npm run upload:*)",
+      "Bash(npm run *)",
       "Bash(/opt/homebrew/Cellar/node@20/20.19.4/bin/node *)",
-      "Bash(openspec list *)",
-      "Bash(openspec status *)",
-      "Bash(openspec --help)",
-      "Bash(openspec archive *)",
-      "Bash(openspec validate *)",
-      "Bash(python3 -c \"import json;d=json.load\\(open\\('images/action_buttons_named_atlas.json'\\)\\);print\\(list\\(d.keys\\(\\)\\)\\);meta=d.get\\('meta',{}\\);print\\('meta keys:',list\\(meta.keys\\(\\)\\)\\);\")",
+      "Bash(openspec *)",
       "Bash(python3 -c ' *)",
       "Bash(cd *)",
-      "Bash(python3 -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\('isComplete:',d.get\\('isComplete'\\)\\);print\\('artifacts:',[\\(a['id'],a['status']\\) for a in d.get\\('artifacts',[]\\)]\\)\")",
-      "Bash(openspec instructions *)",
-      "Bash(perl -0pi -e 's/- \\\\[ \\\\]/- [x]/g' openspec/changes/collapse-zhao-into-single-button/tasks.md)",
-      "Bash(perl -0pi -e 's/- \\\\[x\\\\] 5\\\\.9 真机验证/- [ ] 5.9 真机验证/' openspec/changes/collapse-zhao-into-single-button/tasks.md)",
-      "Bash(perl -0pi -e 's/- \\\\[ \\\\] 5\\\\.9 真机验证/- [x] 5.9 真机验证/' openspec/changes/collapse-zhao-into-single-button/tasks.md)",
-      "Bash(git commit -m ' *)"
+      "Bash(perl -0pi *)",
+      "Bash(git *)"
     ],
     "deny": [],
     "ask": []

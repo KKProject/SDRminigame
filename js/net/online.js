@@ -1526,6 +1526,7 @@ export default class OnlineController {
         event: diagnosticEvent(event),
         location: 'consumed',
       });
+      if (this.animator.settleHeldAppearanceForEvent) this.animator.settleHeldAppearanceForEvent(event);
       if (options.displayCommit) this.commitTimelineDisplayState(options.displayCommit, 'consumed-event-commit', event);
       return true;
     }
@@ -1573,6 +1574,7 @@ export default class OnlineController {
         event: diagnosticEvent(event),
         reason: 'already-played',
       });
+      if (this.animator.settleHeldAppearanceForEvent) this.animator.settleHeldAppearanceForEvent(event);
       this.completeTimelineEvent(event.eventSeq, 'already-played');
       this.lastAckedEventSeq = Math.min(this.lastAckedEventSeq, event.eventSeq - 1);
       this.sendAnimationAck(event.eventSeq);
@@ -1595,6 +1597,7 @@ export default class OnlineController {
         reason: 'playback-mode-skip',
         category: entry.category,
       });
+      if (this.animator.settleHeldAppearanceForEvent) this.animator.settleHeldAppearanceForEvent(event);
       this.isAnimating = false;
       this.animationWaiting = false;
       if (this.databus) this.databus.animationWaiting = false;
@@ -1766,6 +1769,9 @@ export default class OnlineController {
           this.lastLocallyCompletedEventSeq = Math.max(this.lastLocallyCompletedEventSeq || 0, this.currentEvent.eventSeq);
         }
       }
+      if (this.animator.reconcileHeldAppearance) {
+        this.animator.reconcileHeldAppearance(this.authoritativeState || this.databus || {});
+      }
       if (this.animator.releaseOnlineEvent) this.animator.releaseOnlineEvent();
       this.timelineCurrent = null;
       this.timelineQueue = [];
@@ -1785,6 +1791,7 @@ export default class OnlineController {
       this.lastAckedEventSeq = Math.max(this.lastAckedEventSeq, event.eventSeq);
       this.lastPlayedEventSeq = Math.max(this.lastPlayedEventSeq, event.eventSeq);
       this.isAnimating = false;
+      if (this.animator.settleHeldAppearanceForEvent) this.animator.settleHeldAppearanceForEvent(event);
       if (this.animator.restoreHeldAppearance) this.animator.restoreHeldAppearance(event);
       this.cancelLocalActionPreview();
       if (options.displayCommit) this.commitTimelineDisplayState(options.displayCommit, 'self-acked', event);
@@ -1797,6 +1804,7 @@ export default class OnlineController {
         event: diagnosticEvent(event),
         reason: 'already-played',
       });
+      if (this.animator.settleHeldAppearanceForEvent) this.animator.settleHeldAppearanceForEvent(event);
       if (options.displayCommit) this.commitTimelineDisplayState(options.displayCommit, 'already-played', event);
       // 多客户端并发全量写可能覆盖单个回执；权威状态仍未记录本人时主动幂等补发。
       this.lastAckedEventSeq = Math.min(this.lastAckedEventSeq, event.eventSeq - 1);

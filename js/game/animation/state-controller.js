@@ -53,10 +53,10 @@ export default class StateAnimationController {
   observe(state, layout, blocked = false) {
     if (!state || !layout || blocked) return;
 
-    // 进入结算/结果阶段：如果是 win，直接清理动画，避免动画和结算界面冲突。
-    if (state.phase === 'result' && state.result && state.result.type === 'win') {
+    // 进入任意结算/结果阶段都清理状态动画，避免上一张出现牌残留在结果界面。
+    if (state.phase === 'result' && state.result) {
       if (!this.resultCleared) {
-        this.clear('win-result');
+        this.clear(`${state.result.type || 'unknown'}-result`);
         this.resultCleared = true;
       }
       return;

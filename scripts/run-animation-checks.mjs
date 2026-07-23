@@ -337,6 +337,139 @@ assert(
   'response buttons MUST NOT cause an extra state discard appearance while the online event is held'
 );
 
+function controllerWithHeldAppearance(cardId, eventSeq = 100) {
+  const heldManager = new AnimationManager();
+  const heldCard = { id: cardId, key: 'shang' };
+  const heldRenderer = {
+    lastLayout: layout,
+    lastState: {},
+    lastDiscardEvent: null,
+    suppressNextMeldEffect: false,
+    suppressNextResultEffect: false,
+    stateAnimationController: { lastSignature: '', resolutionSignature: '', releaseActiveCard() {} },
+    animationEndForSeat(seat, currentLayout) { return seatFront(seat, currentLayout); },
+    claimedAnimationEnd(seat, currentLayout) { return claimedTarget(seat, currentLayout); },
+  };
+  const heldController = new TableAnimationController(heldRenderer, heldManager);
+  const planId = `seed-held:${cardId}`;
+  heldManager.play({
+    id: planId,
+    visuals: [{ kind: 'card', card: heldCard, retain: true }],
+    steps: [{ type: 'wait', duration: 1000 }],
+  });
+  heldController.holdPlanAppearance(planId, heldCard, seatFront(1, layout), {
+    eventSeq,
+    type: 'discard',
+    seat: 1,
+    card: heldCard,
+    appearanceResolution: 'await-response',
+  });
+  return { heldController, heldManager, heldCard };
+}
+
+const passHeld = controllerWithHeldAppearance('pass-must-preserve');
+assert(
+  !passHeld.heldController.settleHeldAppearanceForEvent({ eventSeq: 101, type: 'pass', seat: 0 })
+  && passHeld.heldController.heldAppearance,
+  'pass semantic settlement MUST preserve a retained appearance while other responses may remain'
+);
+assert(
+  !passHeld.heldController.settleHeldAppearanceForEvent({
+    eventSeq: 99,
+    type: 'unclaimed',
+    seat: 1,
+    card: passHeld.heldCard,
+  }) && passHeld.heldController.heldAppearance,
+  'an older resolution event MUST NOT clear a newer retained appearance'
+);
+assert(
+  passHeld.heldController.restoreHeldAppearance({
+    eventSeq: 102,
+    type: 'discard',
+    seat: 2,
+    card: { id: 'new-self-acked-appearance', key: 'da' },
+    appearanceResolution: 'await-response',
+  }),
+  'a newer self-acked appearance should replace a stale held card with a different card id'
+);
+passHeld.heldManager.update(0);
+assert(
+  passHeld.heldController.heldAppearance
+  && passHeld.heldController.heldAppearance.card.id === 'new-self-acked-appearance'
+  && !passHeld.heldManager.getVisualState().some((visual) => visual.card && visual.card.id === passHeld.heldCard.id),
+  'restoring a newer self-acked appearance MUST remove the stale retained visual'
+);
+
+for (const [index, resultType] of ['circle-loss', 'draw-round', 'settlement'].entries()) {
+  const terminalHeld = controllerWithHeldAppearance(`terminal-held-${resultType}`, 110 + index * 2);
+  assert(
+    terminalHeld.heldController.playOnlineEvent({
+      eventSeq: 111 + index * 2,
+      type: resultType,
+      result: { type: resultType },
+    }, () => {}),
+    `${resultType} online event should start`
+  );
+  assert(
+    !terminalHeld.heldController.heldAppearance
+    && !terminalHeld.heldManager.getVisualState().some((visual) => visual.card && visual.card.id === terminalHeld.heldCard.id),
+    `${resultType} online event MUST release the previous retained appearance before playing`
+  );
+}
+
+for (const resultType of ['win', 'circle-loss', 'draw-round', 'settlement']) {
+  const resultManager = new AnimationManager();
+  const resultController = new StateAnimationController(resultManager);
+  const resultCard = { id: `state-result-${resultType}`, key: 'shang' };
+  resultController.observe({
+    phase: 'human-response',
+    currentSeat: 0,
+    drawnCard: null,
+    recentDiscard: { seat: 1, card: resultCard },
+    pendingActions: [{ type: 'pass', seat: 0, card: resultCard }],
+    playerActions: [],
+    seats: [{ melds: [] }, { melds: [] }, { melds: [] }, { melds: [] }],
+  }, layout);
+  assert(resultController.active, `${resultType} state cleanup should begin with a retained state appearance`);
+  resultController.observe({
+    phase: 'result',
+    result: { type: resultType },
+    seats: [{ melds: [] }, { melds: [] }, { melds: [] }, { melds: [] }],
+  }, layout);
+  assert(
+    !resultController.active && resultManager.getVisualState().length === 0,
+    `${resultType} result state MUST clear retained state animation visuals`
+  );
+}
+
+const stateOnlyManager = new AnimationManager();
+const stateOnlyController = new StateAnimationController(stateOnlyManager);
+const stateOnlyCard = { id: 'state-only-consumed-card', key: 'shang' };
+stateOnlyController.observe({
+  phase: 'human-response',
+  currentSeat: 0,
+  drawnCard: null,
+  recentDiscard: { seat: 1, card: stateOnlyCard },
+  pendingActions: [{ type: 'pass', seat: 0, card: stateOnlyCard }],
+  playerActions: [],
+  seats: [{ melds: [] }, { melds: [] }, { melds: [] }, { melds: [] }],
+}, layout);
+const stateOnlyTableController = new TableAnimationController({
+  lastLayout: layout,
+  lastState: {},
+  stateAnimationController: stateOnlyController,
+}, stateOnlyManager);
+assert(
+  stateOnlyTableController.settleHeldAppearanceForEvent({
+    eventSeq: 130,
+    type: 'chi',
+    seat: 2,
+    meld: { id: 'state-only-chi', type: 'chi', cards: [stateOnlyCard] },
+  })
+  && !stateOnlyController.active,
+  'a skipped consuming event MUST also release a matching state-owned retained appearance'
+);
+
 function assertOnlineAppearanceReleasesActiveState(label, event, state) {
   const managerForRelease = new AnimationManager();
   const stateControllerForRelease = new StateAnimationController(managerForRelease);

@@ -1411,12 +1411,14 @@ const skippedDatabus = {
 };
 let skippedPlayCount = 0;
 let skippedAckCount = 0;
+const skippedSettledEvents = [];
 const skippedController = new online.default(skippedDatabus, {
   playOnlineEvent() {
     skippedPlayCount += 1;
     return true;
   },
   releaseOnlineEvent() {},
+  settleHeldAppearanceForEvent(event) { skippedSettledEvents.push(event.type); },
 }, null);
 skippedController.roomId = 'skipped-room';
 skippedController.mySeat = 0;
@@ -1434,8 +1436,105 @@ skippedController.consumeAnimationState({
   currentEvent: { eventSeq: 50, type: 'unclaimed', seat: 1, card: { id: 'skip-card', key: 'shang' } },
 }, { source: 'reconnect' });
 await new Promise((resolve) => setTimeout(resolve, 0));
-if (skippedPlayCount !== 0 || skippedAckCount !== 1 || skippedController.timelineCurrent || skippedController.isAnimating) {
+if (
+  skippedPlayCount !== 0
+  || skippedAckCount !== 1
+  || skippedSettledEvents.join(',') !== 'unclaimed'
+  || skippedController.timelineCurrent
+  || skippedController.isAnimating
+) {
   throw new Error('recovering clients should skip observational timeline events and still acknowledge them');
+}
+const observerDatabus = {
+  feedback: '',
+  selectedCardId: null,
+  seats: [
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+    { hand: [], discards: [], melds: [] },
+  ],
+  setRoundState(state) { Object.assign(this, state); },
+};
+let observerHeldCardId = 'human-a-discard';
+let observerPlayCount = 0;
+let observerRestoreCount = 0;
+const observerSettledEvents = [];
+const observerController = new online.default(observerDatabus, {
+  playOnlineEvent() { observerPlayCount += 1; return true; },
+  releaseOnlineEvent() {},
+  settleHeldAppearanceForEvent(event) {
+    observerSettledEvents.push(event.type);
+    if (['chi', 'peng', 'zhao', 'ta', 'hu', 'unclaimed', 'circle-loss', 'draw-round', 'settlement'].includes(event.type)) {
+      observerHeldCardId = null;
+    }
+  },
+  restoreHeldAppearance() { observerRestoreCount += 1; },
+}, null);
+observerController.mySeat = 0;
+observerController.consumeAnimationState({
+  waiting: true,
+  selfAcked: true,
+  currentEvent: {
+    eventSeq: 51,
+    type: 'chi',
+    seat: 1,
+    meld: { id: 'human-b-chi', type: 'chi', cards: [{ id: 'human-a-discard', key: 'shang' }] },
+  },
+});
+if (
+  observerHeldCardId
+  || observerPlayCount !== 0
+  || observerRestoreCount !== 1
+  || observerSettledEvents.join(',') !== 'chi'
+  || observerController.lastAckedEventSeq !== 51
+) {
+  throw new Error('a non-acting human self-acking another human chi must settle the consumed appearance without replaying it');
+}
+
+let alreadyPlayedHeld = true;
+let alreadyPlayedAckCount = 0;
+const alreadyPlayedController = new online.default(observerDatabus, {
+  releaseOnlineEvent() {},
+  settleHeldAppearanceForEvent(event) {
+    if (event.type === 'peng') alreadyPlayedHeld = false;
+  },
+}, null);
+alreadyPlayedController.roomId = 'already-played-room';
+alreadyPlayedController.mySeat = 0;
+alreadyPlayedController.lastPlayedEventSeq = 60;
+alreadyPlayedController.socket = {
+  isReady() { return true; },
+  request(type) {
+    if (type === 'ackAnimation') alreadyPlayedAckCount += 1;
+    return Promise.resolve({ ok: true, version: alreadyPlayedController.version });
+  },
+};
+alreadyPlayedController.consumeAnimationState({
+  waiting: true,
+  selfAcked: false,
+  currentEvent: { eventSeq: 60, type: 'peng', seat: 2 },
+});
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (alreadyPlayedHeld || alreadyPlayedAckCount !== 1) {
+  throw new Error('an already-played consuming event must settle retained appearance and resend its idempotent acknowledgement');
+}
+
+const reconcileStates = [];
+const reconcileController = new online.default(observerDatabus, {
+  releaseOnlineEvent() {},
+  reconcileHeldAppearance(state) { reconcileStates.push(state); },
+}, null);
+reconcileController.authoritativeState = {
+  phase: 'result',
+  result: { type: 'circle-loss' },
+  responseSummary: null,
+  appearingCard: null,
+  recentDiscard: null,
+};
+reconcileController.consumeAnimationState({ waiting: false, selfAcked: false, currentEvent: null });
+if (reconcileStates.length !== 1 || reconcileStates[0].result.type !== 'circle-loss') {
+  throw new Error('a snapshot without a current event must reconcile retained appearance against the latest authoritative result state');
 }
 const selfAckPreviewController = new online.default(onlineDatabus, onlineRenderer, onlineMusic);
 selfAckPreviewController.mySeat = 0;
