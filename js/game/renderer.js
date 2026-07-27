@@ -163,6 +163,100 @@ function roundRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
+function drawImageContain(ctx, image, area) {
+  if (!ctx || !image || !area) return false;
+  const sourceWidth = Number(image.naturalWidth || image.width) || 0;
+  const sourceHeight = Number(image.naturalHeight || image.height) || 0;
+  if (area.width <= 0 || area.height <= 0) return false;
+  if (!sourceWidth || !sourceHeight) {
+    ctx.drawImage(image, area.x, area.y, area.width, area.height);
+    return true;
+  }
+  const scale = Math.min(area.width / sourceWidth, area.height / sourceHeight);
+  const width = sourceWidth * scale;
+  const height = sourceHeight * scale;
+  ctx.drawImage(
+    image,
+    area.x + (area.width - width) / 2,
+    area.y + (area.height - height) / 2,
+    width,
+    height
+  );
+  return true;
+}
+
+function drawImageCover(ctx, image, area) {
+  if (!ctx || !image || !area) return false;
+  const sourceWidth = Number(image.naturalWidth || image.width) || 0;
+  const sourceHeight = Number(image.naturalHeight || image.height) || 0;
+  if (area.width <= 0 || area.height <= 0) return false;
+  if (!sourceWidth || !sourceHeight) {
+    ctx.drawImage(image, area.x, area.y, area.width, area.height);
+    return true;
+  }
+  const sourceRatio = sourceWidth / sourceHeight;
+  const targetRatio = area.width / area.height;
+  let sx = 0;
+  let sy = 0;
+  let sw = sourceWidth;
+  let sh = sourceHeight;
+  if (sourceRatio > targetRatio) {
+    sw = sourceHeight * targetRatio;
+    sx = (sourceWidth - sw) / 2;
+  } else {
+    sh = sourceWidth / targetRatio;
+    sy = (sourceHeight - sh) / 2;
+  }
+  ctx.drawImage(image, sx, sy, sw, sh, area.x, area.y, area.width, area.height);
+  return true;
+}
+
+function circlePath(ctx, area) {
+  const radius = Math.min(area.width, area.height) / 2;
+  const centerX = area.x + area.width / 2;
+  const centerY = area.y + area.height / 2;
+  ctx.beginPath();
+  if (ctx.arc) {
+    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    ctx.closePath();
+    return;
+  }
+  roundRect(ctx, centerX - radius, centerY - radius, radius * 2, radius * 2, radius);
+}
+
+function drawHorizontalThreeSliceImage(ctx, image, target, sourceEdge = 24) {
+  if (!ctx || !image || !target || target.width <= 0 || target.height <= 0) return false;
+  const sourceWidth = Number(image.naturalWidth || image.width) || 0;
+  const sourceHeight = Number(image.naturalHeight || image.height) || 0;
+  if (!sourceWidth || !sourceHeight) return false;
+  const edge = Math.max(1, Math.min(sourceEdge, sourceWidth / 2));
+  const targetEdge = Math.min(target.width / 2, edge * (target.height / sourceHeight));
+  ctx.drawImage(image, 0, 0, edge, sourceHeight, target.x, target.y, targetEdge, target.height);
+  ctx.drawImage(
+    image,
+    edge,
+    0,
+    sourceWidth - edge * 2,
+    sourceHeight,
+    target.x + targetEdge,
+    target.y,
+    Math.max(0, target.width - targetEdge * 2),
+    target.height
+  );
+  ctx.drawImage(
+    image,
+    sourceWidth - edge,
+    0,
+    edge,
+    sourceHeight,
+    target.x + target.width - targetEdge,
+    target.y,
+    targetEdge,
+    target.height
+  );
+  return true;
+}
+
 export function drawNineSliceImage(ctx, image, target, sourceSlices, targetSlices) {
   if (!ctx || !image || !target || target.width <= 0 || target.height <= 0) return false;
   const sourceWidth = Number(image.naturalWidth || image.width) || 0;
@@ -292,6 +386,9 @@ export default class TableRenderer {
     this.roundResultScrollOffset = 0;
     this.roundResultScrollMax = 0;
     this.roundResultScrollSignature = '';
+    this.tableRecordScrollOffset = 0;
+    this.tableRecordScrollMax = 0;
+    this.tableRecordScrollSignature = '';
   }
 
   setViewport(metrics, options = {}) {
@@ -313,6 +410,9 @@ export default class TableRenderer {
       this.roundResultScrollOffset = 0;
       this.roundResultScrollMax = 0;
       this.roundResultScrollSignature = '';
+      this.tableRecordScrollOffset = 0;
+      this.tableRecordScrollMax = 0;
+      this.tableRecordScrollSignature = '';
       return true;
     }
 
@@ -328,6 +428,9 @@ export default class TableRenderer {
     this.roundResultScrollOffset = 0;
     this.roundResultScrollMax = 0;
     this.roundResultScrollSignature = '';
+    this.tableRecordScrollOffset = 0;
+    this.tableRecordScrollMax = 0;
+    this.tableRecordScrollSignature = '';
     this.restoreAnimationsAfterLayout = true;
     return true;
   }
@@ -388,6 +491,16 @@ export default class TableRenderer {
   drawTableRecordPage(ctx, state, layout) {
     const page = layout.tableRecord;
     const record = state.tableRecord || {};
+    const scrollSignature = `${record.roomId || state.tableRoomId || ''}:${record.completedRounds || 0}:${(record.players || []).length}`;
+    if (scrollSignature !== this.tableRecordScrollSignature) {
+      this.tableRecordScrollSignature = scrollSignature;
+      this.tableRecordScrollOffset = 0;
+    }
+    this.tableRecordScrollMax = page.maxScroll || 0;
+    this.tableRecordScrollOffset = Math.max(
+      0,
+      Math.min(this.tableRecordScrollOffset, this.tableRecordScrollMax)
+    );
     const background = this.assets.getImage('hall') || this.assets.getImage('table');
     if (background && background.width && background.height) {
       const sourceRatio = background.width / background.height;
@@ -411,55 +524,87 @@ export default class TableRenderer {
     ctx.fillStyle = 'rgba(35, 8, 3, 0.32)';
     ctx.fillRect(0, 0, layout.width, layout.height);
 
-    ctx.fillStyle = '#9f2412';
-    roundRect(ctx, page.title.x + page.title.width * 0.25, page.title.y + 5, page.title.width * 0.5, page.title.height * 0.70, 22);
-    ctx.fill();
-    ctx.strokeStyle = '#f5be4b';
-    ctx.lineWidth = 4;
-    ctx.stroke();
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#ffe4a0';
-    ctx.font = `bold ${Math.max(30, Math.floor(page.title.height * 0.36))}px serif`;
-    ctx.fillText('房间总结算', page.title.x + page.title.width / 2, page.title.y + page.title.height * 0.42);
-    ctx.font = `bold ${Math.max(14, Math.floor(page.title.height * 0.17))}px serif`;
-    ctx.fillText('全部对局结束', page.title.x + page.title.width / 2, page.title.y + page.title.height * 0.65);
+    const panelImage = this.assets.getImage('roundResultPanel');
+    const panelEdgeX = Math.max(12, Math.min(30, page.panel.height * 0.085));
+    const panelEdgeY = Math.max(12, Math.min(30, page.panel.height * 0.085));
+    const panelDrawn = drawNineSliceImage(
+      ctx,
+      panelImage,
+      page.panel,
+      ROUND_RESULT_PANEL_SOURCE_SLICES,
+      {
+        left: panelEdgeX,
+        top: panelEdgeY,
+        right: panelEdgeX,
+        bottom: panelEdgeY,
+      }
+    );
+    if (!panelDrawn) {
+      ctx.fillStyle = 'rgba(255, 237, 199, 0.97)';
+      roundRect(ctx, page.panel.x, page.panel.y, page.panel.width, page.panel.height, 13);
+      ctx.fill();
+      ctx.strokeStyle = '#d18a21';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
 
-    ctx.fillStyle = 'rgba(255, 244, 213, 0.96)';
-    roundRect(ctx, page.panel.x, page.panel.y, page.panel.width, page.panel.height, 18);
-    ctx.fill();
-    ctx.strokeStyle = '#d99a32';
-    ctx.lineWidth = 4;
-    ctx.stroke();
+    drawImageContain(ctx, this.assets.getImage('tableRecordHead'), page.title);
 
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(page.scrollRegion.x, page.scrollRegion.y, page.scrollRegion.width, page.scrollRegion.height);
+    ctx.clip();
+    ctx.translate(0, -this.tableRecordScrollOffset);
     page.rows.forEach((row) => {
       const player = row.player || {};
-      ctx.fillStyle = player.winner ? 'rgba(255, 211, 92, 0.34)' : 'rgba(255, 250, 232, 0.56)';
-      roundRect(ctx, row.x, row.y, row.width, row.height, 8);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(184, 117, 42, 0.36)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
+      const rowImage = this.assets.getImage(player.winner ? 'tableRecordFirstRow' : 'tableRecordRow');
+      if (rowImage) {
+        ctx.drawImage(rowImage, row.x, row.y, row.width, row.height);
+      } else {
+        ctx.fillStyle = player.winner ? 'rgba(255, 211, 92, 0.34)' : 'rgba(255, 250, 232, 0.56)';
+        roundRect(ctx, row.x, row.y, row.width, row.height, 6);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(184, 117, 42, 0.42)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
 
-      const rankColors = ['#b32616', '#31506d', '#1f6d43', '#31506d'];
-      ctx.fillStyle = rankColors[player.rank - 1] || '#31506d';
-      roundRect(ctx, row.rank.x + row.rank.width * 0.18, row.rank.y + row.rank.height * 0.18, row.rank.width * 0.64, row.rank.height * 0.64, 8);
-      ctx.fill();
-      ctx.strokeStyle = '#efbd55';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.fillStyle = '#fff2bd';
-      ctx.font = `bold ${Math.max(20, Math.floor(row.rank.height * 0.38))}px serif`;
-      ctx.textAlign = 'center';
-      ctx.fillText(String(player.rank), row.rank.x + row.rank.width / 2, row.rank.y + row.rank.height * 0.62);
+      const rankImage = this.assets.getImage(`tableRecordRank${player.rank}`);
+      const rankTarget = {
+        x: row.rank.x + row.rank.width * 0.25,
+        y: row.rank.y + row.rank.height * 0.25,
+        width: row.rank.width * 0.5,
+        height: row.rank.height * 0.5,
+      };
+      if (!drawImageContain(ctx, rankImage, rankTarget)) {
+        const rankColors = ['#b32616', '#31506d', '#1f6d43', '#31506d'];
+        ctx.fillStyle = rankColors[player.rank - 1] || '#31506d';
+        roundRect(
+          ctx,
+          rankTarget.x + rankTarget.width * 0.16,
+          rankTarget.y + rankTarget.height * 0.12,
+          rankTarget.width * 0.68,
+          rankTarget.height * 0.76,
+          5
+        );
+        ctx.fill();
+        ctx.strokeStyle = '#efbd55';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#fff2bd';
+        ctx.font = `bold ${Math.max(11, Math.floor(rankTarget.height * 0.46))}px serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(String(player.rank), row.rank.x + row.rank.width / 2, row.rank.y + row.rank.height * 0.57);
+      }
 
       const avatar = player.avatarUrl && this.assets.getRemoteImage
         ? this.assets.getRemoteImage(player.avatarUrl)
         : null;
       ctx.save();
-      roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, row.avatar.width / 2);
+      circlePath(ctx, row.avatar);
       ctx.clip();
       if (avatar) {
-        ctx.drawImage(avatar, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height);
+        drawImageCover(ctx, avatar, row.avatar);
       } else {
         ctx.fillStyle = '#80452d';
         ctx.fill();
@@ -471,42 +616,83 @@ export default class TableRenderer {
       ctx.restore();
       ctx.strokeStyle = '#d79328';
       ctx.lineWidth = 2;
-      roundRect(ctx, row.avatar.x, row.avatar.y, row.avatar.width, row.avatar.height, row.avatar.width / 2);
+      circlePath(ctx, row.avatar);
       ctx.stroke();
 
       ctx.textAlign = 'left';
       ctx.fillStyle = '#542611';
-      ctx.font = `bold ${Math.max(16, Math.floor(row.height * 0.22))}px Arial`;
-      this.fillClampedText(ctx, player.nickName || `玩家${player.seat + 1}`, row.identity.x + 4, row.identity.y + row.identity.height * 0.44, row.identity.width - 8);
+      ctx.font = `bold ${Math.max(14, Math.floor(row.height * 0.21))}px Arial`;
+      this.fillClampedText(ctx, player.nickName || `玩家${player.seat + 1}`, row.identity.x + 3, row.identity.y + row.identity.height * 0.43, row.identity.width - 6);
       ctx.fillStyle = '#835332';
-      ctx.font = `${Math.max(12, Math.floor(row.height * 0.16))}px Arial`;
-      ctx.fillText(player.isHuman === false ? '电脑玩家' : (player.seat === 0 ? '本家' : '在线玩家'), row.identity.x + 4, row.identity.y + row.identity.height * 0.72);
+      ctx.font = `${Math.max(10, Math.floor(row.height * 0.15))}px Arial`;
+      ctx.fillText(player.isHuman === false ? '电脑玩家' : (player.seat === 0 ? '本家' : '在线玩家'), row.identity.x + 3, row.identity.y + row.identity.height * 0.72);
 
       ctx.fillStyle = '#633317';
-      ctx.font = `${Math.max(13, Math.floor(row.height * 0.18))}px Arial`;
-      ctx.fillText(`总赢局数：${Number(player.winRounds) || 0}局`, row.stats.x + 8, row.stats.y + row.stats.height * 0.42);
-      ctx.fillText(`总积分变化：${signedScore(player.totalScore)}`, row.stats.x + 8, row.stats.y + row.stats.height * 0.72);
+      ctx.font = `${Math.max(11, Math.floor(row.height * 0.17))}px Arial`;
+      const statIconSize = Math.max(10, Math.min(17, row.height * 0.16));
+      const statTextX = row.stats.x + statIconSize + 9;
+      [0.35, 0.68].forEach((ratio) => {
+        const iconY = row.stats.y + row.stats.height * ratio - statIconSize * 0.72;
+        const coinGradient = ctx.createLinearGradient(row.stats.x + 3, iconY, row.stats.x + 3 + statIconSize, iconY + statIconSize);
+        coinGradient.addColorStop(0, '#fff0a4');
+        coinGradient.addColorStop(0.45, '#e7a322');
+        coinGradient.addColorStop(1, '#9f5406');
+        ctx.fillStyle = coinGradient;
+        roundRect(ctx, row.stats.x + 3, iconY, statIconSize, statIconSize, statIconSize / 2);
+        ctx.fill();
+        ctx.strokeStyle = '#b56d12';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      });
+      ctx.fillStyle = '#633317';
+      ctx.fillText(`总赢局数：${Number(player.winRounds) || 0}局`, statTextX, row.stats.y + row.stats.height * 0.42);
+      ctx.fillText(`总积分变化：${signedScore(player.totalScore)}`, statTextX, row.stats.y + row.stats.height * 0.74);
 
       ctx.textAlign = 'center';
+      ctx.fillStyle = '#6f3a1d';
+      ctx.font = `bold ${Math.max(10, Math.floor(row.height * 0.14))}px serif`;
+      const scoreCenterX = row.score.x + row.score.width / 2;
+      ctx.fillText('总分', scoreCenterX, row.score.y + row.score.height * 0.30);
       ctx.fillStyle = Number(player.totalScore) >= 0 ? '#b52d1b' : '#2d6947';
-      ctx.font = `bold ${Math.max(28, Math.floor(row.height * 0.42))}px serif`;
-      ctx.fillText(signedScore(player.totalScore), row.score.x + row.score.width / 2, row.score.y + row.score.height * 0.62);
-      if (player.winner) {
-        ctx.fillStyle = '#a32616';
-        ctx.font = `bold ${Math.max(11, Math.floor(row.height * 0.15))}px serif`;
-        ctx.fillText('赢家', row.score.x + row.score.width * 0.82, row.score.y + row.score.height * 0.30);
-      }
+      ctx.font = `bold ${Math.max(24, Math.floor(row.height * 0.39))}px serif`;
+      ctx.fillText(signedScore(player.totalScore), scoreCenterX, row.score.y + row.score.height * 0.73);
     });
+    ctx.restore();
 
+    if (this.tableRecordScrollMax > 0) {
+      const trackHeight = Math.max(24, page.scrollRegion.height - 12);
+      const thumbHeight = Math.max(22, trackHeight * (page.scrollRegion.height / page.contentHeight));
+      const thumbTravel = trackHeight - thumbHeight;
+      const thumbY = page.scrollRegion.y + 6
+        + (this.tableRecordScrollOffset / this.tableRecordScrollMax) * thumbTravel;
+      const trackX = page.scrollRegion.x + page.scrollRegion.width - 4;
+      ctx.fillStyle = 'rgba(117, 65, 27, 0.18)';
+      roundRect(ctx, trackX, page.scrollRegion.y + 6, 3, trackHeight, 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(174, 92, 23, 0.72)';
+      roundRect(ctx, trackX, thumbY, 3, thumbHeight, 2);
+      ctx.fill();
+    }
+
+    const footerImage = this.assets.getImage('tableRecordInfo');
+    if (!drawHorizontalThreeSliceImage(ctx, footerImage, page.footer)) {
+      ctx.fillStyle = 'rgba(244, 185, 98, 0.42)';
+      roundRect(ctx, page.footer.x, page.footer.y, page.footer.width, page.footer.height, 5);
+      ctx.fill();
+    }
     ctx.fillStyle = '#653719';
-    ctx.font = `${Math.max(12, Math.floor(page.footer.height * 0.42))}px Arial`;
+    ctx.font = `${Math.max(10, Math.floor(page.footer.height * 0.38))}px Arial`;
     ctx.textAlign = 'center';
     const settings = record.settings || {};
-    ctx.fillText(
-      `房号：${record.roomId || state.tableRoomId || '-'}   ❖   总局数：${record.completedRounds || 0}局   ❖   玩法：${tableRecordPlayLabel(settings)}`,
-      page.footer.x + page.footer.width / 2,
-      page.footer.y + page.footer.height * 0.66
-    );
+    const footerItems = page.footerItems || [page.footer, page.footer, page.footer];
+    [
+      `房号：${record.roomId || state.tableRoomId || '-'}`,
+      `总局数：${record.completedRounds || 0}局`,
+      `玩法：${tableRecordPlayLabel(settings)}`,
+    ].forEach((label, index) => {
+      const item = footerItems[index] || page.footer;
+      this.fillClampedText(ctx, label, item.x + item.width / 2, item.y + item.height * 0.64, item.width - 10);
+    });
     ctx.textAlign = 'left';
   }
 
@@ -1103,6 +1289,25 @@ export default class TableRenderer {
         ctx.restore();
         return;
       }
+      if (layout.tableRecord) {
+        const tableRecordAssetName = button.action.type === 'leaveTable'
+          ? 'tableRecordExit'
+          : (
+            button.action.type === 'requestRematch'
+            && button.action.label === '再来一局'
+            && !button.action.disabled
+              ? 'tableRecordRematch'
+              : null
+          );
+        const tableRecordImage = tableRecordAssetName
+          ? this.assets.getImage(tableRecordAssetName)
+          : null;
+        if (tableRecordImage) {
+          ctx.drawImage(tableRecordImage, -button.width / 2, -button.height / 2, button.width, button.height);
+          ctx.restore();
+          return;
+        }
+      }
       const actionSpriteType = (button.action.zhaoSize || button.action.type === 'zhaoBack')
         ? null
         : button.action.type;
@@ -1466,6 +1671,17 @@ export default class TableRenderer {
     ));
     if (next === this.roundResultScrollOffset) return false;
     this.roundResultScrollOffset = next;
+    return true;
+  }
+
+  scrollTableRecordBy(deltaY) {
+    if (!this.tableRecordScrollMax || !Number.isFinite(deltaY)) return false;
+    const next = Math.max(0, Math.min(
+      this.tableRecordScrollMax,
+      this.tableRecordScrollOffset - deltaY
+    ));
+    if (next === this.tableRecordScrollOffset) return false;
+    this.tableRecordScrollOffset = next;
     return true;
   }
 

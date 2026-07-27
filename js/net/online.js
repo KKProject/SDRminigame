@@ -2271,8 +2271,8 @@ export default class OnlineController {
     if (!touch || !this.renderer.lastLayout) return;
     const region = this.renderer.layout.hit(this.renderer.lastLayout, touch.clientX, touch.clientY);
     if (!region) return;
-    if (region.type === 'round-result-scroll') {
-      this.roundResultScrollTouch = { lastY: touch.clientY };
+    if (region.type === 'round-result-scroll' || region.type === 'table-record-scroll') {
+      this.roundResultScrollTouch = { lastY: touch.clientY, type: region.type };
       return;
     }
     const responseActionTap = region.type === 'action' && this.canSubmitResponseWhileAnimating(region.action);
@@ -2331,7 +2331,13 @@ export default class OnlineController {
     if (!touch) return;
     const deltaY = touch.clientY - this.roundResultScrollTouch.lastY;
     this.roundResultScrollTouch.lastY = touch.clientY;
-    if (this.renderer && this.renderer.scrollRoundResultBy) {
+    if (
+      this.roundResultScrollTouch.type === 'table-record-scroll'
+      && this.renderer
+      && this.renderer.scrollTableRecordBy
+    ) {
+      this.renderer.scrollTableRecordBy(deltaY);
+    } else if (this.renderer && this.renderer.scrollRoundResultBy) {
       this.renderer.scrollRoundResultBy(deltaY);
     }
   }

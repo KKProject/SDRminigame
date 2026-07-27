@@ -19,6 +19,16 @@ export const ASSET_MANIFEST = {
     roundResultContinue: 'images/round_result_continue.png',
     roundResultHu: 'images/round_result_hu.png',
     roundResultGrade: 'images/round_result_grade.png',
+    tableRecordHead: 'images/table_record_head.png',
+    tableRecordRank1: 'images/table_record_rank_1.png',
+    tableRecordRank2: 'images/table_record_rank_2.png',
+    tableRecordRank3: 'images/table_record_rank_3.png',
+    tableRecordRank4: 'images/table_record_rank_4.png',
+    tableRecordFirstRow: 'images/table_record_first_row.png',
+    tableRecordRow: 'images/table_record_row.png',
+    tableRecordInfo: 'images/table_record_info.png',
+    tableRecordExit: 'images/table_record_exit.png',
+    tableRecordRematch: 'images/table_record_rematch.png',
   },
   atlases: {
     cards: {

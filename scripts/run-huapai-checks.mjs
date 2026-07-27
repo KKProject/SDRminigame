@@ -737,6 +737,26 @@ for (const [assetName, assetPath] of Object.entries({
   }
   await access(join(root, assetPath));
 }
+for (const [assetName, assetPath] of Object.entries({
+  tableRecordHead: 'images/table_record_head.png',
+  tableRecordRank1: 'images/table_record_rank_1.png',
+  tableRecordRank2: 'images/table_record_rank_2.png',
+  tableRecordRank3: 'images/table_record_rank_3.png',
+  tableRecordRank4: 'images/table_record_rank_4.png',
+  tableRecordFirstRow: 'images/table_record_first_row.png',
+  tableRecordRow: 'images/table_record_row.png',
+  tableRecordInfo: 'images/table_record_info.png',
+  tableRecordExit: 'images/table_record_exit.png',
+  tableRecordRematch: 'images/table_record_rematch.png',
+})) {
+  if (ASSET_MANIFEST.images[assetName] !== assetPath) {
+    throw new Error(`${assetName} should map to package-compatible PNG ${assetPath}`);
+  }
+  await access(join(root, assetPath));
+}
+if (Object.prototype.hasOwnProperty.call(ASSET_MANIFEST.images, 'tableRecordWinner')) {
+  throw new Error('table record winner badge asset should not remain in the manifest');
+}
 if (Object.prototype.hasOwnProperty.call(ASSET_MANIFEST.images, 'roundResult')) {
   throw new Error('the replaced full-screen round result background should not remain in the asset manifest');
 }
@@ -908,6 +928,36 @@ for (const recordCase of [
   const fallbackRows = recordLayout.tableRecord.rows.filter((row) => !row.player.avatarUrl);
   if (fallbackRows.length !== 3 || fallbackRows.some((row) => row.avatar.width <= 0)) {
     throw new Error('table record layout should preserve avatar fallback regions for missing remote images');
+  }
+  const scoreCenters = recordLayout.tableRecord.rows.map((row) => row.score.x + row.score.width / 2);
+  if (
+    recordLayout.tableRecord.maxScroll <= 0
+    || recordLayout.tableRecord.rows.some((row) => row.avatar.width !== row.avatar.height)
+    || scoreCenters.some((center) => Math.abs(center - scoreCenters[0]) > 0.01)
+  ) {
+    throw new Error('table record rows should scroll vertically with circular avatars and one aligned score column');
+  }
+  recordLayout.tableRecord.rows.forEach((row) => {
+    const expectedAspect = row.player.winner ? (160 / 1032) : (156 / 1032);
+    if (
+      Math.abs((row.height / row.width) - expectedAspect) > 0.002
+      || row.width !== recordLayout.tableRecord.scrollRegion.width
+      || row.x !== recordLayout.tableRecord.scrollRegion.x
+      || row.width > recordLayout.contentBounds.width * 0.74
+    ) {
+      throw new Error('table record row backgrounds must stay compact, centered, and keep their source image aspect ratios');
+    }
+  });
+  const recordPage = recordLayout.tableRecord;
+  if (
+    recordPage.panel.width - recordPage.rows[0].width > 36
+    || recordPage.footer.x !== recordPage.rows[0].x
+    || recordPage.footer.width !== recordPage.rows[0].width
+    || recordPage.rows.slice(1).some((row, index) => (
+      row.y !== recordPage.rows[index].y + recordPage.rows[index].height
+    ))
+  ) {
+    throw new Error('table record panel, rows, and footer should share a compact flush width without row gaps');
   }
 }
 
@@ -1408,6 +1458,7 @@ function createFakeRenderContext() {
     drawImage: (...args) => calls.push(['drawImage', args]),
     beginPath: () => calls.push(['beginPath']),
     rect: (...args) => calls.push(['rect', args]),
+    arc: (...args) => calls.push(['arc', args]),
     clip: () => calls.push(['clip']),
     moveTo: (...args) => calls.push(['moveTo', args]),
     lineTo: (...args) => calls.push(['lineTo', args]),
@@ -1826,6 +1877,18 @@ if (
   || directionRenderer.roundResultScrollOffset !== 0
 ) {
   throw new Error('round result vertical scrolling should move and clamp the shared player list');
+}
+directionRenderer.tableRecordScrollMax = 180;
+directionRenderer.tableRecordScrollOffset = 0;
+if (
+  !directionRenderer.scrollTableRecordBy(-60)
+  || directionRenderer.tableRecordScrollOffset !== 60
+  || !directionRenderer.scrollTableRecordBy(-500)
+  || directionRenderer.tableRecordScrollOffset !== 180
+  || !directionRenderer.scrollTableRecordBy(500)
+  || directionRenderer.tableRecordScrollOffset !== 0
+) {
+  throw new Error('table record vertical scrolling should move and clamp the ranked player list');
 }
 
 function makeSprite(name, imageId = name, width = 10, height = 20) {
@@ -2349,6 +2412,65 @@ if (
   || recordRenderCtx.calls.find((call) => call[0] === 'fillText' && String(call[1][0]).includes('openid'))
 ) {
   throw new Error('table record renderer should draw remote/fallback avatars, settings, and no sensitive identifiers');
+}
+const tableRecordImages = {
+  roundResultPanel: { id: 'record-panel', width: 2304, height: 1214 },
+  tableRecordHead: { id: 'record-head', width: 300, height: 86 },
+  tableRecordFirstRow: { id: 'record-first-row', width: 1032, height: 160 },
+  tableRecordRow: { id: 'record-row', width: 1032, height: 156 },
+  tableRecordRank1: { id: 'record-rank-1', width: 86, height: 100 },
+  tableRecordRank2: { id: 'record-rank-2', width: 60, height: 100 },
+  tableRecordRank3: { id: 'record-rank-3', width: 64, height: 100 },
+  tableRecordRank4: { id: 'record-rank-4', width: 60, height: 100 },
+  tableRecordInfo: { id: 'record-info', width: 268, height: 60 },
+};
+const imageRecordRenderer = new TableRenderer({
+  getImage(name) { return tableRecordImages[name] || null; },
+  getRemoteImage(url) { return url ? { id: 'wide-avatar', width: 160, height: 80 } : null; },
+  getCardSprite() { return null; },
+  getCardBackSprite() { return null; },
+});
+const imageRecordCtx = createFakeRenderContext();
+imageRecordRenderer.drawTableRecordPage(imageRecordCtx, recordRenderState, recordRenderLayout);
+const recordBackgroundDraws = imageRecordCtx.calls.filter((call) => (
+  call[0] === 'drawImage'
+  && ['record-first-row', 'record-row'].includes(call[1][0].id)
+));
+const recordPanelDraws = imageRecordCtx.calls.filter((call) => (
+  call[0] === 'drawImage' && call[1][0].id === 'record-panel'
+));
+const recordHeadDraws = imageRecordCtx.calls.filter((call) => (
+  call[0] === 'drawImage' && call[1][0].id === 'record-head'
+));
+const infoSliceDraws = imageRecordCtx.calls.filter((call) => (
+  call[0] === 'drawImage' && call[1][0].id === 'record-info'
+));
+const scoreLabelXs = imageRecordCtx.calls
+  .filter((call) => call[0] === 'fillText' && call[1][0] === '总分')
+  .map((call) => call[1][1]);
+const compactRankDraws = recordRenderLayout.tableRecord.rows.map((row) => {
+  const rankCall = imageRecordCtx.calls.find((call) => (
+    call[0] === 'drawImage'
+    && call[1][0].id === `record-rank-${row.player.rank}`
+  ));
+  return { row, rankCall };
+});
+if (
+  recordPanelDraws.length !== 9
+  || recordHeadDraws.length !== 1
+  || recordBackgroundDraws.length !== 4
+  || infoSliceDraws.length !== 3
+  || infoSliceDraws.some((call) => call[1].length !== 9)
+  || imageRecordCtx.calls.filter((call) => call[0] === 'arc').length < 8
+  || scoreLabelXs.length !== 4
+  || scoreLabelXs.some((x) => Math.abs(x - scoreLabelXs[0]) > 0.01)
+  || compactRankDraws.some(({ row, rankCall }) => (
+    !rankCall
+    || rankCall[1][3] > row.rank.width * 0.5 + 0.01
+    || rankCall[1][4] > row.rank.height * 0.5 + 0.01
+  ))
+) {
+  throw new Error('table record assets should render as compact proportional rows, half-size ranks, circular avatars, one sliced footer, and aligned scores');
 }
 
 const roundStatsCtx = createFakeRenderContext();

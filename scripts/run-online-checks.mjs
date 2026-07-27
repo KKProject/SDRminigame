@@ -1106,6 +1106,26 @@ roundResultScrollController.handleTouchEnd();
 if (roundResultScrollDelta !== -35 || roundResultScrollController.roundResultScrollTouch) {
   throw new Error('result panel gestures should vertically scroll the shared player list and end cleanly');
 }
+let tableRecordScrollDelta = 0;
+const tableRecordScrollController = new online.default(
+  { feedback: '' },
+  {
+    lastLayout: {},
+    layout: {
+      hit() { return { type: 'table-record-scroll' }; },
+    },
+    scrollTableRecordBy(deltaY) { tableRecordScrollDelta += deltaY; },
+  },
+  { playCue() { throw new Error('scrolling the table record should not trigger a tap cue'); } }
+);
+tableRecordScrollController.active = true;
+tableRecordScrollController.socket = { isReady() { return true; } };
+tableRecordScrollController.handleTouch({ touches: [{ clientX: 100, clientY: 180 }] });
+tableRecordScrollController.handleTouchMove({ touches: [{ clientX: 100, clientY: 140 }] });
+tableRecordScrollController.handleTouchEnd();
+if (tableRecordScrollDelta !== -40 || tableRecordScrollController.roundResultScrollTouch) {
+  throw new Error('table record gestures should vertically scroll the ranked player list and end cleanly');
+}
 let fakeSocketReady = true;
 let fakeSocketFailAck = false;
 let fakeSocketRejectOp = false;

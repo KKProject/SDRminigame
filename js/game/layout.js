@@ -198,39 +198,57 @@ export function rankTableRecordPlayers(players = []) {
 export function createTableRecordLayout(contentBounds, state) {
   if (!state || !state.tableRecordOpen || !state.tableRecord) return null;
   const record = state.tableRecord;
-  const padX = Math.max(16, Math.floor(contentBounds.width * 0.035));
-  const titleHeight = Math.max(68, Math.min(126, Math.floor(contentBounds.height * 0.18)));
-  const actionsHeight = Math.max(48, Math.min(72, Math.floor(contentBounds.height * 0.105)));
+  const padX = Math.max(18, Math.floor(contentBounds.width * 0.052));
+  const titleHeight = Math.max(62, Math.min(126, Math.floor(contentBounds.height * 0.21)));
+  const actionsHeight = Math.max(50, Math.min(76, Math.floor(contentBounds.height * 0.14)));
+  const actionBottom = contentBounds.y + contentBounds.height;
+  const availablePanelWidth = contentBounds.width - padX * 2;
+  const rowWidth = Math.max(1, Math.floor((availablePanelWidth - 24) * 0.82));
+  const panelWidth = rowWidth + 32;
   const panel = rect(
-    contentBounds.x + padX,
-    contentBounds.y + Math.floor(titleHeight * 0.72),
-    contentBounds.width - padX * 2,
-    contentBounds.height - Math.floor(titleHeight * 0.72) - actionsHeight - 8,
+    contentBounds.x + Math.floor((contentBounds.width - panelWidth) / 2),
+    contentBounds.y + Math.floor(titleHeight * 0.68),
+    panelWidth,
+    contentBounds.height - Math.floor(titleHeight * 0.68) - actionsHeight - 5,
     { type: 'table-record-panel' }
   );
-  const footerHeight = Math.max(34, Math.min(48, Math.floor(panel.height * 0.10)));
-  const listTop = panel.y + Math.max(22, Math.floor(panel.height * 0.07));
-  const listBottom = panel.y + panel.height - footerHeight;
-  const rowGap = Math.max(2, Math.floor(panel.height * 0.008));
-  const rowHeight = Math.floor((listBottom - listTop - rowGap * 3) / 4);
+  const footerHeight = Math.max(26, Math.min(52, Math.floor(panel.height * 0.115)));
+  const listTop = panel.y + Math.max(18, Math.floor(panel.height * 0.072));
+  const footerY = panel.y + panel.height - footerHeight - 8;
+  const listBottom = footerY;
+  const scrollRegion = rect(
+    panel.x + 16,
+    listTop,
+    rowWidth,
+    Math.max(1, listBottom - listTop),
+    { type: 'table-record-scroll' }
+  );
+  const rowGap = 0;
+  const rowX = scrollRegion.x;
   const ranked = rankTableRecordPlayers(record.players || []);
-  const rows = ranked.map((player, index) => {
-    const row = rect(panel.x + 12, listTop + index * (rowHeight + rowGap), panel.width - 24, rowHeight, {
+  let rowY = scrollRegion.y;
+  const rows = ranked.map((player) => {
+    const sourceAspect = player.winner ? (160 / 1032) : (156 / 1032);
+    const rowHeight = Math.max(1, Math.round(rowWidth * sourceAspect));
+    const row = rect(rowX, rowY, rowWidth, rowHeight, {
       type: 'table-record-row',
       player,
     });
-    const rankWidth = Math.max(58, Math.floor(row.width * 0.085));
-    const avatarSize = Math.max(34, Math.min(72, Math.floor(row.height * 0.72)));
-    const scoreWidth = Math.max(112, Math.floor(row.width * 0.19));
-    const statsWidth = Math.max(150, Math.floor(row.width * 0.30));
+    rowY += rowHeight + rowGap;
+    const rankWidth = Math.max(42, Math.floor(row.width * 0.10));
+    const avatarSize = Math.max(32, Math.min(76, Math.floor(row.height * 0.62)));
+    const identityX = row.x + rankWidth + avatarSize + Math.max(8, Math.floor(row.width * 0.015));
+    const statsX = row.x + Math.floor(row.width * 0.43);
+    const scoreX = row.x + Math.floor(row.width * 0.78);
     return Object.assign(row, {
       rank: rect(row.x, row.y, rankWidth, row.height),
-      avatar: rect(row.x + rankWidth + 4, row.y + Math.floor((row.height - avatarSize) / 2), avatarSize, avatarSize),
-      identity: rect(row.x + rankWidth + avatarSize + 14, row.y, Math.max(100, row.width - rankWidth - avatarSize - statsWidth - scoreWidth - 30), row.height),
-      stats: rect(row.x + row.width - statsWidth - scoreWidth, row.y, statsWidth, row.height),
-      score: rect(row.x + row.width - scoreWidth, row.y, scoreWidth, row.height),
+      avatar: rect(row.x + rankWidth, row.y + Math.floor((row.height - avatarSize) / 2), avatarSize, avatarSize),
+      identity: rect(identityX, row.y, Math.max(58, statsX - identityX - 6), row.height),
+      stats: rect(statsX, row.y, Math.max(80, scoreX - statsX), row.height),
+      score: rect(scoreX, row.y, row.x + row.width - scoreX, row.height),
     });
   });
+  const contentHeight = Math.max(0, rowY - scrollRegion.y - (rows.length ? rowGap : 0));
 
   const rematch = state.tableRematch || {};
   let actions;
@@ -252,11 +270,11 @@ export function createTableRecordLayout(contentBounds, state) {
     }
     actions = [{ type: 'leaveTable', label: '退出' }, right];
   }
-  const buttonWidth = Math.max(150, Math.min(260, Math.floor(contentBounds.width * 0.24)));
-  const buttonHeight = Math.max(42, Math.min(62, actionsHeight - 6));
+  const buttonWidth = Math.max(148, Math.min(280, Math.floor(contentBounds.width * 0.27)));
+  const buttonHeight = Math.max(44, Math.min(66, Math.floor(buttonWidth * (86 / 366))));
   const buttonGap = Math.max(18, Math.floor(contentBounds.width * 0.025));
   const actionX = contentBounds.x + (contentBounds.width - buttonWidth * 2 - buttonGap) / 2;
-  const actionY = contentBounds.y + contentBounds.height - buttonHeight;
+  const actionY = actionBottom - buttonHeight;
   const actionButtons = actions.map((action, index) => rect(
     actionX + index * (buttonWidth + buttonGap),
     actionY,
@@ -265,11 +283,28 @@ export function createTableRecordLayout(contentBounds, state) {
     { type: 'action', action }
   ));
 
+  const footer = rect(rowX, footerY, rowWidth, footerHeight);
+  const footerGap = Math.max(4, Math.floor(footer.width * 0.008));
+  const footerWidths = [0.31, 0.24, 0.45].map((ratio) => Math.floor((footer.width - footerGap * 2) * ratio));
+  const footerItems = [];
+  let footerX = footer.x;
+  footerWidths.forEach((width, index) => {
+    const adjustedWidth = index === footerWidths.length - 1
+      ? footer.x + footer.width - footerX
+      : width;
+    footerItems.push(rect(footerX, footer.y, adjustedWidth, footer.height));
+    footerX += adjustedWidth + footerGap;
+  });
+
   return {
     title: rect(contentBounds.x, contentBounds.y, contentBounds.width, titleHeight, { type: 'table-record-title' }),
     panel,
+    scrollRegion,
+    contentHeight,
+    maxScroll: Math.max(0, contentHeight - scrollRegion.height),
     rows,
-    footer: rect(panel.x + 18, panel.y + panel.height - footerHeight, panel.width - 36, footerHeight),
+    footer,
+    footerItems,
     actionButtons,
   };
 }
@@ -1062,6 +1097,7 @@ export default class TableLayout {
       .concat(layout.actionButtons)
       .concat([layout.muteButton])
       .concat(layout.roundResult ? [layout.roundResult.scrollRegion] : [])
+      .concat(layout.tableRecord ? [layout.tableRecord.scrollRegion] : [])
       .concat(layout.handCards.slice().reverse());
 
     return regions.find((region) => (

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-23T13:29:09.929Z",
+  "generatedAt": "2026-07-27T12:53:08.472Z",
   "mode": "optimize",
   "files": [
     {
@@ -20,11 +20,11 @@
       "height": 240,
       "hasAlpha": true,
       "rgbaSha256": "a53590590a12bdb48eb04b3413e8daa5db8d6e9de7959939ce9e98af9f16a14a",
-      "beforeBytes": 29040,
+      "beforeBytes": 27975,
       "afterBytes": 27975,
-      "savedBytes": 1065,
-      "status": "optimized",
-      "reason": "recompressed"
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
     },
     {
       "file": "images/create_room.png",
@@ -44,11 +44,11 @@
       "height": 1021,
       "hasAlpha": true,
       "rgbaSha256": "d566affede6eac783df320a1841bf199d2c668fb4628e129618b78aaa59774fe",
-      "beforeBytes": 294401,
+      "beforeBytes": 294064,
       "afterBytes": 294064,
-      "savedBytes": 337,
-      "status": "optimized",
-      "reason": "recompressed"
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
     },
     {
       "file": "images/flwoers.png",
@@ -104,11 +104,11 @@
       "height": 240,
       "hasAlpha": true,
       "rgbaSha256": "186ff12deb1d99b5d477ffe4fe4146c3dcd195241afb776eba172ade02c718fc",
-      "beforeBytes": 35746,
-      "afterBytes": 27709,
-      "savedBytes": 8037,
-      "status": "optimized",
-      "reason": "recompressed"
+      "beforeBytes": 27640,
+      "afterBytes": 27640,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
     },
     {
       "file": "images/round_result_hu.png",
@@ -116,11 +116,11 @@
       "height": 192,
       "hasAlpha": true,
       "rgbaSha256": "ca9096ce94cc0af3815f74a2606fec58ef55a0dcacbf202adc71475655eea9b3",
-      "beforeBytes": 55876,
-      "afterBytes": 49545,
-      "savedBytes": 6331,
-      "status": "optimized",
-      "reason": "recompressed"
+      "beforeBytes": 49541,
+      "afterBytes": 49541,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
     },
     {
       "file": "images/round_result_panel.png",
@@ -128,11 +128,11 @@
       "height": 1212,
       "hasAlpha": true,
       "rgbaSha256": "5933fff9b0a034586cd6e249f98825fcb0017be9814fa9a532fd6c47e802bbb4",
-      "beforeBytes": 381274,
-      "afterBytes": 381221,
-      "savedBytes": 53,
-      "status": "optimized",
-      "reason": "recompressed"
+      "beforeBytes": 380519,
+      "afterBytes": 380519,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
     },
     {
       "file": "images/round_result_title.png",
@@ -171,16 +171,136 @@
       "reason": "no-smaller-output"
     },
     {
+      "file": "images/table_record_exit.png",
+      "width": 366,
+      "height": 88,
+      "hasAlpha": true,
+      "rgbaSha256": "2279837bbcc8f38b01fe41641d087afafa3b223f57f0c28ffe86ba9827238069",
+      "beforeBytes": 21369,
+      "afterBytes": 21369,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/table_record_first_row.png",
+      "width": 1032,
+      "height": 160,
+      "hasAlpha": true,
+      "rgbaSha256": "fe9fe3b2d0565e1f3550afd58ac6637562667614a40db4c96d6dd24d128c9608",
+      "beforeBytes": 113511,
+      "afterBytes": 113511,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/table_record_head.png",
+      "width": 300,
+      "height": 86,
+      "hasAlpha": true,
+      "rgbaSha256": "a45d584dd0b8c00d9189a21ce15416cee594b12984ef5e32423497da6694a9d2",
+      "beforeBytes": 15871,
+      "afterBytes": 15871,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/table_record_info.png",
+      "width": 268,
+      "height": 60,
+      "hasAlpha": true,
+      "rgbaSha256": "21b650a22462d852c6f55400947395fe1e8a0143dcce0fcd4837064c7a03228d",
+      "beforeBytes": 12890,
+      "afterBytes": 12890,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/table_record_rank_1.png",
+      "width": 86,
+      "height": 100,
+      "hasAlpha": true,
+      "rgbaSha256": "260f8c9955c3e6b54dd9b1c6de6d5772fce65bfbf884d08f3f73870552120402",
+      "beforeBytes": 6024,
+      "afterBytes": 6024,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/table_record_rank_2.png",
+      "width": 60,
+      "height": 100,
+      "hasAlpha": true,
+      "rgbaSha256": "9ba9839e90328103ac76a57d08683c5da3ff1edffe653b4c51b1d3ce884a8868",
+      "beforeBytes": 4763,
+      "afterBytes": 4763,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/table_record_rank_3.png",
+      "width": 64,
+      "height": 100,
+      "hasAlpha": true,
+      "rgbaSha256": "df0ec52d1a42928d47c431ebcdb27b3d30e4dfc7860025b1f281d9da37c4d84e",
+      "beforeBytes": 5056,
+      "afterBytes": 5056,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/table_record_rank_4.png",
+      "width": 60,
+      "height": 100,
+      "hasAlpha": true,
+      "rgbaSha256": "9fe150f72c82490588a4862b90a8bad9b450ec0d83f8637ede966c872e5af23e",
+      "beforeBytes": 4668,
+      "afterBytes": 4668,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/table_record_rematch.png",
+      "width": 366,
+      "height": 84,
+      "hasAlpha": true,
+      "rgbaSha256": "1cd39ce9924e32a0597656840db7ec44d904cd31e200658c302ba5844d2ecb27",
+      "beforeBytes": 19245,
+      "afterBytes": 19245,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
+      "file": "images/table_record_row.png",
+      "width": 1032,
+      "height": 156,
+      "hasAlpha": true,
+      "rgbaSha256": "0b04de8d36780313ed61e34fe149442eef5c573c403b0b74b1dbcb6d4b22c51f",
+      "beforeBytes": 117900,
+      "afterBytes": 117900,
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
+    },
+    {
       "file": "images/userAction.png",
       "width": 2030,
       "height": 149,
       "hasAlpha": true,
       "rgbaSha256": "698c72223c17318d8bdafa64f573883d58bd7489b5799fedb40bbeb081e05a73",
-      "beforeBytes": 226853,
+      "beforeBytes": 226842,
       "afterBytes": 226842,
-      "savedBytes": 11,
-      "status": "optimized",
-      "reason": "recompressed"
+      "savedBytes": 0,
+      "status": "unchanged",
+      "reason": "no-smaller-output"
     },
     {
       "file": "images/wechat_login.png",
@@ -222,11 +342,11 @@
     }
   ],
   "totals": {
-    "fileCount": 16,
-    "optimizedCount": 6,
-    "beforeBytes": 2349635,
-    "afterBytes": 2333801,
-    "savedBytes": 15834,
-    "savedPercent": 0.67
+    "fileCount": 26,
+    "optimizedCount": 0,
+    "beforeBytes": 2654323,
+    "afterBytes": 2654323,
+    "savedBytes": 0,
+    "savedPercent": 0
   }
 }
