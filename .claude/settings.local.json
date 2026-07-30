@@ -9,7 +9,17 @@
       "Bash(python3 -c ' *)",
       "Bash(cd *)",
       "Bash(perl -0pi *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(d['instruction']\\); print\\('---RULES---'\\); print\\(d.get\\('rules'\\)\\); print\\('---TEMPLATE---'\\); print\\(d['template']\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(d['instruction']\\); print\\('---RULES---'\\); print\\(d.get\\('rules'\\)\\); print\\('---TEMPLATE---'\\); print\\(d['template']\\); print\\('---PATH---'\\); print\\(d['resolvedOutputPath']\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(d['instruction']\\); print\\('---RULES---'\\); print\\(d.get\\('rules'\\)\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d[k] for k in \\('state','contextFiles','progress','instruction'\\) if k in d}, ensure_ascii=False, indent=1\\)\\)\")",
+      "Bash(sips -s format bmp /Users/wangyoukun/WeChatProjects/SDRminigame/images/table_record_row.png --out row.bmp)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(cat ~/.claude/settings.json 2>/dev/null || echo \"FILE_NOT_EXISTS\")",
+      "Bash(jq -e '.permissions.defaultMode, \\(.permissions.allow | length\\), \\(.permissions.ask | length\\), \\(.env | keys | length\\)' ~/.claude/settings.json)",
+      "Bash(jq -e '.permissions, \\(.env | keys | length\\)' ~/.claude/settings.json)"
     ],
     "deny": [],
     "ask": []
