@@ -6,6 +6,8 @@ export const HAND_CARD_SOURCE_HEIGHT = 108;
 export const HAND_STACK_SOURCE_STEP = 54;
 const HAND_SIZE_STACK_COUNT = 6;
 const ACTION_BUTTON_HEIGHT = 50;
+// table_record_row/first_row 切图在约 78% 行宽处自带竖分隔线，数据列起点须与其对齐
+const TABLE_RECORD_ROW_DIVIDER_RATIO = 0.78;
 const ACTION_BUTTON_ASPECT_RATIOS = {
   acceptTakeover: 191 / 114,
   declineTakeover: 192 / 115,
@@ -101,11 +103,12 @@ export function createRoundResultLayout(contentBounds, state, isLandscape = true
   const rowHeight = Math.max(92, Math.min(132, Math.floor(contentBounds.height * 0.16)));
   const contentHeight = innerPad * 2 + rowHeight * 4 + rowGap * 3;
   const identityWidth = Math.max(72, Math.min(104, Math.floor(scrollRegion.width * 0.10)));
-  const statsWidth = Math.max(126, Math.min(210, Math.floor(scrollRegion.width * 0.17)));
+  const rowWidth = Math.max(1, scrollRegion.width - innerPad * 2);
+  const statsWidth = Math.max(1, rowWidth - Math.round(rowWidth * TABLE_RECORD_ROW_DIVIDER_RATIO));
   const displaySeatOrder = [1, 0, 2, 3];
   const rows = displaySeatOrder.map((seat, rowIndex) => {
     const y = scrollRegion.y + innerPad + rowIndex * (rowHeight + rowGap);
-    const row = rect(scrollRegion.x + innerPad, y, scrollRegion.width - innerPad * 2, rowHeight, {
+    const row = rect(scrollRegion.x + innerPad, y, rowWidth, rowHeight, {
       type: 'round-result-row',
       seat,
     });

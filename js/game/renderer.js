@@ -40,6 +40,12 @@ const ROUND_RESULT_PANEL_SOURCE_SLICES = {
   right: 170,
   bottom: 150,
 };
+const TABLE_RECORD_ROW_SOURCE_SLICES = {
+  left: 30,
+  top: 30,
+  right: 30,
+  bottom: 30,
+};
 const ROUND_RESULT_MAX_COLUMN_CARDS = 5;
 const ROUND_RESULT_GROUP_LABELS = {
   chi: '吃',
@@ -1378,14 +1384,24 @@ export default class TableRenderer {
       const seat = state.seats[row.seat] || { name: `玩家${row.seat + 1}` };
       const isSelf = row.seat === state.humanSeat;
       const isWinner = result.type === 'win' && result.winner === row.seat;
-      ctx.fillStyle = isSelf
-        ? 'rgba(255, 190, 64, 0.24)'
-        : (isWinner ? 'rgba(220, 52, 32, 0.10)' : 'rgba(255, 250, 236, 0.68)');
-      roundRect(ctx, row.x, row.y, row.width, row.height, 8);
-      ctx.fill();
-      ctx.strokeStyle = isSelf ? 'rgba(211, 128, 20, 0.80)' : 'rgba(179, 109, 45, 0.34)';
-      ctx.lineWidth = isSelf ? 2 : 1;
-      ctx.stroke();
+      const rowImage = this.assets.getImage(isWinner ? 'tableRecordFirstRow' : 'tableRecordRow');
+      const rowEdge = Math.max(8, Math.min(24, Math.round(row.height * 0.19)));
+      const rowDrawn = drawNineSliceImage(ctx, rowImage, row, TABLE_RECORD_ROW_SOURCE_SLICES, {
+        left: rowEdge,
+        top: rowEdge,
+        right: rowEdge,
+        bottom: rowEdge,
+      });
+      if (!rowDrawn) {
+        ctx.fillStyle = isSelf
+          ? 'rgba(255, 190, 64, 0.24)'
+          : (isWinner ? 'rgba(220, 52, 32, 0.10)' : 'rgba(255, 250, 236, 0.68)');
+        roundRect(ctx, row.x, row.y, row.width, row.height, 8);
+        ctx.fill();
+        ctx.strokeStyle = isSelf ? 'rgba(211, 128, 20, 0.80)' : 'rgba(179, 109, 45, 0.34)';
+        ctx.lineWidth = isSelf ? 2 : 1;
+        ctx.stroke();
+      }
       this.drawRoundResultIdentity(ctx, seat, row, { isSelf, isWinner });
       this.drawRoundResultCards(
         ctx,
