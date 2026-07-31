@@ -918,6 +918,31 @@ for (const terminalStatus of ['tableResult', 'closed', 'future-status']) {
 }
 activeRoomResult = { ok: true, hasRoom: false };
 
+activeRoomResult = { ok: true, hasRoom: true, roomId: 'launch-check-room', seat: 0, status: 'playing', version: 2, settings: { maxRounds: 6 } };
+lobbyCalls = [];
+const launchCheckController = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
+const launchCheckActive = await launchCheckController.checkActiveRoom({ nickName: '启动检查玩家' }, { silent: true });
+if (
+  !launchCheckActive.hasRoom
+  || launchCheckActive.roomId !== 'launch-check-room'
+  || launchCheckController.active
+  || launchCheckController.roomId
+  || !lobbyCalls.find((call) => call.url === 'https://api.unit.test/api/auth/login')
+  || lobbySocketSubscribes.find((call) => call.roomId === 'launch-check-room')
+) {
+  throw new Error('checkActiveRoom should report an active room without silently entering it');
+}
+lobbyCalls = [];
+const launchCheckActiveAgain = await launchCheckController.checkActiveRoom({}, { silent: true });
+if (
+  !launchCheckActiveAgain.hasRoom
+  || lobbyCalls.find((call) => call.url === 'https://api.unit.test/api/auth/login')
+) {
+  throw new Error('checkActiveRoom should skip re-login once socket auth is already present');
+}
+launchCheckController.destroy();
+activeRoomResult = { ok: true, hasRoom: false };
+
 const expiredAuthController = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobbyMusic);
 expiredAuthController.active = true;
 expiredAuthController.roomId = 'expired-auth-room';
@@ -3927,6 +3952,21 @@ if (!/promptContinueExistingRoom\(controller, existing\)[\s\S]*?wx\.showModal[\s
 if (!/err && err\.code === 'ALREADY_IN_ACTIVE_ROOM'[\s\S]*?this\.promptContinueExistingRoom\(controller, err\.existing\)/.test(mainSource)) {
   throw new Error('active-room create conflicts should open the explicit continue-room prompt');
 }
+if (!/checkActiveRoomOnLaunch\(profile = \{\}\)[\s\S]*?controller\.checkActiveRoom\(profile, \{ silent: true \}\)[\s\S]*?if \(!active \|\| !active\.hasRoom\) return;[\s\S]*?this\.promptContinueExistingRoom\(controller, active\);/.test(mainSource)) {
+  throw new Error('startup should silently check for an active room and reuse the explicit continue-room prompt');
+}
+if (!/mode === 'startCheckActiveRoom'\)[\s\S]*?this\.checkActiveRoomOnLaunch\(profile\);/.test(mainSource)) {
+  throw new Error('start menu should be able to trigger the startup active-room check');
+}
+if (!/intent === 'idle'\) \{[\s\S]*?this\.checkActiveRoomOnLaunch\(lobbyProfile\);/.test(mainSource)) {
+  throw new Error('silent startup login should also check for an active room to resume');
+}
+if (!/handleAppShow\(options = \{\}\)[\s\S]*?refreshRenderMetrics\(\);[\s\S]*?if \(!this\.mode \|\| this\.mode === APP_MODES\.HALL\) \{[\s\S]*?this\.checkActiveRoomOnLaunch\(profile\);/.test(mainSource)) {
+  throw new Error('resuming the mini-game from the background (wx.onShow, no onLaunch) should re-check for an active room while idle at the hall');
+}
+if (!/checkActiveRoomOnLaunch\(profile = \{\}\)[\s\S]*?\.finally\(\(\) => \{[\s\S]*?this\.activeRoomLaunchCheckStarted = false;/.test(mainSource)) {
+  throw new Error('the active-room launch check must reset its in-flight flag so it can run again on the next resume, not just once per process');
+}
 if (!/startOnline\(profile = \{\}, inviteRoomId = ''\)[\s\S]*?catch\(\(err\) => \{[\s\S]*?if \(inviteRoomId && shouldReturnInviteToStart\(err\)\) \{[\s\S]*?this\.menu\.showStartHome\(homeProfile\);[\s\S]*?showToast\(message\);[\s\S]*?return;/.test(mainSource)) {
   throw new Error('failed invite launches should return to the startup hall and toast instead of showing the old lobby page');
 }
@@ -3963,6 +4003,9 @@ if (!/ensureStartAuthCheck\(\)/.test(menuSource) || !/readStoredProfile/.test(me
 }
 if (!/ensureStartAuthCheck\(\)[\s\S]*?onSelect\('startSilentLogin'\)/.test(menuSource)) {
   throw new Error('start menu should ask Main to recover backend profile before displaying the native WeChat profile button');
+}
+if (!/this\.setStartAuthState\('ready', \{ profile: stored \}\);[\s\S]*?onSelect\('startCheckActiveRoom', stored\)/.test(menuSource)) {
+  throw new Error('start menu should trigger the startup active-room check once a cached WeChat profile is ready');
 }
 if (!/onSelect\('startReady'/.test(menuSource) || !/mode:\s*ready\s*\?\s*'start'\s*:\s*'login'/.test(menuSource)) {
   throw new Error('start menu should require WeChat profile readiness before the start action');

@@ -2,8 +2,8 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.16",
-  "desc": "修复进入牌桌无响应：main.js 未回填 renderer 引用",
+  "version": "1.0.17",
+  "desc": "大厅新增未结束房间主动提示：覆盖冷启动与热启动(onShow)两条路径",
   "ignores": [],
   "setting": {
     "es6": true,

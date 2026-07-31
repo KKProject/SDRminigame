@@ -130,6 +130,7 @@ export default class StartMenu {
     if (stored.nickName || stored.avatarUrl) {
       this.updateStartProfile(stored);
       this.setStartAuthState('ready', { profile: stored });
+      if (typeof this.onSelect === 'function') this.onSelect('startCheckActiveRoom', stored);
       return;
     }
     if (typeof this.onSelect === 'function') {

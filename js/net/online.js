@@ -939,6 +939,19 @@ export default class OnlineController {
     return { roomId: this.roomId, seat: this.mySeat, reconnected: true };
   }
 
+  async checkActiveRoom(profile = {}, options = {}) {
+    if (!this.socketAuth) {
+      await this.loginForLobby(profile, { silent: true });
+    }
+    const active = await callFunction('game', { action: 'activeRoom' });
+    if (!active || !active.ok) {
+      const error = new Error((active && active.error) || 'ACTIVE_ROOM_FAILED');
+      error.code = (active && active.error) || 'ACTIVE_ROOM_FAILED';
+      throw error;
+    }
+    return active;
+  }
+
   async startLobby(profile = {}, options = {}) {
     if (this.starting) throw new Error('ONLINE_STARTING');
     this.starting = true;

@@ -73,6 +73,8 @@ export default class Main {
   loggedInProfile = null;
   pendingInviteRoomId = '';
   startSilentLoginPending = false;
+  activeRoomLaunchCheckStarted = false;
+  activeRoomPromptPending = false;
   cleanupInviteListener = null;
 
   constructor() {
@@ -178,6 +180,10 @@ export default class Main {
     this.contextRestoreRetryRemaining = 120;
     this.metricsRetryRemaining = 120;
     refreshRenderMetrics();
+    if (!this.mode || this.mode === APP_MODES.HALL) {
+      const profile = this.loggedInProfile || (this.online && this.online.lobbyProfile) || readStoredProfile();
+      if (hasProfile(profile)) this.checkActiveRoomOnLaunch(profile);
+    }
   }
 
   handleAppHide() {
@@ -216,6 +222,8 @@ export default class Main {
       this.loginFromStart(profile);
     } else if (mode === 'startSilentLogin') {
       this.silentLoginFromStart('idle');
+    } else if (mode === 'startCheckActiveRoom') {
+      this.checkActiveRoomOnLaunch(profile);
     } else if (mode === 'openCreateRoomSettings') {
       this.mode = APP_MODES.CREATE_ROOM;
       this.menu.setStatus('');
@@ -367,6 +375,8 @@ export default class Main {
           this.startOnline(lobbyProfile, this.pendingInviteRoomId);
         } else if (intent === 'create') {
           this.openCreateRoomWithProfile(lobbyProfile);
+        } else if (intent === 'idle') {
+          this.checkActiveRoomOnLaunch(lobbyProfile);
         }
       })
       .catch((err) => {
@@ -416,14 +426,39 @@ export default class Main {
       });
   }
 
+  checkActiveRoomOnLaunch(profile = {}) {
+    if (this.pendingInviteRoomId || this.activeRoomLaunchCheckStarted) return;
+    if (this.mode === APP_MODES.WAITING_ROOM || this.mode === APP_MODES.GAME_TABLE) return;
+    if (this.online && (this.online.active || this.online.starting)) return;
+    this.activeRoomLaunchCheckStarted = true;
+    const controller = this.ensureOnlineController();
+    controller.checkActiveRoom(profile, { silent: true })
+      .then((active) => {
+        if (this.pendingInviteRoomId || this.online !== controller) return;
+        if (this.mode === APP_MODES.WAITING_ROOM || this.mode === APP_MODES.GAME_TABLE) return;
+        if (!active || !active.hasRoom) return;
+        this.promptContinueExistingRoom(controller, active);
+      })
+      .catch((err) => {
+        console.error('[online] launch active-room check failed', err);
+      })
+      .finally(() => {
+        this.activeRoomLaunchCheckStarted = false;
+      });
+  }
+
   promptContinueExistingRoom(controller, existing) {
     if (!existing || !existing.roomId || !wx.showModal) return;
+    if (this.activeRoomPromptPending) return;
+    if (this.mode === APP_MODES.WAITING_ROOM || this.mode === APP_MODES.GAME_TABLE) return;
+    this.activeRoomPromptPending = true;
     wx.showModal({
       title: '已有进行中房间',
       content: '是否继续当前房间？',
       confirmText: '继续游戏',
       cancelText: '留在此页',
       success: (choice) => {
+        this.activeRoomPromptPending = false;
         if (!choice || !choice.confirm) return;
         this.menu.setBusy(true);
         this.menu.setStatus('正在进入当前房间…');
@@ -446,6 +481,9 @@ export default class Main {
             this.menu.setBusy(false);
             this.menu.setStatus(onlineErrorMessage(err));
           });
+      },
+      fail: () => {
+        this.activeRoomPromptPending = false;
       },
     });
   }
