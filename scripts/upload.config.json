@@ -2,8 +2,8 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.17",
-  "desc": "大厅新增未结束房间主动提示：覆盖冷启动与热启动(onShow)两条路径",
+  "version": "1.0.18",
+  "desc": "放大创建房间与等待房间页交互元素的视觉尺寸与点击热区",
   "ignores": [],
   "setting": {
     "es6": true,

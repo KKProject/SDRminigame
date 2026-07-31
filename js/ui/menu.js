@@ -797,7 +797,7 @@ export default class StartMenu {
   }
 
   getCreateSettingsContentBounds() {
-    return { top: 204, bottom: 660, padding: 48 };
+    return { top: 204, bottom: 762, padding: 48 };
   }
 
   getCreateSettingsMaxScroll() {
@@ -876,26 +876,26 @@ export default class StartMenu {
       layout,
       x,
       y,
-      44,
-      44,
+      52,
+      52,
       7,
       checked ? '#e04822' : 'rgba(255, 255, 255, 0.08)',
       checked ? '#ffd27a' : 'rgba(217, 167, 90, 0.48)',
       2
     );
     if (checked) {
-      this.drawDesignText(ctx, layout, '✓', x + 22, y + 22, 34, '#fff6d9', 'bold', 'center', 'middle');
+      this.drawDesignText(ctx, layout, '✓', x + 26, y + 26, 38, '#fff6d9', 'bold', 'center', 'middle');
     }
-    this.drawDesignText(ctx, layout, label, x + 58, y + 22, 30, '#fff2c7', '500', 'left', 'middle');
-    this.pushDesignButton(type, layout, x, y - 8, 116, 60, extra);
+    this.drawDesignText(ctx, layout, label, x + 66, y + 26, 33, '#fff2c7', '500', 'left', 'middle');
+    this.pushDesignButton(type, layout, x, y - 10, 140, 80, extra);
   }
 
   drawOptionToggle(ctx, layout, x, y, label, hint, checked, type, extra = {}) {
-    this.drawDesignRect(ctx, layout, x, y, 44, 44, 6, checked ? '#e04822' : 'rgba(255, 255, 255, 0.10)');
-    if (checked) this.drawDesignText(ctx, layout, '✓', x + 22, y + 22, 32, '#fff6d9', 'bold', 'center', 'middle');
-    this.drawDesignText(ctx, layout, label, x + 58, y + 9, 27, '#fff2c7', '500', 'left', 'middle');
-    this.drawDesignText(ctx, layout, hint, x + 58, y + 36, 16, '#caa879', 'normal', 'left', 'middle');
-    this.pushDesignButton(type, layout, x, y - 8, 190, 64, extra);
+    this.drawDesignRect(ctx, layout, x, y, 52, 52, 6, checked ? '#e04822' : 'rgba(255, 255, 255, 0.10)');
+    if (checked) this.drawDesignText(ctx, layout, '✓', x + 26, y + 26, 36, '#fff6d9', 'bold', 'center', 'middle');
+    this.drawDesignText(ctx, layout, label, x + 66, y + 12, 30, '#fff2c7', '500', 'left', 'middle');
+    this.drawDesignText(ctx, layout, hint, x + 66, y + 44, 18, '#caa879', 'normal', 'left', 'middle');
+    this.pushDesignButton(type, layout, x, y - 14, 230, 92, extra);
   }
 
   drawChoiceButton(ctx, layout, x, y, w, label, selected, type, extra = {}) {
@@ -905,14 +905,14 @@ export default class StartMenu {
       x,
       y,
       w,
-      58,
+      84,
       6,
       selected ? '#e04822' : 'rgba(255, 255, 255, 0.10)',
       selected ? '#ffd27a' : 'rgba(217, 167, 90, 0.20)',
       selected ? 1.5 : 1
     );
-    this.drawDesignText(ctx, layout, label, x + w / 2, y + 29, 26, selected ? '#fff6d9' : '#dfc18b', '500', 'center', 'middle');
-    this.pushDesignButton(type, layout, x, y, w, 58, extra);
+    this.drawDesignText(ctx, layout, label, x + w / 2, y + 42, 29, selected ? '#fff6d9' : '#dfc18b', '500', 'center', 'middle');
+    this.pushDesignButton(type, layout, x, y, w, 84, extra);
   }
 
   drawFooterButton(ctx, layout, x, y, w, label, primary, type) {
@@ -922,14 +922,14 @@ export default class StartMenu {
       x,
       y,
       w,
-      64,
+      86,
       8,
       primary ? '#e04822' : 'rgba(255, 255, 255, 0.14)',
       primary ? '#ffd27a' : 'rgba(217, 167, 90, 0.32)',
       primary ? 1.5 : 1
     );
-    this.drawDesignText(ctx, layout, label, x + w / 2, y + 32, 28, primary ? '#fff6d9' : '#e7c17a', 'bold', 'center', 'middle');
-    this.pushDesignButton(type, layout, x, y, w, 64);
+    this.drawDesignText(ctx, layout, label, x + w / 2, y + 43, 31, primary ? '#fff6d9' : '#e7c17a', 'bold', 'center', 'middle');
+    this.pushDesignButton(type, layout, x, y, w, 86);
   }
 
   renderCreateRoomSettings(ctx, metrics) {
@@ -955,21 +955,21 @@ export default class StartMenu {
     ctx.clip();
 
     this.drawDesignText(ctx, layout, '选择局数', 476, yOf(204), 31, '#ffd78a', 'bold');
-    this.drawCheckbox(ctx, layout, 476, yOf(271), '1局', draft.maxRounds === 1, 'round', { maxRounds: 1, scrollContent: true });
-    this.drawCheckbox(ctx, layout, 608, yOf(271), '2局', draft.maxRounds === 2, 'round', { maxRounds: 2, scrollContent: true });
-    this.drawCheckbox(ctx, layout, 740, yOf(271), '4局', draft.maxRounds === 4, 'round', { maxRounds: 4, scrollContent: true });
-    this.drawCheckbox(ctx, layout, 872, yOf(271), '6局', draft.maxRounds === 6, 'round', { maxRounds: 6, scrollContent: true });
+    this.drawCheckbox(ctx, layout, 470, yOf(280), '1局', draft.maxRounds === 1, 'round', { maxRounds: 1, scrollContent: true });
+    this.drawCheckbox(ctx, layout, 630, yOf(280), '2局', draft.maxRounds === 2, 'round', { maxRounds: 2, scrollContent: true });
+    this.drawCheckbox(ctx, layout, 790, yOf(280), '4局', draft.maxRounds === 4, 'round', { maxRounds: 4, scrollContent: true });
+    this.drawCheckbox(ctx, layout, 950, yOf(280), '6局', draft.maxRounds === 6, 'round', { maxRounds: 6, scrollContent: true });
 
-    this.drawDesignLine(ctx, layout, 476, yOf(376), 604);
-    this.drawDesignText(ctx, layout, '房间选项', 476, yOf(398), 31, '#ffd78a', 'bold');
-    this.drawOptionToggle(ctx, layout, 476, yOf(446), '重场', '可以计算重场', draft.repeatRound, 'repeat-round', { scrollContent: true });
-    this.drawOptionToggle(ctx, layout, 691, yOf(446), '洗两道', '开局前执行两道洗牌', draft.washTwice, 'wash-twice', { scrollContent: true });
+    this.drawDesignLine(ctx, layout, 470, yOf(390), 620);
+    this.drawDesignText(ctx, layout, '房间选项', 476, yOf(414), 31, '#ffd78a', 'bold');
+    this.drawOptionToggle(ctx, layout, 470, yOf(470), '重场', '可以计算重场', draft.repeatRound, 'repeat-round', { scrollContent: true });
+    this.drawOptionToggle(ctx, layout, 740, yOf(470), '洗两道', '开局前执行两道洗牌', draft.washTwice, 'wash-twice', { scrollContent: true });
 
-    this.drawDesignLine(ctx, layout, 476, yOf(536), 604);
-    this.drawDesignText(ctx, layout, '进圈赔付方式', 476, yOf(556), 31, '#ffd78a', 'bold');
-    this.drawChoiceButton(ctx, layout, 476, yOf(602), 170, '屁胡', draft.payType === 'pihu', 'pay-type', { payType: 'pihu', scrollContent: true });
-    this.drawChoiceButton(ctx, layout, 695, yOf(602), 170, '甲胡', draft.payType === 'jiahu', 'pay-type', { payType: 'jiahu', scrollContent: true });
-    this.drawChoiceButton(ctx, layout, 910, yOf(602), 170, '场胡', draft.payType === 'changhu', 'pay-type', { payType: 'changhu', scrollContent: true });
+    this.drawDesignLine(ctx, layout, 470, yOf(596), 620);
+    this.drawDesignText(ctx, layout, '进圈赔付方式', 476, yOf(620), 31, '#ffd78a', 'bold');
+    this.drawChoiceButton(ctx, layout, 470, yOf(678), 200, '屁胡', draft.payType === 'pihu', 'pay-type', { payType: 'pihu', scrollContent: true });
+    this.drawChoiceButton(ctx, layout, 680, yOf(678), 200, '甲胡', draft.payType === 'jiahu', 'pay-type', { payType: 'jiahu', scrollContent: true });
+    this.drawChoiceButton(ctx, layout, 890, yOf(678), 200, '场胡', draft.payType === 'changhu', 'pay-type', { payType: 'changhu', scrollContent: true });
     ctx.restore();
 
     const clipButtonRect = this.designRect(layout, viewport);
@@ -979,8 +979,8 @@ export default class StartMenu {
       || this.intersectsRect(button, clipButtonRect)
     ));
 
-    this.drawFooterButton(ctx, layout, 704, 744, 212, '返回', false, 'create-back');
-    this.drawFooterButton(ctx, layout, 938, 744, 212, '确认创建', true, 'create-next');
+    this.drawFooterButton(ctx, layout, 666, 744, 230, '返回', false, 'create-back');
+    this.drawFooterButton(ctx, layout, 920, 744, 230, '确认创建', true, 'create-next');
 
     if (this.status) {
       this.drawDesignText(ctx, layout, this.status, 780, 690, 18, '#ffd27a', 'normal', 'center');
@@ -1266,43 +1266,43 @@ export default class StartMenu {
   }
 
   drawWaitingActions(ctx, layout, room, mine) {
-    this.drawDesignRect(ctx, layout, 1190, 184, 250, 466, 8, 'rgba(49, 18, 10, 0.86)', 'rgba(217, 167, 90, 0.36)', 1);
+    this.drawDesignRect(ctx, layout, 1185, 184, 300, 560, 8, 'rgba(49, 18, 10, 0.86)', 'rgba(217, 167, 90, 0.36)', 1);
     this.drawDesignText(ctx, layout, '操作', 1220, 214, 30, '#ffd78a', 'bold');
     this.drawWaitingActionButton(ctx, layout, 1220, 278, '微信邀请好友', 'invite', true, false);
-    this.drawWaitingActionButton(ctx, layout, 1220, 356, mine.ready ? '取消准备' : '准备', 'ready', true, false, { ready: !mine.ready });
+    this.drawWaitingActionButton(ctx, layout, 1220, 386, mine.ready ? '取消准备' : '准备', 'ready', true, false, { ready: !mine.ready });
     if (room.isHost) {
-      this.drawWaitingActionButton(ctx, layout, 1220, 434, '开始牌局', 'start-room', Boolean(room.canStart), !room.canStart);
-      this.drawDesignText(ctx, layout, room.canStart ? '全员已准备，可以开始' : '仅房主可见，全员准备后可点', 1220, 504, 16, '#e7c17a', 'normal');
-      this.drawWaitingActionButton(ctx, layout, 1220, 548, '解散房间', 'disband-room', true, false, {}, '#8f1e12');
+      this.drawWaitingActionButton(ctx, layout, 1220, 494, '开始牌局', 'start-room', Boolean(room.canStart), !room.canStart);
+      this.drawDesignText(ctx, layout, room.canStart ? '全员已准备，可以开始' : '仅房主可见，全员准备后可点', 1220, 594, 16, '#e7c17a', 'normal');
+      this.drawWaitingActionButton(ctx, layout, 1220, 628, '解散房间', 'disband-room', true, false, {}, '#8f1e12');
     } else {
-      this.drawDesignText(ctx, layout, room.readyToStart ? '等待房主开始牌局' : '准备后等待房主开始', 1220, 452, 17, '#e7c17a', 'normal');
-      this.drawWaitingActionButton(ctx, layout, 1220, 548, '退出房间', 'disband-room', true, false, {}, '#8f1e12');
+      this.drawDesignText(ctx, layout, room.readyToStart ? '等待房主开始牌局' : '准备后等待房主开始', 1220, 490, 17, '#e7c17a', 'normal');
+      this.drawWaitingActionButton(ctx, layout, 1220, 628, '退出房间', 'disband-room', true, false, {}, '#8f1e12');
     }
   }
 
   drawWaitingActionButton(ctx, layout, x, y, label, type, enabled = true, disabled = false, extra = {}, fill = '#d84a22') {
     const buttonFill = enabled && !disabled ? fill : 'rgba(255,255,255,0.12)';
     const stroke = enabled && !disabled ? '#ffd27a' : 'rgba(217, 167, 90, 0.20)';
-    this.drawDesignRect(ctx, layout, x, y, 190, 58, 7, buttonFill, stroke, 1.5);
-    this.drawDesignText(ctx, layout, label, x + 95, y + 29, 22, enabled && !disabled ? '#fff6d9' : '#b89862', 'bold', 'center', 'middle');
-    if (enabled && !disabled) this.pushDesignButton(type, layout, x, y, 190, 58, extra);
+    this.drawDesignRect(ctx, layout, x, y, 230, 84, 7, buttonFill, stroke, 1.5);
+    this.drawDesignText(ctx, layout, label, x + 115, y + 42, 25, enabled && !disabled ? '#fff6d9' : '#b89862', 'bold', 'center', 'middle');
+    if (enabled && !disabled) this.pushDesignButton(type, layout, x, y, 230, 84, extra);
   }
 
   drawSeatSwapModal(ctx, layout, modal) {
     const player = modal.player || {};
     const playerName = player.nickName || '该玩家';
     this.drawDesignRect(ctx, layout, 0, 0, 1560, 878, 0, 'rgba(0, 0, 0, 0.46)');
-    this.drawDesignRect(ctx, layout, 514, 284, 532, 310, 10, 'rgba(64, 24, 12, 0.96)', '#d9a75a', 2);
+    this.drawDesignRect(ctx, layout, 514, 284, 532, 330, 10, 'rgba(64, 24, 12, 0.96)', '#d9a75a', 2);
     const received = modal.type === 'received';
     this.drawDesignText(ctx, layout, received ? '收到换座请求' : '请求交换座位', 780, 326, 31, '#fff2c7', 'bold', 'center');
     this.drawDesignText(ctx, layout, received ? `${playerName} 想与你交换座位` : `向 ${playerName} 发送交换座位请求？`, 780, 390, 22, '#ffd78a', 'bold', 'center');
     this.drawDesignText(ctx, layout, '对方同意后，双方位置立即互换。', 780, 430, 18, '#e7c17a', 'normal', 'center');
     if (received) {
-      this.drawWaitingActionButton(ctx, layout, 585, 496, '拒绝', 'swap-modal-reject', true, false, { requestId: modal.requestId || '' }, 'rgba(255,255,255,0.12)');
-      this.drawWaitingActionButton(ctx, layout, 785, 496, '同意交换', 'swap-modal-accept', true, false, { requestId: modal.requestId || '' });
+      this.drawWaitingActionButton(ctx, layout, 537, 496, '拒绝', 'swap-modal-reject', true, false, { requestId: modal.requestId || '' }, 'rgba(255,255,255,0.12)');
+      this.drawWaitingActionButton(ctx, layout, 793, 496, '同意交换', 'swap-modal-accept', true, false, { requestId: modal.requestId || '' });
     } else {
-      this.drawWaitingActionButton(ctx, layout, 585, 496, '取消', 'swap-modal-cancel', true, false, {}, 'rgba(255,255,255,0.12)');
-      this.drawWaitingActionButton(ctx, layout, 785, 496, '发送请求', 'swap-modal-send', true, false, { player });
+      this.drawWaitingActionButton(ctx, layout, 537, 496, '取消', 'swap-modal-cancel', true, false, {}, 'rgba(255,255,255,0.12)');
+      this.drawWaitingActionButton(ctx, layout, 793, 496, '发送请求', 'swap-modal-send', true, false, { player });
     }
   }
 
