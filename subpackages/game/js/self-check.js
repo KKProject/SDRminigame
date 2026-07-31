@@ -1,7 +1,7 @@
 import AssetLoader, {
-  ASSET_MANIFEST,
   buildCardAtlasFrameMap,
-} from './assets';
+} from '../../../js/runtime/asset-loader';
+import { GAME_ASSET_MANIFEST } from './assets';
 import { createDeck, createSeats } from './cards';
 import TableLayout, {
   CARD_ASPECT_RATIO,
@@ -13,7 +13,7 @@ import {
   ACTION_PRIORITY,
   DEFAULT_RULES,
   PHRASES,
-} from './rules';
+} from '../../../js/rules';
 import {
   buildCircleLossResult,
   calculateOperationFu,
@@ -220,8 +220,8 @@ export function runSelfChecks() {
   assert(deck.find((card) => card.key === 'shang').color === '#d92d20', 'first phrase card should be red');
   assert(deck.find((card) => card.key === 'da').color === '#079455', 'middle phrase card should be green');
   assert(deck.find((card) => card.key === 'ren').color === '#1d2939', 'last phrase card should be black');
-  assert(ASSET_MANIFEST.images.cardFront === 'images/element.png', 'card atlas image should be element.png');
-  assert(ASSET_MANIFEST.atlases.cards.path === 'images/element.atlas.json', 'card atlas json path should be configured');
+  assert(GAME_ASSET_MANIFEST.images.cardFront === 'subpackages/game/images/element.png', 'card atlas image should be element.png');
+  assert(GAME_ASSET_MANIFEST.atlases.cards.path === 'subpackages/game/images/element.atlas.json', 'card atlas json path should be configured');
 
   const cardFrameMap = buildCardAtlasFrameMap(makeTestAtlas());
   assert(cardFrameMap.fu.bySize.big[0].name === 'big_fu_v', 'big vertical card should map from nested key name');
@@ -234,7 +234,7 @@ export function runSelfChecks() {
   assert(legacyFrameMap.fu.legacy[0].name === 'legacy_red_fu_vertical', 'legacy vertical card should map from first 24 labels');
   assert(legacyFrameMap.shang.legacy[0].name === 'legacy_red_horizontal_shang' && legacyFrameMap.shang.legacy[0].rotateCw, 'legacy horizontal card should be marked for clockwise rotation');
   assert(legacyFrameMap.hua.legacy[0].name === 'legacy_red_horizontal_hua', 'legacy mapper should skip non-card labels and continue collecting card frames');
-  const assetLoader = new AssetLoader(ASSET_MANIFEST);
+  const assetLoader = new AssetLoader(GAME_ASSET_MANIFEST);
   assetLoader.setAtlas('cards', makeTestAtlas());
   assetLoader.images.cardFront = {};
   assetLoader.status.cardFront = 'ready';

@@ -1,4 +1,4 @@
-import { DEFAULT_RULES, createSymbolMap } from './rules';
+import { DEFAULT_RULES, createSymbolMap } from '../../../js/rules';
 
 function seededRandom(seed) {
   let value = seed || Date.now();

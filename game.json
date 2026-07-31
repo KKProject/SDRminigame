@@ -2,5 +2,11 @@
   "deviceOrientation": "landscape",
   "loadingImageInfo": {
     "path": "images/start_bg.jpg"
-  }
+  },
+  "subpackages": [
+    {
+      "name": "game",
+      "root": "subpackages/game/"
+    }
+  ]
 }

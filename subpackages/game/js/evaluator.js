@@ -4,7 +4,7 @@ import {
   DEFAULT_RULES,
   createSymbolMap,
   getPhraseKeysForKey,
-} from './rules';
+} from '../../../js/rules';
 import {
   countByKey,
   countByPhrase,

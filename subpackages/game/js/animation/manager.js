@@ -1,4 +1,4 @@
-import { Group, Tween } from '../../vendor/tween/tween.esm';
+import { Group, Tween } from '../../../../js/vendor/tween/tween.esm';
 
 /**
  * 包装一个回调函数，使其只被执行一次。

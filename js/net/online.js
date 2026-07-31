@@ -1,4 +1,4 @@
-import { DEFAULT_RULES } from '../game/rules';
+import { DEFAULT_RULES } from '../rules';
 import { ensureCloudInit, callFunction, cloudErrorCode, login } from './cloud';
 import { reportClientDiagnostic } from './diagnostics';
 import OnlineSocketTransport from './socket';
@@ -687,11 +687,11 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
 }
 
 export default class OnlineController {
-  constructor(databus, renderer, music, animator = null) {
+  constructor(databus, tableView, music, animator = null) {
     this.databus = databus;
-    this.renderer = renderer;
+    this.tableView = tableView;
     this.music = music;
-    this.animator = animator || renderer.animationController || renderer;
+    this.animator = animator || (tableView && tableView.animator) || tableView;
     this.roomId = null;
     this.mySeat = 0;
     this.version = -1;
@@ -2268,8 +2268,10 @@ export default class OnlineController {
       return;
     }
     const touch = event.touches && event.touches[0];
-    if (!touch || !this.renderer.lastLayout) return;
-    const region = this.renderer.layout.hit(this.renderer.lastLayout, touch.clientX, touch.clientY);
+    if (!touch) return;
+    const region = typeof this.tableView.hitRegionAt === 'function'
+      ? this.tableView.hitRegionAt(touch.clientX, touch.clientY)
+      : null;
     if (!region) return;
     if (region.type === 'round-result-scroll' || region.type === 'table-record-scroll') {
       this.roundResultScrollTouch = { lastY: touch.clientY, type: region.type };
@@ -2316,7 +2318,7 @@ export default class OnlineController {
       return;
     }
     if (region.type === 'action') {
-      if (this.renderer.markButtonPressed) this.renderer.markButtonPressed(region);
+      if (typeof this.tableView.markButtonPressed === 'function') this.tableView.markButtonPressed(region);
       this.handleActionTap(region.action);
       return;
     }
@@ -2331,14 +2333,10 @@ export default class OnlineController {
     if (!touch) return;
     const deltaY = touch.clientY - this.roundResultScrollTouch.lastY;
     this.roundResultScrollTouch.lastY = touch.clientY;
-    if (
-      this.roundResultScrollTouch.type === 'table-record-scroll'
-      && this.renderer
-      && this.renderer.scrollTableRecordBy
-    ) {
-      this.renderer.scrollTableRecordBy(deltaY);
-    } else if (this.renderer && this.renderer.scrollRoundResultBy) {
-      this.renderer.scrollRoundResultBy(deltaY);
+    if (this.roundResultScrollTouch.type === 'table-record-scroll') {
+      if (typeof this.tableView.scrollTableRecordBy === 'function') this.tableView.scrollTableRecordBy(deltaY);
+    } else if (typeof this.tableView.scrollRoundResultBy === 'function') {
+      this.tableView.scrollRoundResultBy(deltaY);
     }
   }
 

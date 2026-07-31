@@ -1,5 +1,3 @@
-import { ASSET_MANIFEST } from '../game/assets';
-
 let instance;
 
 function createAudio(src, loop = false) {
@@ -26,20 +24,25 @@ export default class Music {
   cardVoiceCues = {};
   actionVoiceCues = {};
   bgmStarted = false;
+  audioRegistered = false;
 
   constructor() {
     if (instance) return instance;
     instance = this;
+  }
 
-    this.bgmAudio = createAudio(ASSET_MANIFEST.audio.bgm, true);
-    Object.keys(ASSET_MANIFEST.audio).forEach((name) => {
-      if (name !== 'bgm' && typeof ASSET_MANIFEST.audio[name] === 'string') {
-        this.cues[name] = createAudio(ASSET_MANIFEST.audio[name]);
+  registerAudioManifest(audioManifest = {}) {
+    if (this.audioRegistered) return;
+    this.audioRegistered = true;
+
+    this.bgmAudio = createAudio(audioManifest.bgm, true);
+    Object.keys(audioManifest).forEach((name) => {
+      if (name !== 'bgm' && typeof audioManifest[name] === 'string') {
+        this.cues[name] = createAudio(audioManifest[name]);
       }
     });
-    this.cardVoiceCues = createAudioMap(ASSET_MANIFEST.audio.cardVoices);
-    this.actionVoiceCues = createAudioMap(ASSET_MANIFEST.audio.actionVoices);
-    this.playBackground();
+    this.cardVoiceCues = createAudioMap(audioManifest.cardVoices);
+    this.actionVoiceCues = createAudioMap(audioManifest.actionVoices);
   }
 
   setMuted(muted) {

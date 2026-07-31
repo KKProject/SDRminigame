@@ -1,4 +1,4 @@
-import { Easing } from '../../vendor/tween/tween.esm';
+import { Easing } from '../../../../js/vendor/tween/tween.esm';
 import {
   cardSize,
   claimedMeldTargets,

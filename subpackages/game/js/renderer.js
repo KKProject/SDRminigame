@@ -993,6 +993,10 @@ export default class TableRenderer {
     }, null, { replay: true });
   }
 
+  hitRegionAt(x, y) {
+    return this.lastLayout ? this.layout.hit(this.lastLayout, x, y) : null;
+  }
+
   markButtonPressed(region) {
     const button = region && region.action ? region : null;
     if (!button) return;

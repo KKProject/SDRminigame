@@ -1,0 +1,81 @@
+// 假设微信小游戏的 img.src/audio.src 相对路径按项目根目录解析（而非按调用代码所在分包的根目录解析）。
+// 该假设未在官方文档中找到明确依据，实现后必须在微信开发者工具或真机上确认这些资源确实能正常加载——
+// 一旦假设有误，只需要改这一行前缀，不需要逐条改下面的路径。
+const GAME_ROOT = 'subpackages/game/';
+
+export const GAME_ASSET_MANIFEST = {
+  images: {
+    cardBack: `${GAME_ROOT}images/userAction.png`,
+    cardFront: `${GAME_ROOT}images/element.png`,
+    button: `${GAME_ROOT}images/actions.png`,
+    result: `${GAME_ROOT}images/element.png`,
+    roundResultTitle: `${GAME_ROOT}images/round_result_title.png`,
+    roundResultPanel: `${GAME_ROOT}images/round_result_panel.png`,
+    roundResultVictory: `${GAME_ROOT}images/round_result_victory.png`,
+    roundResultDefeat: `${GAME_ROOT}images/round_result_defeat.png`,
+    roundResultContinue: `${GAME_ROOT}images/round_result_continue.png`,
+    roundResultHu: `${GAME_ROOT}images/round_result_hu.png`,
+    roundResultGrade: `${GAME_ROOT}images/round_result_grade.png`,
+    tableRecordHead: `${GAME_ROOT}images/table_record_head.png`,
+    tableRecordRank1: `${GAME_ROOT}images/table_record_rank_1.png`,
+    tableRecordRank2: `${GAME_ROOT}images/table_record_rank_2.png`,
+    tableRecordRank3: `${GAME_ROOT}images/table_record_rank_3.png`,
+    tableRecordRank4: `${GAME_ROOT}images/table_record_rank_4.png`,
+    tableRecordFirstRow: `${GAME_ROOT}images/table_record_first_row.png`,
+    tableRecordRow: `${GAME_ROOT}images/table_record_row.png`,
+    tableRecordInfo: `${GAME_ROOT}images/table_record_info.png`,
+    tableRecordExit: `${GAME_ROOT}images/table_record_exit.png`,
+    tableRecordRematch: `${GAME_ROOT}images/table_record_rematch.png`,
+  },
+  atlases: {
+    cards: {
+      image: 'cardFront',
+      path: `${GAME_ROOT}images/element.atlas.json`,
+      backFrames: {
+        vertical: ['tile_back_green_vertical', 'tile_back_red_vertical'],
+        small: ['tile_back_green_small', 'tile_back_red_small'],
+      },
+    },
+    actions: {
+      image: 'button',
+      path: `${GAME_ROOT}images/action_buttons_named_atlas.json`,
+    },
+  },
+  audio: {
+    bgm: `${GAME_ROOT}audio/bgmusic.mp3`,
+    tap: '',
+    cardVoices: {
+      shang: `${GAME_ROOT}audio/上.mp3`,
+      da: `${GAME_ROOT}audio/大.mp3`,
+      ren: `${GAME_ROOT}audio/人.mp3`,
+      kong: `${GAME_ROOT}audio/孔.mp3`,
+      yi: `${GAME_ROOT}audio/乙.mp3`,
+      ji: `${GAME_ROOT}audio/己.mp3`,
+      hua: `${GAME_ROOT}audio/化.mp3`,
+      san: `${GAME_ROOT}audio/三.mp3`,
+      qian: `${GAME_ROOT}audio/千.mp3`,
+      qi: `${GAME_ROOT}audio/七.mp3`,
+      shi: `${GAME_ROOT}audio/十.mp3`,
+      tu: `${GAME_ROOT}audio/土.mp3`,
+      er: `${GAME_ROOT}audio/尔.mp3`,
+      xiao: `${GAME_ROOT}audio/小.mp3`,
+      sheng: `${GAME_ROOT}audio/生.mp3`,
+      fu: `${GAME_ROOT}audio/福.mp3`,
+      lu: `${GAME_ROOT}audio/禄.mp3`,
+      shou: `${GAME_ROOT}audio/寿.mp3`,
+      jia: `${GAME_ROOT}audio/佳.mp3`,
+      zuo: `${GAME_ROOT}audio/作.mp3`,
+      ren2: `${GAME_ROOT}audio/仁.mp3`,
+      ba: `${GAME_ROOT}audio/八.mp3`,
+      jiu: `${GAME_ROOT}audio/九.mp3`,
+      zi: `${GAME_ROOT}audio/子.mp3`,
+    },
+    actionVoices: {
+      chi: `${GAME_ROOT}audio/吃.mp3`,
+      peng: `${GAME_ROOT}audio/碰.mp3`,
+      zhao: `${GAME_ROOT}audio/招.mp3`,
+      ta: `${GAME_ROOT}audio/踏.mp3`,
+      hu: `${GAME_ROOT}audio/胡.mp3`,
+    },
+  },
+};

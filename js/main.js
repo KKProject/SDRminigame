@@ -6,8 +6,9 @@ import {
   restoreRenderContext,
   subscribeRenderMetrics,
 } from './render';
-import AssetLoader from './game/assets';
-import TableRenderer from './game/renderer';
+import AssetLoader from './runtime/asset-loader';
+import TableViewProxy from './runtime/table-view-proxy';
+import { configureGamePackageLoader, ensureGamePackage } from './runtime/subpackage-loader';
 import DataBus from './databus';
 import Music from './runtime/music';
 import StartMenu from './ui/menu';
@@ -64,7 +65,8 @@ function hasProfile(profile = {}) {
 export default class Main {
   aniId = 0;
   assets = new AssetLoader();
-  renderer = new TableRenderer(this.assets);
+  renderer = null;
+  tableView = new TableViewProxy();
   online = null;
   mode = null;
   menu = null;
@@ -75,6 +77,7 @@ export default class Main {
 
   constructor() {
     this.assets.loadImages();
+    configureGamePackageLoader(this.assets, this.tableView);
     this.menu = new StartMenu(this.handleModeSelect.bind(this), this.assets);
     this.metricsRetryRemaining = 120;
     this.contextRestoreRetryRemaining = 0;
@@ -201,7 +204,7 @@ export default class Main {
       },
     }));
     this.metricsRetryRemaining = 0;
-    this.renderer.setViewport(metrics, { forceLayout: Boolean(detail.forceLayout) });
+    if (this.renderer) this.renderer.setViewport(metrics, { forceLayout: Boolean(detail.forceLayout) });
     this.menu.handleMetricsChange();
     if (!this.mode && !this.menu.active) this.menu.show();
   }
@@ -276,8 +279,9 @@ export default class Main {
 
   ensureOnlineController() {
     if (!this.online) {
-      this.online = new OnlineController(GameGlobal.databus, this.renderer, GameGlobal.musicManager, this.renderer.animationController);
+      this.online = new OnlineController(GameGlobal.databus, this.tableView, GameGlobal.musicManager, this.tableView.animator);
       this.bindOnlineController(this.online);
+      ensureGamePackage().catch(() => {});
     }
     return this.online;
   }
@@ -379,8 +383,9 @@ export default class Main {
     if (this.online && this.online.starting) return;
     this.menu.setBusy(true);
     this.menu.setStatus('登录中…');
-    this.online = new OnlineController(GameGlobal.databus, this.renderer, GameGlobal.musicManager, this.renderer.animationController);
+    this.online = new OnlineController(GameGlobal.databus, this.tableView, GameGlobal.musicManager, this.tableView.animator);
     this.bindOnlineController(this.online);
+    ensureGamePackage().catch(() => {});
     this.online.startLobby(profile, { inviteRoomId })
       .then((result) => {
         if (result && result.entered) {
@@ -475,6 +480,10 @@ export default class Main {
           code: err && (err.code || err.message),
           existingRoomId: err && err.existing && err.existing.roomId ? err.existing.roomId : '',
         });
+        reportClientDiagnostic('create-room-failed', {
+          code: String(err && (err.code || err.message)),
+        });
+        flushClientDiagnostics();
         this.mode = APP_MODES.CREATE_ROOM;
         if (this.menu.screen !== 'create-room-settings') this.menu.showCreateRoomSettings();
         this.menu.setBusy(false);
@@ -539,8 +548,25 @@ export default class Main {
       });
   }
 
-  enterOnlineTable() {
+  async enterOnlineTable() {
     if (!this.online) return;
+    const online = this.online;
+    if (!this.renderer) this.menu.setStatus('正在加载牌桌…');
+    let loaded;
+    try {
+      loaded = await ensureGamePackage();
+    } catch (error) {
+      reportClientDiagnostic('enter-online-table-failed', { message: String(error && (error.message || error)) });
+      flushClientDiagnostics();
+      this.menu.setStatus('牌桌加载失败，请重试');
+      return;
+    }
+    if (this.online !== online) return;
+    if (loaded && loaded.renderer) this.renderer = loaded.renderer;
+    if (GameGlobal.musicManager && loaded && loaded.manifest) {
+      GameGlobal.musicManager.registerAudioManifest(loaded.manifest.audio);
+      GameGlobal.musicManager.playBackground();
+    }
     this.pendingInviteRoomId = '';
     this.menu.hide();
     this.mode = APP_MODES.GAME_TABLE;
@@ -554,8 +580,30 @@ export default class Main {
 
   render() {
     if (!getRenderMetrics()) return;
-    if (this.mode === APP_MODES.GAME_TABLE && this.hasRenderableState()) {
-      this.renderer.render(ctx, GameGlobal.databus);
+    if (this.renderer && this.mode === APP_MODES.GAME_TABLE) {
+      if (this.hasRenderableState()) {
+        try {
+          this.renderer.render(ctx, GameGlobal.databus);
+        } catch (error) {
+          if (!this.reportedRenderError) {
+            this.reportedRenderError = true;
+            reportClientDiagnostic('render-throw', {
+              message: String(error && (error.message || error)),
+              stack: error && error.stack ? String(error.stack).slice(0, 800) : '',
+            });
+            flushClientDiagnostics();
+          }
+        }
+      } else if (!this.reportedUnrenderableState) {
+        this.reportedUnrenderableState = true;
+        const state = GameGlobal.databus;
+        reportClientDiagnostic('unrenderable-state', {
+          hasSeats: Array.isArray(state.seats),
+          seatCount: Array.isArray(state.seats) ? state.seats.length : -1,
+          humanSeat: state.humanSeat,
+        });
+        flushClientDiagnostics();
+      }
     }
     if (this.menu) {
       this.menu.render(ctx);
@@ -571,7 +619,20 @@ export default class Main {
       this.metricsRetryRemaining -= 1;
       refreshRenderMetrics();
     }
-    this.renderer.animationController.update(time);
+    if (this.renderer) {
+      try {
+        this.renderer.animationController.update(time);
+      } catch (error) {
+        if (!this.reportedAnimationError) {
+          this.reportedAnimationError = true;
+          reportClientDiagnostic('animation-update-throw', {
+            message: String(error && (error.message || error)),
+            stack: error && error.stack ? String(error.stack).slice(0, 800) : '',
+          });
+          flushClientDiagnostics();
+        }
+      }
+    }
     this.render();
     this.aniId = requestAnimationFrame(this.loop.bind(this));
   }

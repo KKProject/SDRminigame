@@ -5,14 +5,19 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const tempDir = join(root, '.tmp-server-core-checks');
-const sourceDir = join(root, 'js/game');
+const sourceDir = join(root, 'subpackages/game/js');
 const require = createRequire(import.meta.url);
 
 await rm(tempDir, { recursive: true, force: true });
 await mkdir(tempDir, { recursive: true });
-for (const file of ['rules', 'cards', 'evaluator']) {
+await writeFile(
+  join(tempDir, 'rules.mjs'),
+  (await readFile(join(root, 'js/rules.js'), 'utf8')).replace(/from '(\.\/[^']+)'/g, "from '$1.mjs'")
+);
+for (const file of ['cards', 'evaluator']) {
   const source = (await readFile(join(sourceDir, `${file}.js`), 'utf8'))
-    .replace(/from '(\.\/[^']+)'/g, "from '$1.mjs'");
+    .replace(/from '(\.\/[^']+)'/g, "from '$1.mjs'")
+    .replace(/from '\.\.\/\.\.\/\.\.\/js\/rules'/g, "from './rules.mjs'");
   await writeFile(join(tempDir, `${file}.mjs`), source);
 }
 

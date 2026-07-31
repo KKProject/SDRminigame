@@ -1,5 +1,5 @@
-import { SAFE_AREA_INSETS, SCREEN_HEIGHT, SCREEN_WIDTH } from '../render';
-import { DEFAULT_RULES } from './rules';
+import { SAFE_AREA_INSETS, SCREEN_HEIGHT, SCREEN_WIDTH } from '../../../js/render';
+import { DEFAULT_RULES } from '../../../js/rules';
 
 export const HAND_CARD_SOURCE_WIDTH = 88;
 export const HAND_CARD_SOURCE_HEIGHT = 108;

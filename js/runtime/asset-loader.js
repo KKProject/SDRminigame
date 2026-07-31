@@ -1,4 +1,4 @@
-export const ASSET_MANIFEST = {
+export const MAIN_ASSET_MANIFEST = {
   images: {
     table: 'images/background.jpg',
     hall: 'images/hall_background.jpg',
@@ -8,79 +8,9 @@ export const ASSET_MANIFEST = {
     avatarBorder: 'images/avatar_border.png',
     nicknameBg: 'images/nickname_bg.png',
     flowers: 'images/flwoers.png',
-    cardBack: 'images/userAction.png',
-    cardFront: 'images/element.png',
-    button: 'images/actions.png',
-    result: 'images/element.png',
-    roundResultTitle: 'images/round_result_title.png',
-    roundResultPanel: 'images/round_result_panel.png',
-    roundResultVictory: 'images/round_result_victory.png',
-    roundResultDefeat: 'images/round_result_defeat.png',
-    roundResultContinue: 'images/round_result_continue.png',
-    roundResultHu: 'images/round_result_hu.png',
-    roundResultGrade: 'images/round_result_grade.png',
-    tableRecordHead: 'images/table_record_head.png',
-    tableRecordRank1: 'images/table_record_rank_1.png',
-    tableRecordRank2: 'images/table_record_rank_2.png',
-    tableRecordRank3: 'images/table_record_rank_3.png',
-    tableRecordRank4: 'images/table_record_rank_4.png',
-    tableRecordFirstRow: 'images/table_record_first_row.png',
-    tableRecordRow: 'images/table_record_row.png',
-    tableRecordInfo: 'images/table_record_info.png',
-    tableRecordExit: 'images/table_record_exit.png',
-    tableRecordRematch: 'images/table_record_rematch.png',
   },
-  atlases: {
-    cards: {
-      image: 'cardFront',
-      path: 'images/element.atlas.json',
-      backFrames: {
-        vertical: ['tile_back_green_vertical', 'tile_back_red_vertical'],
-        small: ['tile_back_green_small', 'tile_back_red_small'],
-      },
-    },
-    actions: {
-      image: 'button',
-      path: 'images/action_buttons_named_atlas.json',
-    },
-  },
-  audio: {
-    bgm: 'audio/bgmusic.mp3',
-    tap: '',
-    cardVoices: {
-      shang: 'audio/上.mp3',
-      da: 'audio/大.mp3',
-      ren: 'audio/人.mp3',
-      kong: 'audio/孔.mp3',
-      yi: 'audio/乙.mp3',
-      ji: 'audio/己.mp3',
-      hua: 'audio/化.mp3',
-      san: 'audio/三.mp3',
-      qian: 'audio/千.mp3',
-      qi: 'audio/七.mp3',
-      shi: 'audio/十.mp3',
-      tu: 'audio/土.mp3',
-      er: 'audio/尔.mp3',
-      xiao: 'audio/小.mp3',
-      sheng: 'audio/生.mp3',
-      fu: 'audio/福.mp3',
-      lu: 'audio/禄.mp3',
-      shou: 'audio/寿.mp3',
-      jia: 'audio/佳.mp3',
-      zuo: 'audio/作.mp3',
-      ren2: 'audio/仁.mp3',
-      ba: 'audio/八.mp3',
-      jiu: 'audio/九.mp3',
-      zi: 'audio/子.mp3',
-    },
-    actionVoices: {
-      chi: 'audio/吃.mp3',
-      peng: 'audio/碰.mp3',
-      zhao: 'audio/招.mp3',
-      ta: 'audio/踏.mp3',
-      hu: 'audio/胡.mp3',
-    },
-  },
+  atlases: {},
+  audio: {},
 };
 
 export const ACTION_ATLAS_FRAME_CONFIG = {
@@ -314,8 +244,12 @@ function readJsonFile(path) {
 }
 
 export default class AssetLoader {
-  constructor(manifest = ASSET_MANIFEST) {
-    this.manifest = manifest;
+  constructor(manifest = MAIN_ASSET_MANIFEST) {
+    this.manifest = {
+      images: { ...(manifest.images || {}) },
+      atlases: { ...(manifest.atlases || {}) },
+      audio: { ...(manifest.audio || {}) },
+    };
     this.images = {};
     this.atlases = {};
     this.cardAtlasFrames = {};
@@ -324,9 +258,16 @@ export default class AssetLoader {
     this.status = {};
   }
 
-  loadImages() {
+  extendManifest(chunk = {}) {
+    Object.assign(this.manifest.images, chunk.images || {});
+    Object.assign(this.manifest.atlases, chunk.atlases || {});
+    Object.assign(this.manifest.audio, chunk.audio || {});
+    this.loadImages(Object.keys(chunk.images || {}));
+  }
+
+  loadImages(names = Object.keys(this.manifest.images)) {
     this.loadAtlases();
-    Object.keys(this.manifest.images).forEach((name) => {
+    names.forEach((name) => {
       const src = this.manifest.images[name];
       if (!src || typeof wx === 'undefined' || !wx.createImage) {
         this.status[name] = 'missing';
@@ -346,8 +287,8 @@ export default class AssetLoader {
     });
   }
 
-  loadAtlases() {
-    Object.keys(this.manifest.atlases || {}).forEach((name) => {
+  loadAtlases(names = Object.keys(this.manifest.atlases || {})) {
+    names.forEach((name) => {
       const config = this.manifest.atlases[name];
       const atlas = config.data || readJsonFile(config.path);
       this.setAtlas(name, atlas);

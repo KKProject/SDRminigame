@@ -1,4 +1,4 @@
-import { DEFAULT_RULES, PHASES } from './game/rules';
+import { DEFAULT_RULES, PHASES } from './rules';
 
 let instance;
 

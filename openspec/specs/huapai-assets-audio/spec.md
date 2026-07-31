@@ -4,7 +4,7 @@
 TBD - created by archiving change build-shangdaren-huapai-game. Update Purpose after archive.
 ## Requirements
 ### Requirement: Asset Manifest
-The system SHALL load visual assets through a manifest that maps semantic names such as table background, card back, card front, action button, result panel, and card atlas metadata to local project paths. The default table background SHALL be mapped to `images/background.jpg`, and the default card atlas image SHALL be mapped to `images/element.png`.
+The system SHALL load visual assets through a manifest that maps semantic names such as table background, card back, card front, action button, result panel, and card atlas metadata to local project paths. The manifest MAY be composed of a main-package-scoped registration available from app startup and a game-subpackage-scoped registration that only becomes available after the game subpackage has finished loading; the asset loader MUST expose a single lookup entry point regardless of which registration a given key belongs to. The default table background SHALL be mapped to `images/background.jpg`, and the default card atlas image SHALL be mapped to `images/element.png`, both within the game subpackage's resource scope.
 
 #### Scenario: Manifest asset exists
 - **WHEN** a mapped image path loads successfully
@@ -30,6 +30,16 @@ The system SHALL load visual assets through a manifest that maps semantic names 
 - **WHEN** the atlas JSON is absent, invalid, or lacks a requested frame
 - **THEN** the renderer MUST continue using the existing canvas card fallback without throwing runtime errors
 
+#### Scenario: 游戏子包加载完成后注册子包资源清单
+- **WHEN** 游戏子包加载完成
+- **THEN** asset loader MUST 能够注册该子包范围内的资源清单条目
+- **AND** 注册后的条目 MUST 可以通过既有的统一查询入口获取，无需调用方区分资源归属哪个包
+
+#### Scenario: 请求尚未加载的子包专属资源
+- **WHEN** 游戏子包尚未加载完成，代码请求一个仅存在于子包清单中的资源键
+- **THEN** asset loader MUST 按"资源缺失"的既有处理方式返回未命中
+- **AND** 调用方 MUST 走既有的 Canvas 回退路径，不得抛出异常
+
 ### Requirement: 对局结果透明切图资源
 系统 SHALL 通过资源清单加载对局结果标题、白板面板、胜利状态、失败状态和继续游戏按钮的本地透明 PNG。用于发布的处理后切图 MUST 保留有效 alpha 通道，且资源加载失败 MUST 允许 renderer 对对应元素使用 Canvas 回退，不得阻塞结果页展示或交互。
 
@@ -47,19 +57,6 @@ The system SHALL load visual assets through a manifest that maps semantic names 
 - **WHEN** 原始透明 PNG 经尺寸或调色板优化后进入项目资源目录
 - **THEN** 处理后文件 MUST 仍包含有效 alpha 通道
 - **AND** 原本完全透明的外围区域 MUST NOT 被填充为不透明底色
-
-### Requirement: 对局结果资源包体预算
-系统 SHALL 复用已打包的牌桌背景并移除被结果页透明切图完全替代的整屏背景资源。包含新结果页资源的微信小游戏实际上传主包 MUST 小于 4 MiB，并 SHOULD 保留至少约 0.3 MiB 的后续发布余量。
-
-#### Scenario: 新结果页资源完成集成
-- **WHEN** 结果页透明切图、资源清单和绘制逻辑均已进入待发布版本
-- **THEN** 项目 MUST NOT 同时打包已无使用方的旧整屏结果页背景
-- **AND** 实际微信上传结果中的完整主包大小 MUST 小于 4 MiB
-
-#### Scenario: 包体积超过目标余量
-- **WHEN** 实际上传主包虽未达到 4 MiB 但剩余空间不足约 0.3 MiB
-- **THEN** 实现 MUST 优先继续优化白板大图或清理被替代资源
-- **AND** MUST NOT 通过移除透明通道或显著降低文字切图清晰度来达成目标
 
 ### Requirement: Card Face Rendering
 The system SHALL render every configured card face with readable symbol text, color, and special-card indicators whether or not card-face images exist. The system SHALL scan `images/element.png` atlas frame names for configured card keys and size/orientation tokens, support nested `big`, `small`, and `mini` frame groups, render matched card faces by cropping the atlas image from those named frames, and preserve the card artwork aspect ratio when drawing visible card faces.
@@ -125,15 +122,20 @@ The system SHALL render every configured card face with readable symbol text, co
 - **THEN** the fallback card bounds MUST use the same aspect ratio as atlas-rendered hand cards
 
 ### Requirement: Audio Cues
-The system SHALL play local audio cues for key events when configured, including button tap and looping background music, and the default background music SHALL be loaded from `audio/bgmusic.mp3`. The system SHALL play card-name voice clips for draw and discard events, and action voice clips for chi, peng, zhao, ta, and hu actions.
+The system SHALL play local audio cues for key events when configured, including button tap and looping background music, and the default background music SHALL be loaded from `audio/bgmusic.mp3` within the game subpackage's resource scope. Background music MUST NOT play during the hall, create-room, or waiting-room phases; it MUST only become audible once the player has entered the game table and the game subpackage's audio resources are available. The system SHALL play card-name voice clips for draw and discard events, and action voice clips for chi, peng, zhao, ta, and hu actions; these voice clips are likewise game-subpackage-scoped and only playable during active gameplay.
 
 #### Scenario: Audio is disabled or unavailable
 - **WHEN** an audio file fails to load or playback is unavailable
 - **THEN** the system MUST continue gameplay silently without throwing runtime errors
 
 #### Scenario: Default background music exists
-- **WHEN** `audio/bgmusic.mp3` is available and audio is not muted
+- **WHEN** the player has entered the game table, `audio/bgmusic.mp3` has loaded as part of the game subpackage, and audio is not muted
 - **THEN** the music manager MUST use it as the looping background music track
+
+#### Scenario: 大厅与等待阶段没有背景音乐
+- **WHEN** 玩家处于大厅、创建房间或等待界面
+- **THEN** 系统 MUST NOT 播放背景音乐
+- **AND** 系统 MUST NOT 因为背景音乐资源尚未加载而报错或阻塞界面
 
 ### Requirement: 牌面语音播报
 系统 SHALL 在资源清单中按 card key 登记 24 张牌的牌面语音（如 `shang` → `audio/上.mp3`），并在牌被摸出亮牌或被打出时播放该牌对应的牌面语音。
@@ -248,3 +250,4 @@ The system SHALL expose an in-game mute state that applies to background music a
 - **WHEN** `images/element.png`、`images/element.atlas.json` 或指定将牌覆盖图 frame 未加载成功
 - **THEN** AssetLoader MUST 返回无图片结果
 - **AND** renderer MUST 继续绘制基础牌面且不得抛出资源加载异常
+

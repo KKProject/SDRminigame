@@ -2,8 +2,8 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.11",
-  "desc": "对局结果条目移除本家自绘边框",
+  "version": "1.0.16",
+  "desc": "修复进入牌桌无响应：main.js 未回填 renderer 引用",
   "ignores": [],
   "setting": {
     "es6": true,

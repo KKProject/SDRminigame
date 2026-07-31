@@ -4,12 +4,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const tempDir = join(root, '.tmp-animation-checks');
-const sourceDir = join(root, 'js/game/animation');
+const sourceDir = join(root, 'subpackages/game/js/animation');
 
 function rewriteImports(source) {
   return source
     .replace(/from '(\.\/[^']+)'/g, "from '$1.mjs'")
-    .replace("from '../../vendor/tween/tween.esm'", "from './tween.mjs'");
+    .replace("from '../../../../js/vendor/tween/tween.esm'", "from './tween.mjs'");
 }
 
 await rm(tempDir, { recursive: true, force: true });

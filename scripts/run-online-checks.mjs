@@ -27,7 +27,7 @@ await writeFile(join(tempDir, 'profile.mjs'), await readFile(join(root, 'js/net/
 await writeFile(
   join(tempDir, 'online.mjs'),
   (await readFile(join(root, 'js/net/online.js'), 'utf8'))
-    .replace("from '../game/rules'", "from './rules-stub.mjs'")
+    .replace("from '../rules'", "from './rules-stub.mjs'")
     .replace("from './cloud'", "from './cloud.mjs'")
     .replace("from './diagnostics'", "from './diagnostics.mjs'")
     .replace("from './socket'", "from './socket.mjs'")
@@ -1090,10 +1090,7 @@ let roundResultScrollDelta = 0;
 const roundResultScrollController = new online.default(
   { feedback: '' },
   {
-    lastLayout: {},
-    layout: {
-      hit() { return { type: 'round-result-scroll' }; },
-    },
+    hitRegionAt() { return { type: 'round-result-scroll' }; },
     scrollRoundResultBy(deltaY) { roundResultScrollDelta += deltaY; },
   },
   { playCue() { throw new Error('scrolling the result list should not trigger a tap cue'); } }
@@ -1110,10 +1107,7 @@ let tableRecordScrollDelta = 0;
 const tableRecordScrollController = new online.default(
   { feedback: '' },
   {
-    lastLayout: {},
-    layout: {
-      hit() { return { type: 'table-record-scroll' }; },
-    },
+    hitRegionAt() { return { type: 'table-record-scroll' }; },
     scrollTableRecordBy(deltaY) { tableRecordScrollDelta += deltaY; },
   },
   { playCue() { throw new Error('scrolling the table record should not trigger a tap cue'); } }
@@ -2313,13 +2307,10 @@ const staleAnimationDatabus = {
   setRoundState(state) { Object.assign(this, state); },
 };
 const staleAnimationRenderer = {
-  lastLayout: { id: 'response-layout' },
-  markButtonPressed() {},
-  layout: {
-    hit() {
-      return { type: 'action', action: { type: 'chi', index: 0 } };
-    },
+  hitRegionAt() {
+    return { type: 'action', action: { type: 'chi', index: 0 } };
   },
+  markButtonPressed() {},
 };
 const staleAnimationController = new online.default(staleAnimationDatabus, staleAnimationRenderer, { playCue() {} });
 const staleAnimationOps = [];
@@ -3913,7 +3904,7 @@ if (/\.doc\([^)]*\)\.set\(\{\s*data:\s*\{\s*_id:/s.test(roomSource)) {
 if (!/async function writeRoomState[\s\S]*?collection\(ROOMS\)\.doc\(roomId\)\.set\(/.test(roomSource)) {
   throw new Error('authoritative room state must use document.set to safely replace null and nested object fields');
 }
-const animationControllerSource = await readFile(join(root, 'js/game/animation/controller.js'), 'utf8');
+const animationControllerSource = await readFile(join(root, 'subpackages/game/js/animation/controller.js'), 'utf8');
 if (!/playOnlineEvent\(event, onComplete, options = \{\}\)/.test(animationControllerSource)) {
   throw new Error('animation controller should expose an explicit online event animation API with playback options');
 }
@@ -4004,8 +3995,8 @@ if (!/hit\.type === 'create-back'[\s\S]*?this\.showStartHome/.test(menuSource)) 
 if (/onSelect\('confirmSeatSelection'/.test(menuSource) || !/showSeatSelection\(\)\s*\{\s*this\.showCreateRoomSettings\(\);/.test(menuSource)) {
   throw new Error('legacy seat-selection must not remain a reachable create-room success target');
 }
-const rendererSource = await readFile(join(root, 'js/game/renderer.js'), 'utf8');
-const layoutSource = await readFile(join(root, 'js/game/layout.js'), 'utf8');
+const rendererSource = await readFile(join(root, 'subpackages/game/js/renderer.js'), 'utf8');
+const layoutSource = await readFile(join(root, 'subpackages/game/js/layout.js'), 'utf8');
 if (/eventSeq|playOnlineEvent/.test(rendererSource)) {
   throw new Error('renderer should not manage online event sequence or animation lifecycle');
 }

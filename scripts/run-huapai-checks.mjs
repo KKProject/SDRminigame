@@ -3,29 +3,37 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const sourceDir = join(root, 'js/game');
+const sourceDir = join(root, 'subpackages/game/js');
 const tempDir = join(root, '.tmp-huapai-checks');
-const files = ['rules', 'cards', 'evaluator', 'layout', 'assets', 'renderer', 'self-check'];
+const files = ['cards', 'evaluator', 'layout', 'assets', 'renderer', 'self-check'];
 
 function rewriteImports(source) {
   return source
     .replace(/from '(\.\/[^']+)'/g, "from '$1.mjs'")
-    .replace(/from '\.\.\/render'/g, "from './render-stub.mjs'");
+    .replace(/from '\.\.\/\.\.\/\.\.\/js\/render'/g, "from './render-stub.mjs'")
+    .replace(/from '\.\.\/\.\.\/\.\.\/js\/runtime\/asset-loader'/g, "from './runtime/asset-loader.mjs'")
+    .replace(/from '\.\.\/\.\.\/\.\.\/js\/rules'/g, "from './rules.mjs'");
 }
 
 await rm(tempDir, { recursive: true, force: true });
 await mkdir(tempDir, { recursive: true });
 
+await writeFile(join(tempDir, 'rules.mjs'), await readFile(join(root, 'js/rules.js'), 'utf8'));
 for (const file of files) {
   const source = await readFile(join(sourceDir, `${file}.js`), 'utf8');
   await writeFile(join(tempDir, `${file}.mjs`), rewriteImports(source));
 }
+await mkdir(join(tempDir, 'runtime'), { recursive: true });
+await writeFile(
+  join(tempDir, 'runtime', 'asset-loader.mjs'),
+  await readFile(join(root, 'js/runtime/asset-loader.js'), 'utf8')
+);
 await mkdir(join(tempDir, 'animation'), { recursive: true });
 for (const file of ['manager', 'presets', 'targets', 'state-controller', 'controller']) {
   const source = await readFile(join(sourceDir, 'animation', `${file}.js`), 'utf8');
   await writeFile(
     join(tempDir, 'animation', `${file}.mjs`),
-    rewriteImports(source).replace("from '../../vendor/tween/tween.esm'", "from '../tween.mjs'")
+    rewriteImports(source).replace("from '../../../../js/vendor/tween/tween.esm'", "from '../tween.mjs'")
   );
 }
 await writeFile(join(tempDir, 'tween.mjs'), await readFile(join(root, 'js/vendor/tween/tween.esm.js'), 'utf8'));
@@ -70,11 +78,12 @@ const {
   default: AssetLoader,
   ACTION_ATLAS_FRAME_CONFIG,
   APPEARANCE_OVERLAY_FRAME_CONFIG,
-  ASSET_MANIFEST,
   JIANG_OVERLAY_FRAME_CONFIG,
+  MAIN_ASSET_MANIFEST,
   buildAtlasOriginalIndexMap,
   buildCardAtlasFrameMap,
-} = await import(pathToFileURL(join(tempDir, 'assets.mjs')));
+} = await import(pathToFileURL(join(tempDir, 'runtime', 'asset-loader.mjs')));
+const { GAME_ASSET_MANIFEST } = await import(pathToFileURL(join(tempDir, 'assets.mjs')));
 const { createDeck, createSeats } = await import(pathToFileURL(join(tempDir, 'cards.mjs')));
 const { DEFAULT_RULES, PHASES } = await import(pathToFileURL(join(tempDir, 'rules.mjs')));
 const { calculateOperationFu } = await import(pathToFileURL(join(tempDir, 'evaluator.mjs')));
@@ -447,33 +456,33 @@ if (
   throw new Error('render setup should normalize fallback screen size when pixel ratio or setTransform are unavailable');
 }
 
-if (ASSET_MANIFEST.images.table !== 'images/background.jpg') {
+if (MAIN_ASSET_MANIFEST.images.table !== 'images/background.jpg') {
   throw new Error('default table background must be images/background.jpg');
 }
-if (ASSET_MANIFEST.images.cardFront !== 'images/element.png') {
-  throw new Error('default card atlas image must be images/element.png');
+if (GAME_ASSET_MANIFEST.images.cardFront !== 'subpackages/game/images/element.png') {
+  throw new Error('default card atlas image must be subpackages/game/images/element.png');
 }
-if (!ASSET_MANIFEST.atlases || ASSET_MANIFEST.atlases.cards.path !== 'images/element.atlas.json') {
-  throw new Error('default card atlas metadata must be images/element.atlas.json');
+if (!GAME_ASSET_MANIFEST.atlases || GAME_ASSET_MANIFEST.atlases.cards.path !== 'subpackages/game/images/element.atlas.json') {
+  throw new Error('default card atlas metadata must be subpackages/game/images/element.atlas.json');
 }
 if (
-  !ASSET_MANIFEST.atlases.actions
-  || ASSET_MANIFEST.atlases.actions.image !== 'button'
-  || ASSET_MANIFEST.atlases.actions.path !== 'images/action_buttons_named_atlas.json'
+  !GAME_ASSET_MANIFEST.atlases.actions
+  || GAME_ASSET_MANIFEST.atlases.actions.image !== 'button'
+  || GAME_ASSET_MANIFEST.atlases.actions.path !== 'subpackages/game/images/action_buttons_named_atlas.json'
 ) {
-  throw new Error('default action atlas must use images/actions.png and action_buttons_named_atlas.json');
+  throw new Error('default action atlas must use subpackages/game/images/actions.png and action_buttons_named_atlas.json');
 }
-if (ASSET_MANIFEST.audio.bgm !== 'audio/bgmusic.mp3') {
-  throw new Error('default background music must be audio/bgmusic.mp3');
+if (GAME_ASSET_MANIFEST.audio.bgm !== 'subpackages/game/audio/bgmusic.mp3') {
+  throw new Error('default background music must be subpackages/game/audio/bgmusic.mp3');
 }
-await access(join(root, ASSET_MANIFEST.images.table));
-await access(join(root, ASSET_MANIFEST.images.cardFront));
-await access(join(root, ASSET_MANIFEST.atlases.cards.path));
-await access(join(root, ASSET_MANIFEST.images.button));
-await access(join(root, ASSET_MANIFEST.atlases.actions.path));
-await access(join(root, ASSET_MANIFEST.audio.bgm));
+await access(join(root, MAIN_ASSET_MANIFEST.images.table));
+await access(join(root, GAME_ASSET_MANIFEST.images.cardFront));
+await access(join(root, GAME_ASSET_MANIFEST.atlases.cards.path));
+await access(join(root, GAME_ASSET_MANIFEST.images.button));
+await access(join(root, GAME_ASSET_MANIFEST.atlases.actions.path));
+await access(join(root, GAME_ASSET_MANIFEST.audio.bgm));
 
-const atlas = JSON.parse(await readFile(join(root, ASSET_MANIFEST.atlases.cards.path), 'utf8'));
+const atlas = JSON.parse(await readFile(join(root, GAME_ASSET_MANIFEST.atlases.cards.path), 'utf8'));
 for (const size of ['big', 'small', 'mini']) {
   if (!atlas.frames || !atlas.frames[size] || typeof atlas.frames[size] !== 'object') {
     throw new Error(`missing nested atlas frame group ${size}`);
@@ -534,7 +543,7 @@ if (first24CardMap.shang.bySize.mini[0].size !== 'mini') {
   throw new Error('shang mini frame should be mapped to mini size');
 }
 
-const actionAtlas = JSON.parse(await readFile(join(root, ASSET_MANIFEST.atlases.actions.path), 'utf8'));
+const actionAtlas = JSON.parse(await readFile(join(root, GAME_ASSET_MANIFEST.atlases.actions.path), 'utf8'));
 const actionIndexMap = buildAtlasOriginalIndexMap(actionAtlas);
 const expectedActionIndexes = {
   acceptTakeover: [1, true],
@@ -556,11 +565,11 @@ Object.entries(expectedActionIndexes).forEach(([type, [originalIndex, rotateCcw]
   }
 });
 const actionLoader = new AssetLoader({
-  ...ASSET_MANIFEST,
+  ...GAME_ASSET_MANIFEST,
   atlases: {
-    ...ASSET_MANIFEST.atlases,
+    ...GAME_ASSET_MANIFEST.atlases,
     actions: {
-      ...ASSET_MANIFEST.atlases.actions,
+      ...GAME_ASSET_MANIFEST.atlases.actions,
       data: actionAtlas,
     },
   },
@@ -586,13 +595,13 @@ if (missingActionLoader.getActionSprite('chi') !== null) {
   throw new Error('missing action atlas should safely return no sprite');
 }
 
-const cardAtlas = JSON.parse(await readFile(join(root, ASSET_MANIFEST.atlases.cards.path), 'utf8'));
+const cardAtlas = JSON.parse(await readFile(join(root, GAME_ASSET_MANIFEST.atlases.cards.path), 'utf8'));
 const overlayLoader = new AssetLoader({
-  ...ASSET_MANIFEST,
+  ...GAME_ASSET_MANIFEST,
   atlases: {
-    ...ASSET_MANIFEST.atlases,
+    ...GAME_ASSET_MANIFEST.atlases,
     cards: {
-      ...ASSET_MANIFEST.atlases.cards,
+      ...GAME_ASSET_MANIFEST.atlases.cards,
       data: cardAtlas,
     },
   },
@@ -724,40 +733,40 @@ const roundResultState = {
 };
 
 for (const [assetName, assetPath] of Object.entries({
-  roundResultTitle: 'images/round_result_title.png',
-  roundResultPanel: 'images/round_result_panel.png',
-  roundResultVictory: 'images/round_result_victory.png',
-  roundResultDefeat: 'images/round_result_defeat.png',
-  roundResultContinue: 'images/round_result_continue.png',
-  roundResultHu: 'images/round_result_hu.png',
-  roundResultGrade: 'images/round_result_grade.png',
+  roundResultTitle: 'subpackages/game/images/round_result_title.png',
+  roundResultPanel: 'subpackages/game/images/round_result_panel.png',
+  roundResultVictory: 'subpackages/game/images/round_result_victory.png',
+  roundResultDefeat: 'subpackages/game/images/round_result_defeat.png',
+  roundResultContinue: 'subpackages/game/images/round_result_continue.png',
+  roundResultHu: 'subpackages/game/images/round_result_hu.png',
+  roundResultGrade: 'subpackages/game/images/round_result_grade.png',
 })) {
-  if (ASSET_MANIFEST.images[assetName] !== assetPath) {
+  if (GAME_ASSET_MANIFEST.images[assetName] !== assetPath) {
     throw new Error(`${assetName} should map to ${assetPath}`);
   }
   await access(join(root, assetPath));
 }
 for (const [assetName, assetPath] of Object.entries({
-  tableRecordHead: 'images/table_record_head.png',
-  tableRecordRank1: 'images/table_record_rank_1.png',
-  tableRecordRank2: 'images/table_record_rank_2.png',
-  tableRecordRank3: 'images/table_record_rank_3.png',
-  tableRecordRank4: 'images/table_record_rank_4.png',
-  tableRecordFirstRow: 'images/table_record_first_row.png',
-  tableRecordRow: 'images/table_record_row.png',
-  tableRecordInfo: 'images/table_record_info.png',
-  tableRecordExit: 'images/table_record_exit.png',
-  tableRecordRematch: 'images/table_record_rematch.png',
+  tableRecordHead: 'subpackages/game/images/table_record_head.png',
+  tableRecordRank1: 'subpackages/game/images/table_record_rank_1.png',
+  tableRecordRank2: 'subpackages/game/images/table_record_rank_2.png',
+  tableRecordRank3: 'subpackages/game/images/table_record_rank_3.png',
+  tableRecordRank4: 'subpackages/game/images/table_record_rank_4.png',
+  tableRecordFirstRow: 'subpackages/game/images/table_record_first_row.png',
+  tableRecordRow: 'subpackages/game/images/table_record_row.png',
+  tableRecordInfo: 'subpackages/game/images/table_record_info.png',
+  tableRecordExit: 'subpackages/game/images/table_record_exit.png',
+  tableRecordRematch: 'subpackages/game/images/table_record_rematch.png',
 })) {
-  if (ASSET_MANIFEST.images[assetName] !== assetPath) {
+  if (GAME_ASSET_MANIFEST.images[assetName] !== assetPath) {
     throw new Error(`${assetName} should map to package-compatible PNG ${assetPath}`);
   }
   await access(join(root, assetPath));
 }
-if (Object.prototype.hasOwnProperty.call(ASSET_MANIFEST.images, 'tableRecordWinner')) {
+if (Object.prototype.hasOwnProperty.call(GAME_ASSET_MANIFEST.images, 'tableRecordWinner')) {
   throw new Error('table record winner badge asset should not remain in the manifest');
 }
-if (Object.prototype.hasOwnProperty.call(ASSET_MANIFEST.images, 'roundResult')) {
+if (Object.prototype.hasOwnProperty.call(GAME_ASSET_MANIFEST.images, 'roundResult')) {
   throw new Error('the replaced full-screen round result background should not remain in the asset manifest');
 }
 
