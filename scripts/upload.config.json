@@ -2,8 +2,8 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.18",
-  "desc": "放大创建房间与等待房间页交互元素的视觉尺寸与点击热区",
+  "version": "1.0.21",
+  "desc": "修复遮罩跳变根因：去掉锁定显示对出牌回合的依赖，并清理排查用诊断日志",
   "ignores": [],
   "setting": {
     "es6": true,

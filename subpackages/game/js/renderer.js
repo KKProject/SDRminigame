@@ -1278,6 +1278,11 @@ export default class TableRenderer {
       ) return;
       const selected = state.selectedCardId === region.card.id;
       this.drawCard(ctx, region.card, region.x, region.y, region.width, region.height, true, selected, 'small');
+      if (region.legal === false) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+        roundRect(ctx, region.x, region.y, region.width, region.height, 5);
+        ctx.fill();
+      }
     });
   }
 

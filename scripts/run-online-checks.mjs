@@ -2030,25 +2030,25 @@ if (
 onlineController.lastAckedEventSeq = 9;
 if (!onlineController.applyServerSnapshot({
   ...privateResponseSnapshot,
-  version: 92,
+  version: 916,
   animation: {
     ...privateResponseSnapshot.animation,
     selfAcked: false,
   },
 })) {
-  throw new Error('online controller should apply stale unacked response-window snapshots');
+  throw new Error('online controller should apply response-window snapshots even when the server-reported ack state is stale');
 }
 if (
   onlineDatabus.animationWaiting
   || onlineDatabus.playerActions.length !== 2
   || onlineDatabus.pendingActions.length !== 0
 ) {
-  throw new Error('locally acked response-window snapshots should keep response actions visible even if a stale server snapshot says selfAcked=false');
+  throw new Error('locally acked response-window snapshots should keep response actions visible even if the server reports a stale selfAcked=false');
 }
 const looseWaitingCard = { id: 'loose-waiting-card', key: 'ren' };
 const looseWaitingSnapshot = {
   ...responseDiscardSnapshot,
-  version: 10,
+  version: 917,
   public: {
     ...responseDiscardSnapshot.public,
     playerActions: [{ type: 'peng', seat: 0, card: looseWaitingCard }, { type: 'pass', seat: 0 }],
@@ -2225,6 +2225,7 @@ if (!deltaController.applySocketDelta({
   delta: {
     appendDiscard: { seat: 0, card: { id: 'delta-discard', key: 'shang' }, index: 0 },
     publicPatch: { phase: 'ai-thinking', currentSeat: 0, pendingActions: [], playerActions: [] },
+    privatePatch: { seat: 0, playerActions: [], responseWindowId: null, actionState: 'closed', legalDiscardIds: ['keep-hand'] },
   },
 })) {
   throw new Error('client should apply a continuous discard delta');
@@ -2234,8 +2235,10 @@ if (
   || deltaDatabus.seats[0].hand.map((card) => card.id).join(',') !== 'keep-hand'
   || deltaDatabus.selectedCardId
   || deltaPlayedCount !== 1
+  || !Array.isArray(deltaDatabus.legalDiscardIds)
+  || deltaDatabus.legalDiscardIds.join(',') !== 'keep-hand'
 ) {
-  throw new Error('discard delta should append public discard, remove self hand card, and play once');
+  throw new Error('discard delta should append public discard, remove self hand card, play once, and sync legalDiscardIds from the private patch');
 }
 if (!deltaController.applySocketDelta({
   roomId: 'delta-room',

@@ -808,6 +808,7 @@ function buildGroupedHandCards(player, state, metrics) {
     selectedLift,
   } = metrics;
   const handCards = [];
+  const legalIds = Array.isArray(state.legalDiscardIds) ? new Set(state.legalDiscardIds) : null;
 
   columns.forEach((column, phraseColumn) => {
     const columnX = handX + phraseColumn * cardWidth;
@@ -831,6 +832,7 @@ function buildGroupedHandCards(player, state, metrics) {
             key: group.key,
             keyIndex: group.keyIndex,
             stackIndex: phraseStackIndex,
+            legal: !legalIds || legalIds.has(card.id),
           }
         ));
         phraseStackIndex += 1;

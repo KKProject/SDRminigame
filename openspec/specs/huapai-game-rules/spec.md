@@ -280,15 +280,24 @@ The system SHALL detect mandatory chi or peng situations, declined-then-later-ch
 - **THEN** the result MUST name the current player as loser and the other three players as winners
 
 ### Requirement: Discard Restrictions
-The system SHALL enforce phrase discard restrictions with a same-phrase reachability algorithm based only on cards actively discarded from hand, SHALL allow opening-hand `xxyy` same-phrase two-pair structures to be freely discarded, SHALL NOT let draw auto-discard (`auto-discard-draw`) consume same-phrase hand discard allowance, and SHALL treat inability to make a legal discard while not winning as circle-loss.
+The system SHALL lock an entire same-phrase hand from discard whenever it can be partitioned exactly, with no remainder, into one or more complete doors (`xyz`, `xxx`, `yyy`, or `zzz`); SHALL otherwise lock any single key that has reached three or more copies within the same-phrase hand, independent of other keys held, while leaving the other (non-tripled) keys in that phrase subject to the ordinary reachability algorithm below; SHALL enforce that ordinary reachability algorithm based only on cards actively discarded from hand for same-phrase hands that neither fully tile into doors nor contain an already-tripled key; SHALL allow opening-hand `xxyy` same-phrase two-pair structures to be freely discarded; SHALL NOT let draw auto-discard (`auto-discard-draw`) consume same-phrase hand discard allowance; and SHALL treat inability to make a legal discard while not winning as circle-loss.
 
 #### Scenario: Exact complete phrase card is discarded
 - **WHEN** a player's same-phrase hand cards are exactly `xyz`
 - **AND** the player attempts to discard `x`, `y`, or `z` from that phrase
 - **THEN** the system MUST prevent the discard for a human player or mark the player circle-loss if the violation is committed by automated play
 
+#### Scenario: A hand that fully tiles into doors is entirely locked
+- **WHEN** a player's same-phrase hand cards can be partitioned exactly into two or more complete doors with no remainder, such as `xxyyzz` (two `xyz` doors)
+- **THEN** the system MUST reject discarding any card from that same-phrase hand, for a human player, or mark the player circle-loss if the violation is committed by automated play
+
+#### Scenario: A completed same-key triplet is always locked
+- **WHEN** a player's same-phrase hand holds three or more cards of the same key, such as `xxx`, `xxxx`, or `xxxxx`
+- **THEN** the system MUST reject discarding any card of that key, regardless of how many cards of the other two keys in that phrase are also held
+- **AND** the system MUST leave the other (non-tripled) keys in that phrase subject to the ordinary reachability algorithm
+
 #### Scenario: Same-phrase discard preserves a reachable door
-- **WHEN** a player attempts to discard a card from phrase `x/y/z`
+- **WHEN** a player attempts to discard a card from phrase `x/y/z` and neither the full-tiling lock nor the completed-triplet lock applies
 - **THEN** the system MUST simulate that discard together with prior manual hand discards from the same phrase
 - **AND** the discard MUST be legal only if the remaining same-phrase hand cards can still preserve or reach at least one final door among `xyz`, `xxx`, `yyy`, or `zzz` without exceeding the phrase discard allowance, unless a more specific same-phrase discard scenario permits the discard
 
@@ -303,11 +312,11 @@ The system SHALL enforce phrase discard restrictions with a same-phrase reachabi
 - **THEN** the system MUST allow discarding `x`
 - **AND** the system MUST reject discarding `y` or `z`
 
-#### Scenario: Xxxyz supports sequence or triplet remainder
+#### Scenario: Xxxyz preserves the completed triplet
 - **WHEN** a player's same-phrase structure is `xxxyz`
-- **THEN** the system MUST allow discard paths that eventually discard `xx` and preserve `xyz`
-- **AND** the system MUST allow discard paths that eventually discard `yz` and preserve `xxx`
-- **AND** the system MUST reject any discard that can no longer reach either preserved door
+- **THEN** the system MUST reject discarding any of the three `x` cards, since they already form a completed `xxx` door
+- **AND** the system MUST allow discarding `y` and `z`
+- **AND** discarding both `y` and `z` MUST leave the preserved `xxx` triplet locked with no further legal same-phrase discard
 
 #### Scenario: Xxyy may be freely discarded
 - **WHEN** a player's opening-hand same-phrase structure is `xxyy`
@@ -321,11 +330,11 @@ The system SHALL enforce phrase discard restrictions with a same-phrase reachabi
 - **AND** the system MUST allow discarding `z` only if no further discard from that phrase is allowed afterward
 - **AND** the system MUST reject follow-up same-phrase discards after `z` because no preserved door remains reachable
 
-#### Scenario: Zzzxxy supports both target doors
+#### Scenario: Zzzxxy preserves the completed triplet
 - **WHEN** a player's same-phrase structure is `zzzxxy`
-- **THEN** the system MUST allow discard paths that eventually discard `xzz` and preserve `xyz`
-- **AND** the system MUST allow discard paths that eventually discard `xxy` and preserve `zzz`
-- **AND** the system MUST reject any discard path that cannot still reach one of those preserved doors
+- **THEN** the system MUST reject discarding any of the three `z` cards, since they already form a completed `zzz` door
+- **AND** the system MUST allow discarding `x` and `y`
+- **AND** discarding both `x` and `y` MUST leave the preserved `zzz` triplet locked with no further legal same-phrase discard
 
 #### Scenario: No legal discard exists
 - **WHEN** a player is required to discard, cannot legally discard any hand card, and does not have a legal hu

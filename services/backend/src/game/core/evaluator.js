@@ -660,7 +660,24 @@ function isOpeningTwoPairDiscardChain(handCounts, manualCounts, phraseKeys) {
 }
 
 /**
+ * 判断同门牌是否能被完整拆解成若干个门（xyz 或 xxx/yyy/zzz）、不留剩余。
+ * 枚举用几组 xyz，剩下的必须都能被3整除（凑成纯色三张）。
+ */
+function handExactlyTilesPhraseDoors(handCounts, phraseKeys) {
+  const [kx, ky, kz] = phraseKeys;
+  const cx = handCounts[kx] || 0;
+  const cy = handCounts[ky] || 0;
+  const cz = handCounts[kz] || 0;
+  const maxXyzGroups = Math.min(cx, cy, cz);
+  for (let a = 0; a <= maxXyzGroups; a += 1) {
+    if ((cx - a) % 3 === 0 && (cy - a) % 3 === 0 && (cz - a) % 3 === 0) return true;
+  }
+  return false;
+}
+
+/**
  * 判断同句出牌后是否仍保留可达门子。
+ * 已凑齐的门（整手可完整拆解成若干门，或单个键已达3张）优先锁死；
  * 常规路径要求后续能在出牌上限内留下 xyz 或 xxx/yyy/zzz；
  * 特例允许 xxyy 自由拆打，允许 xxyyz 先打单张 z 后停止。
  */
@@ -669,6 +686,11 @@ function canDiscardPreservingPhraseDoor(seat, card, rules = DEFAULT_RULES) {
   if (phraseKeys.length !== 3) return true;
 
   const handCounts = countByKey(seat.hand || []);
+
+  if (handExactlyTilesPhraseDoors(handCounts, phraseKeys)) return false;
+  if ((handCounts[card.key] || 0) >= 3) return false;
+  if (phraseKeys.some((key) => (handCounts[key] || 0) >= 3)) return true;
+
   const manualDiscardedCounts = manualDiscardedKeyCounts(seat, phraseKeys);
   if (isOpeningTwoPairDiscardChain(handCounts, manualDiscardedCounts, phraseKeys)) return true;
 
@@ -677,7 +699,7 @@ function canDiscardPreservingPhraseDoor(seat, card, rules = DEFAULT_RULES) {
   const discardedTotal = sumCounts(discardedCounts, phraseKeys);
   const originalTotal = currentTotal + discardedTotal;
   if (originalTotal <= 3) {
-    return !phraseKeys.every((key) => (handCounts[key] || 0) > 0);
+    return !phraseDoorTargets(phraseKeys).some((target) => countsContainKeys(handCounts, target));
   }
   const allowance = Math.max(0, originalTotal - 3);
   const usedAfter = discardedTotal + 1;

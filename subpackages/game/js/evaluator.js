@@ -567,11 +567,28 @@ function isOpeningTwoPairDiscardChain(handCounts, manualCounts, phraseKeys) {
   return originalValues.join(',') === '0,2,2';
 }
 
+function handExactlyTilesPhraseDoors(handCounts, phraseKeys) {
+  const [kx, ky, kz] = phraseKeys;
+  const cx = handCounts[kx] || 0;
+  const cy = handCounts[ky] || 0;
+  const cz = handCounts[kz] || 0;
+  const maxXyzGroups = Math.min(cx, cy, cz);
+  for (let a = 0; a <= maxXyzGroups; a += 1) {
+    if ((cx - a) % 3 === 0 && (cy - a) % 3 === 0 && (cz - a) % 3 === 0) return true;
+  }
+  return false;
+}
+
 function canDiscardPreservingPhraseDoor(seat, card, rules = DEFAULT_RULES) {
   const phraseKeys = getPhraseKeysForKey(card.key, rules);
   if (phraseKeys.length !== 3) return true;
 
   const handCounts = countByKey(seat.hand || []);
+
+  if (handExactlyTilesPhraseDoors(handCounts, phraseKeys)) return false;
+  if ((handCounts[card.key] || 0) >= 3) return false;
+  if (phraseKeys.some((key) => (handCounts[key] || 0) >= 3)) return true;
+
   const manualDiscardedCounts = manualDiscardedKeyCounts(seat, phraseKeys);
   if (isOpeningTwoPairDiscardChain(handCounts, manualDiscardedCounts, phraseKeys)) return true;
 
@@ -580,7 +597,7 @@ function canDiscardPreservingPhraseDoor(seat, card, rules = DEFAULT_RULES) {
   const discardedTotal = sumCounts(discardedCounts, phraseKeys);
   const originalTotal = currentTotal + discardedTotal;
   if (originalTotal <= 3) {
-    return !phraseKeys.every((key) => (handCounts[key] || 0) > 0);
+    return !phraseDoorTargets(phraseKeys).some((target) => countsContainKeys(handCounts, target));
   }
   const allowance = Math.max(0, originalTotal - 3);
   const usedAfter = discardedTotal + 1;

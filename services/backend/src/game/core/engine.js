@@ -1585,6 +1585,7 @@ function buildPrivateView(state, seatIndex) {
     playerActions: hasResponseWindow ? responseView.playerActions : ownPlayerActions,
     responseWindowId: responseView.responseWindowId,
     actionState: hasResponseWindow ? responseView.actionState : (ownPlayerActions.length ? 'available' : 'closed'),
+    legalDiscardIds: getLegalDiscards(seat, state.rules).map((card) => card.id),
   };
 }
 

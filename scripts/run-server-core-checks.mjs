@@ -137,7 +137,9 @@ const safeResponse = serverAi.chooseResponse([
 if (!safeResponse || safeResponse.type !== 'peng') {
   throw new Error('server AI should choose safe peng instead of optional zhao that immediately circle-losses');
 }
-if (!serverAi.chooseDiscard({ hand: serverDeck.filter((card) => ['shang', 'kong'].includes(card.key)).slice(0, 3) }, serverRules.DEFAULT_RULES)) {
+const discardTestHand = serverDeck.filter((card) => card.key === 'shang').slice(0, 1)
+  .concat(serverDeck.filter((card) => card.key === 'kong').slice(0, 2));
+if (!serverAi.chooseDiscard({ hand: discardTestHand }, serverRules.DEFAULT_RULES)) {
   throw new Error('server AI should choose a discard');
 }
 {

@@ -669,6 +669,7 @@ function buildLocalState(pub, priv, mySeat, prevSelectedId) {
     appearingCard: rotateAppearing(pub.appearingCard, mySeat),
     drawnCard,
     selectedCardId,
+    legalDiscardIds: priv.legalDiscardIds || [],
     recentDiscard,
     pendingActions,
     playerActions: myTurnActions,
@@ -1548,6 +1549,9 @@ export default class OnlineController {
         this.clearPendingResponseIntent(target.responseWindowId);
       }
     }
+    if (delta.privatePatch && Array.isArray(delta.privatePatch.legalDiscardIds)) {
+      target.legalDiscardIds = delta.privatePatch.legalDiscardIds;
+    }
     if (target === this.databus) this.syncZhaoPicker();
     return true;
   }
@@ -1762,6 +1766,9 @@ export default class OnlineController {
       return this.returnToLobby();
     }
     if (!res || !res.ok || !res.public) return false;
+    if (typeof res.version === 'number' && this.version >= 0 && res.version < this.version) {
+      return true;
+    }
     const incomingSeat = typeof res.yourSeat === 'number' && res.yourSeat >= 0 ? res.yourSeat : this.mySeat;
     if (incomingSeat < 0) return false;
     const privateSeat = res.private && typeof res.private.seat === 'number' ? res.private.seat : incomingSeat;
@@ -2327,6 +2334,7 @@ export default class OnlineController {
     if (this.music && this.music.playCue) this.music.playCue('tap');
 
     if (region.type === 'hand-card') {
+      if (region.legal === false) return;
       this.handleCardTap(region.card.id);
       return;
     }
