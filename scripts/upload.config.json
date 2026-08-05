@@ -2,8 +2,8 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.27",
-  "desc": "新增：庄家头像右上角显示「庄」字标识",
+  "version": "1.0.30",
+  "desc": "移除对局中的文字提示条",
   "ignores": [],
   "setting": {
     "es6": true,

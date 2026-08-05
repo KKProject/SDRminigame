@@ -485,7 +485,6 @@ export default class TableRenderer {
     this.drawMeldArea(ctx, displayState, layout);
     this.drawCenterFocus(ctx, displayState, layout);
     this.drawPlayerHand(ctx, displayState, layout);
-    this.drawPrompt(ctx, displayState, layout);
     this.drawHeldDiscardFallback(ctx, displayState, layout);
     this.drawHeldDrawFallback(ctx, displayState, layout);
     this.drawManagedAnimations(ctx, layout);
@@ -835,21 +834,9 @@ export default class TableRenderer {
     }
   }
 
-  drawPrompt(ctx, state, layout) {
-    const text = state.feedback || this.getPhaseText(state);
-    if (layout.actionModal && layout.actionModal.visible) {
-      return;
-    }
-
-    ctx.font = layout.isLandscape ? '14px Arial' : '15px Arial';
-    this.drawLightText(ctx, text, layout.prompt.x + 10, layout.prompt.y + 20, layout.prompt.width - 20);
-  }
-
   drawCenterFocus(ctx, state, layout) {
     const area = layout.centerFocus;
     ctx.font = '12px Arial';
-    const turnName = state.seats[state.currentSeat] ? state.seats[state.currentSeat].name : '-';
-    this.drawLightText(ctx, `行牌:${turnName}`, area.x, area.y + 18, 96);
     if (state.jiangCard) {
       this.drawCard(ctx, state.jiangCard, area.x + area.width - 28, area.y, 22, Math.round(22 / CARD_ASPECT_RATIO), true, false, 'mini');
       this.drawLightText(ctx, '将', area.x + area.width - 48, area.y + 17, 18);
@@ -1268,17 +1255,6 @@ export default class TableRenderer {
         this.drawCard(ctx, card, x, area.y + rowIndex * cardHeight, cardWidth, cardHeight, true, false, 'mini');
       });
     });
-  }
-
-  getPhaseText(state) {
-    if (state.phase === 'takeover-choice') return '请选择是否接庄';
-    if (state.phase === 'dealer-gift') {
-      return state.currentSeat === state.humanSeat ? '请选择一张牌交给接庄者' : '等待原庄家选牌';
-    }
-    if (state.phase === 'ai-thinking') return `${state.seats[state.currentSeat].name} 正在思考`;
-    if (state.phase === 'human-response') return '请选择吃、碰、招、踏、胡，或跳过';
-    if (state.currentSeat === state.humanSeat) return '轮到你出牌';
-    return `${state.seats[state.currentSeat].name} 行牌中`;
   }
 
   drawPlayerHand(ctx, state, layout) {
