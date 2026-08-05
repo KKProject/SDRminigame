@@ -1674,6 +1674,7 @@ export default class TableRenderer {
       }
       const characters = gradeText.slice(0, 2).split('');
       ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
       ctx.font = `bold ${Math.max(13, Math.floor(grade.width * 0.54))}px serif`;
       ctx.lineWidth = 2;
       ctx.strokeStyle = '#67220b';
@@ -1683,6 +1684,7 @@ export default class TableRenderer {
         if (ctx.strokeText) ctx.strokeText(character, grade.x + grade.width / 2, textY);
         ctx.fillText(character, grade.x + grade.width / 2, textY);
       });
+      ctx.textBaseline = 'alphabetic';
     }
     ctx.textAlign = 'left';
     return { hu, grade, gradeText };
