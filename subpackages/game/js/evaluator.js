@@ -290,6 +290,8 @@ export function findAppearingCardActions(state, sourceSeat, incomingCard, source
           label: ACTION_LABELS.hu,
           responseIndex,
           win,
+          // 有胡必须胡：不能放弃胡去选其它响应，也不能过（见 recordResponsePass）。
+          forced: true,
         });
       }
     }

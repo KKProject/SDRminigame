@@ -822,6 +822,28 @@ function makeResponseEngine() {
 }
 
 {
+  const { engine, incoming } = makeResponseEngine();
+  engine.state.seats[1].hand = takeServerCards(['shang', 'shang'], [incoming.id]);
+  const actions = [
+    { type: 'hu', seat: 1, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: [], priority: serverRules.ACTION_PRIORITY.hu, label: '胡', responseIndex: 0, win: { summary: '测试胡', points: 1, scoring: {}, grade: '屁胡', pattern: [], doors: [] }, forced: true },
+    { type: 'peng', seat: 1, card: incoming, sourceSeat: 0, sourceType: 'discard', keys: ['shang', 'shang'], priority: serverRules.ACTION_PRIORITY.peng, label: '碰', responseIndex: 0 },
+  ];
+  engine.handleResponseWindow(actions, 0);
+  const huPrivateView = serverEngine.buildPrivateView(engine.state, 1);
+  if (
+    !huPrivateView.playerActions
+    || huPrivateView.playerActions.length !== 1
+    || huPrivateView.playerActions[0].type !== 'hu'
+  ) {
+    throw new Error('a seat that can hu should only be offered hu, with peng and pass suppressed');
+  }
+  engine.submitResponse(1, { type: 'pass' });
+  if (engine.state.phase !== 'result' || !engine.state.result || engine.state.result.type !== 'circle-loss') {
+    throw new Error('passing when hu is available should resolve as circle-loss');
+  }
+}
+
+{
   const pengBlockState = { seats: serverCards.createSeats(serverRules.DEFAULT_RULES) };
   pengBlockState.seats[0].hand = takeServerCards(['shang', 'shang']);
   pengBlockState.seats[0].history.actionHistory.push({ type: 'discard', key: 'shang' });

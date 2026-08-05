@@ -597,7 +597,10 @@ class HuapaiEngine {
     const actionsBySeat = {};
     const decisions = {};
     seats.forEach((seatIndex) => {
-      actionsBySeat[seatIndex] = this.actionsForSeat(candidates, seatIndex);
+      const seatActions = this.actionsForSeat(candidates, seatIndex);
+      // 有胡必须胡：本座位若能胡，屏蔽同座位的其它响应（招/碰/吃/踏），只留胡。
+      const seatHuActions = seatActions.filter((action) => action.type === 'hu');
+      actionsBySeat[seatIndex] = seatHuActions.length ? seatHuActions : seatActions;
       decisions[seatIndex] = { status: 'pending' };
     });
     state.responseWindow = {
@@ -1420,10 +1423,14 @@ function buildPrivateResponseView(state, seatIndex) {
       actionState: 'superseded',
     };
   }
+  // forced 动作（有胡必须胡、特殊搭子必须先接）不提供过牌选项，见 recordResponsePass。
+  const hasForcedAction = seatActions.some((action) => action.forced);
   return {
     seat: seatIndex,
     responseWindowId: window.id,
-    playerActions: seatActions.concat([{ type: 'pass', seat: seatIndex, label: ACTION_LABELS.pass }]),
+    playerActions: hasForcedAction
+      ? seatActions
+      : seatActions.concat([{ type: 'pass', seat: seatIndex, label: ACTION_LABELS.pass }]),
     actionState: 'available',
   };
 }

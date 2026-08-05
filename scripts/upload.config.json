@@ -2,8 +2,8 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.22",
-  "desc": "修复特殊搭子强制打牌检测遗漏：吃碰后仅剩一张的锁定提示，六种手牌形态里只有两种生效的问题",
+  "version": "1.0.23",
+  "desc": "新增规则：能胡时只显示胡，屏蔽同座位其它响应（招碰吃踏）和过牌选项",
   "ignores": [],
   "setting": {
     "es6": true,
