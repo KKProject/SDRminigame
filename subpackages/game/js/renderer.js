@@ -766,6 +766,27 @@ export default class TableRenderer {
       roundRect(ctx, avatar.x, avatar.y, avatar.width, avatar.height, 3);
       ctx.stroke();
 
+      if (seat.isDealer) {
+        const badgeSize = Math.max(14, Math.round(avatar.width * 0.46));
+        const badgeX = avatar.x + avatar.width;
+        const badgeY = avatar.y;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(badgeX, badgeY, badgeSize / 2, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.fillStyle = '#d92d20';
+        ctx.fill();
+        ctx.strokeStyle = '#ffd27a';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#fff6d9';
+        ctx.font = `bold ${Math.max(10, Math.round(badgeSize * 0.62))}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('庄', badgeX, badgeY + 1);
+        ctx.restore();
+      }
+
       const totalScore = typeof seat.score === 'number' ? seat.score : 0;
       const operationFu = calculateOperationFu(seat.melds || [], state.rules, {
         jiangPhraseId: state.jiangPhraseId,

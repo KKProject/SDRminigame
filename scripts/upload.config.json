@@ -2,8 +2,8 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.25",
-  "desc": "修复胡牌结果页：等级徽标（平胡/小甲/大甲/场胡）竖排文字垂直居中偏上",
+  "version": "1.0.27",
+  "desc": "新增：庄家头像右上角显示「庄」字标识",
   "ignores": [],
   "setting": {
     "es6": true,
