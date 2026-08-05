@@ -1122,6 +1122,7 @@ class HuapaiEngine {
     this.state.appearingCard = null;
     this.state.drawnCard = null;
     this.state.recentDiscard = null;
+    this.state.nextDealerSeat = winner; // 胡牌玩家做下一局庄家
     const point = win.points || 0;
     const payers = this.state.seats.map((seat) => seat.id).filter((seat) => seat !== winner);
     const payments = payers.map((payer) => ({ from: payer, to: winner, points: point }));
@@ -1170,6 +1171,7 @@ class HuapaiEngine {
     this.state.selectedCardId = null;
     this.state.appearingCard = null;
     this.state.drawnCard = null;
+    this.state.nextDealerSeat = nextSeat(this.state.dealerSeat, this.rules); // 进圈不论何人违规，庄家下家做下一局庄家
     this.state.result = result;
     result.settlement.payments.forEach((payment) => {
       this.state.seats[payment.from].score -= payment.points;
@@ -1186,6 +1188,7 @@ class HuapaiEngine {
     this.state.playerActions = [];
     this.state.responseWindow = null;
     this.state.appearingCard = null;
+    this.state.nextDealerSeat = this.state.dealerSeat; // 荒庄庄家不变
     this.state.result = { type: RESULT_TYPES.DRAW, reasonCode: DRAW_ROUND_REASONS.EXHAUSTED_DECK, summary: '荒庄' };
     this.emitPublicEvent('draw-round', { result: this.state.result });
   }

@@ -844,6 +844,35 @@ function makeResponseEngine() {
 }
 
 {
+  const { engine } = makeResponseEngine();
+  engine.finishWin(2, { id: 'dealer-rotation-win-card', key: 'shang' }, {
+    points: 1, summary: '测试胡', scoring: {}, grade: '屁胡', pattern: [], doors: [],
+  });
+  if (engine.state.nextDealerSeat !== 2) {
+    throw new Error('the winning seat should become next round\'s dealer regardless of who the current dealer is');
+  }
+}
+
+{
+  const { engine } = makeResponseEngine();
+  if (engine.state.dealerSeat !== 0) {
+    throw new Error('dealer-rotation circle-loss fixture should start with seat 0 as dealer');
+  }
+  engine.finishCircleLoss(2, '测试进圈');
+  if (engine.state.nextDealerSeat !== 1) {
+    throw new Error('circle-loss should advance the dealer to the current dealer\'s next seat, not the violator\'s next seat');
+  }
+}
+
+{
+  const { engine } = makeResponseEngine();
+  engine.finishDraw();
+  if (engine.state.nextDealerSeat !== engine.state.dealerSeat) {
+    throw new Error('an exhausted-deck draw should keep the same dealer for the next round');
+  }
+}
+
+{
   const pengBlockState = { seats: serverCards.createSeats(serverRules.DEFAULT_RULES) };
   pengBlockState.seats[0].hand = takeServerCards(['shang', 'shang']);
   pengBlockState.seats[0].history.actionHistory.push({ type: 'discard', key: 'shang' });
