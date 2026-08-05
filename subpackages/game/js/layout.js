@@ -596,17 +596,28 @@ function createSeatStatusAreas(bounds, isLandscape) {
   const avatarSize = isLandscape
     ? clamp(Math.floor(height * 0.12), 34, 46)
     : clamp(Math.floor(width * 0.11), 34, 42);
-  const textHeight = 14;
-  const statusHeight = avatarSize + textHeight * 2 + 4;
-  const statusWidth = avatarSize + 8;
+  // 半透明框紧贴头像，左右各留 2px；"分数：N"/"福数：N" 这种带文字的 label 比头像宽，
+  // 单独按更宽的 statusWidth 居中显示，不撑大框本身——框和头像共享同一条中心线。
+  const boxMarginX = 2;
+  const boxPaddingY = 3;
+  const scoreHeight = 14;
+  const scoreGap = 2;
+  const fuGap = 3;
+  const fuHeight = 14;
+  const boxWidth = avatarSize + boxMarginX * 2;
+  const statusWidth = Math.max(boxWidth, 68);
+  const boxHeight = boxPaddingY + avatarSize + scoreGap + scoreHeight + boxPaddingY;
+  const statusHeight = boxHeight + fuGap + fuHeight;
   const build = (side, seat, x, y) => {
-    const avatar = rect(x + 4, y, avatarSize, avatarSize, { type: 'avatar', side, seat });
-    const totalScore = rect(x, y + avatarSize + 3, statusWidth, textHeight, { type: 'total-score', side, seat });
-    const roundFu = rect(x, y + avatarSize + textHeight + 5, statusWidth, textHeight, { type: 'round-fu', side, seat });
+    const avatar = rect(x + Math.floor((statusWidth - avatarSize) / 2), y + boxPaddingY, avatarSize, avatarSize, { type: 'avatar', side, seat });
+    const box = rect(avatar.x - boxMarginX, y, boxWidth, boxHeight, { type: 'status-box', side, seat });
+    const totalScore = rect(x, avatar.y + avatar.height + scoreGap, statusWidth, scoreHeight, { type: 'total-score', side, seat });
+    const roundFu = rect(x, y + boxHeight + fuGap, statusWidth, fuHeight, { type: 'round-fu', side, seat });
     return rect(x, y, statusWidth, statusHeight, {
       type: 'seat-status',
       side,
       seat,
+      box,
       avatar,
       totalScore,
       roundFu,

@@ -714,10 +714,10 @@ export default class TableRenderer {
     ctx.fillRect(layout.safe, layout.safe, layout.width - layout.safe * 2, layout.height - layout.safe * 2);
   }
 
-  drawTextShadow(ctx, text, x, y) {
+  drawTextShadow(ctx, text, x, y, color = '#fff7dc') {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.58)';
     ctx.fillText(text, x + 1, y + 1);
-    ctx.fillStyle = '#fff7dc';
+    ctx.fillStyle = color;
     ctx.fillText(text, x, y);
   }
 
@@ -745,7 +745,19 @@ export default class TableRenderer {
     Object.values(layout.seatStatusAreas || {}).forEach((area) => {
       const seat = state.seats[area.seat];
       if (!seat) return;
+      const box = area.box;
       const avatar = area.avatar;
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(8, 14, 24, 0.55)';
+      roundRect(ctx, box.x, box.y, box.width, box.height, 6);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 214, 102, 0.35)';
+      ctx.lineWidth = 1;
+      roundRect(ctx, box.x, box.y, box.width, box.height, 6);
+      ctx.stroke();
+      ctx.restore();
+
       const avatarImage = seat.avatarUrl && this.assets.getRemoteImage
         ? this.assets.getRemoteImage(seat.avatarUrl)
         : null;
@@ -759,6 +771,7 @@ export default class TableRenderer {
         ctx.font = `${Math.max(13, Math.floor(avatar.height * 0.34))}px Arial`;
         ctx.textAlign = 'center';
         ctx.fillText((seat.name || '?').slice(0, 1), avatar.x + avatar.width / 2, avatar.y + avatar.height / 2 + 5);
+        ctx.textAlign = 'left';
       }
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.70)';
       ctx.lineWidth = 1;
@@ -790,9 +803,10 @@ export default class TableRenderer {
       const operationFu = calculateOperationFu(seat.melds || [], state.rules, {
         jiangPhraseId: state.jiangPhraseId,
       }).totalFu;
-      ctx.font = '12px Arial';
-      this.drawCenteredTextShadow(ctx, `${totalScore > 0 ? '+' : ''}${totalScore}`, area.totalScore.x + area.totalScore.width / 2, area.totalScore.y + 11);
-      this.drawCenteredTextShadow(ctx, `${operationFu}福`, area.roundFu.x + area.roundFu.width / 2, area.roundFu.y + 11);
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 12px Arial';
+      this.drawTextShadow(ctx, `${totalScore}`, area.totalScore.x + area.totalScore.width / 2, area.totalScore.y + 11, '#f6bd4b');
+      this.drawTextShadow(ctx, `福数：${operationFu}`, area.roundFu.x + area.roundFu.width / 2, area.roundFu.y + 11, '#fff');
       ctx.textAlign = 'left';
     });
   }

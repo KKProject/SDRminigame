@@ -2,8 +2,8 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.30",
-  "desc": "移除对局中的文字提示条",
+  "version": "1.0.33",
+  "desc": "半透明框缩窄为紧贴头像，左右各留2px",
   "ignores": [],
   "setting": {
     "es6": true,
