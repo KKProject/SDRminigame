@@ -1570,7 +1570,7 @@ export default class TableRenderer {
     );
     if (detail.winningCard) {
       columns.push({
-        label: '',
+        label: '胡',
         cards: [detail.winningCard],
         winning: true,
       });

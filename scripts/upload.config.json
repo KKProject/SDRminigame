@@ -2,8 +2,8 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.23",
-  "desc": "新增规则：能胡时只显示胡，屏蔽同座位其它响应（招碰吃踏）和过牌选项",
+  "version": "1.0.24",
+  "desc": "修复胡牌结果页：单独一列的胡牌上方补上「胡」字标签",
   "ignores": [],
   "setting": {
     "es6": true,

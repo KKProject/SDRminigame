@@ -1663,7 +1663,7 @@ if (
   !winningMetrics
   || winningMetrics.cardWidth < 13
   || winningMetrics.cardWidth > 23
-  || winningLabels.map((item) => item.text).join(',') !== '吃,胡,小,甲'
+  || winningLabels.map((item) => item.text).join(',') !== '吃,胡,胡,小,甲'
   || duplicatedWinningCards.length !== 2
   || duplicatedWinningCards[0].x === duplicatedWinningCards[1].x
   || miniPositions.filter((item) => samePhraseCards.some((card) => card.id === item.cardId)).length !== 4
