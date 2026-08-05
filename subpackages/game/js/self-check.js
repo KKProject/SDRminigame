@@ -299,6 +299,12 @@ export function runSelfChecks() {
   const specialTaziHand = cardsFor(['shang', 'shang', 'da']);
   assert(getSpecialTaziRequirement(specialTaziHand, cardsFor(['ren'])[0], DEFAULT_RULES, 'chi').pattern === 'xxy', 'xxy plus z should require chi');
   assert(getSpecialTaziRequirement(specialTaziHand, cardsFor(['shang'])[0], DEFAULT_RULES, 'peng').pattern === 'xxy', 'xxy plus x should require peng');
+  const xxzTaziHand = cardsFor(['shang', 'shang', 'ren']);
+  assert(getSpecialTaziRequirement(xxzTaziHand, cardsFor(['da'])[0], DEFAULT_RULES, 'chi').pattern === 'xxz', 'xxz plus y should require chi');
+  assert(getSpecialTaziRequirement(xxzTaziHand, cardsFor(['shang'])[0], DEFAULT_RULES, 'peng').pattern === 'xxz', 'xxz plus x should require peng');
+  const zzxTaziHand = cardsFor(['ren', 'ren', 'shang']);
+  assert(getSpecialTaziRequirement(zzxTaziHand, cardsFor(['da'])[0], DEFAULT_RULES, 'chi').pattern === 'zzx', 'zzx plus y should require chi');
+  assert(getSpecialTaziRequirement(zzxTaziHand, cardsFor(['ren'])[0], DEFAULT_RULES, 'peng').pattern === 'zzx', 'zzx plus z should require peng');
   assert(createChiPenaltyKey({ card: cardsFor(['ren'])[0] }) === 'sdr:ren', 'chi penalty key should include phrase and missing card');
   ['shang', 'da', 'ren'].forEach((incomingKey) => {
     const protectedPhraseState = makeState();

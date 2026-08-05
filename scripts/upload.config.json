@@ -2,8 +2,8 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.21",
-  "desc": "修复遮罩跳变根因：去掉锁定显示对出牌回合的依赖，并清理排查用诊断日志",
+  "version": "1.0.22",
+  "desc": "修复特殊搭子强制打牌检测遗漏：吃碰后仅剩一张的锁定提示，六种手牌形态里只有两种生效的问题",
   "ignores": [],
   "setting": {
     "es6": true,

@@ -347,22 +347,20 @@ export function getSpecialTaziRequirement(hand, incomingCard, rules = DEFAULT_RU
   if (phraseKeys.length !== 3) return null;
   const phraseCards = hand.filter((card) => phraseKeys.indexOf(card.key) >= 0);
   if (phraseCards.length !== 3) return null;
-  const [x, y, z] = phraseKeys;
   const counts = countByKey(phraseCards);
-  const signature = phraseKeys.map((key) => key.repeat(counts[key] || 0)).join('');
-  const table = {
-    [x + x + y]: { pattern: 'xxy', chiKey: z, pengKey: x },
-    [y + y + z]: { pattern: 'yyz', chiKey: x, pengKey: y },
-    [z + z + x]: { pattern: 'zzx', chiKey: y, pengKey: z },
-    [z + z + y]: { pattern: 'zzy', chiKey: x, pengKey: z },
-  };
-  const match = table[signature];
-  if (!match) return null;
-  if (incomingCard.key === match.chiKey && (!actionType || actionType === 'chi')) {
-    return { actionType: 'chi', pattern: match.pattern, missingKey: match.chiKey };
+  const labels = ['x', 'y', 'z'];
+  const pairIndex = phraseKeys.findIndex((key) => (counts[key] || 0) === 2);
+  const singleIndex = phraseKeys.findIndex((key) => (counts[key] || 0) === 1);
+  const missingIndex = phraseKeys.findIndex((key) => (counts[key] || 0) === 0);
+  if (pairIndex < 0 || singleIndex < 0 || missingIndex < 0) return null;
+  const pairKey = phraseKeys[pairIndex];
+  const missingKey = phraseKeys[missingIndex];
+  const pattern = `${labels[pairIndex]}${labels[pairIndex]}${labels[singleIndex]}`;
+  if (incomingCard.key === missingKey && (!actionType || actionType === 'chi')) {
+    return { actionType: 'chi', pattern, missingKey };
   }
-  if (incomingCard.key === match.pengKey && (!actionType || actionType === 'peng')) {
-    return { actionType: 'peng', pattern: match.pattern, missingKey: match.pengKey };
+  if (incomingCard.key === pairKey && (!actionType || actionType === 'peng')) {
+    return { actionType: 'peng', pattern, missingKey: pairKey };
   }
   return null;
 }
