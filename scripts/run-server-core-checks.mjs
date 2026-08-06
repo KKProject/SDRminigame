@@ -999,31 +999,43 @@ await rematchDb.collection('rooms').doc(rematchRoomId).set({
   }),
 });
 const hostRematch = await room.requestRematch({ roomId: rematchRoomId }, { db: rematchDb, OPENID: 'host-openid' });
-if (!hostRematch.ok || !hostRematch.rematch || !hostRematch.rematch.active || hostRematch.rematchStarted) {
-  throw new Error('host should be able to request rematch and wait for other humans');
-}
 if (
-  !hostRematch.public.tableRecord
-  || hostRematch.public.tableRecord.completedRounds !== 2
-  || hostRematch.public.tableRecord.players[0].winRounds !== 1
-  || hostRematch.public.tableRecord.players[0].totalScore !== 12
-  || JSON.stringify(hostRematch.public.tableRecord).includes('openid')
+  !hostRematch.ok
+  || hostRematch.status !== 'waiting'
+  || !hostRematch.room
+  || hostRematch.room.players.length !== 2
+  || hostRematch.room.players.some((player) => player.ready)
+  || hostRematch.room.rematchInvite
 ) {
-  throw new Error('final table record should expose idempotent scores and wins without openid');
+  throw new Error('host requesting a rematch should land directly in a real waiting room, not stay on the result screen');
 }
 const repeatedHostRematch = await room.requestRematch(
   { roomId: rematchRoomId },
   { db: rematchDb, OPENID: 'host-openid' }
 );
+if (repeatedHostRematch.ok || repeatedHostRematch.error !== 'ROOM_NOT_FINISHED') {
+  throw new Error('requesting a rematch again once the room already moved to waiting should be rejected');
+}
+const guestInfoBeforeAgree = await room.roomInfo({ roomId: rematchRoomId }, { db: rematchDb, OPENID: 'guest-openid' });
 if (
-  repeatedHostRematch.public.tableRecord.players[0].winRounds !== 1
-  || repeatedHostRematch.public.tableRecord.players[0].totalScore !== 12
+  !guestInfoBeforeAgree.ok
+  || !guestInfoBeforeAgree.room.rematchInvite
+  || guestInfoBeforeAgree.room.rematchInvite.requestedByName !== '房主'
 ) {
-  throw new Error('repeated final-state reads must not apply the same settlement twice');
+  throw new Error('a pending invitee should see a non-null rematchInvite naming the requester, to gate the accept/decline modal');
 }
 const guestRematch = await room.requestRematch({ roomId: rematchRoomId }, { db: rematchDb, OPENID: 'guest-openid' });
-if (!guestRematch.ok || !guestRematch.rematchStarted || guestRematch.status !== 'playing' || guestRematch.public.round !== 1) {
-  throw new Error('all human approvals should restart the same room with round counter reset');
+if (!guestRematch.ok || guestRematch.status !== 'waiting' || guestRematch.room.rematchInvite) {
+  throw new Error('a pending invitee agreeing should land in the same waiting room with their own invite cleared');
+}
+await room.setReady({ roomId: rematchRoomId, ready: true }, { db: rematchDb, OPENID: 'guest-openid' });
+const hostReadyAfterRematch = await room.setReady({ roomId: rematchRoomId, ready: true }, { db: rematchDb, OPENID: 'host-openid' });
+if (!hostReadyAfterRematch.room.canStart) {
+  throw new Error('both players readying up after a rematch invite should let the host start, same as a fresh room');
+}
+const restartedRematch = await room.startRound({ roomId: rematchRoomId }, { db: rematchDb, OPENID: 'host-openid' });
+if (!restartedRematch.ok || restartedRematch.status !== 'playing' || restartedRematch.public.round !== 1) {
+  throw new Error('starting after a rematch invite should begin a fresh round 1, only once the host explicitly starts');
 }
 const restartedRematchRoom = (await rematchDb.collection('rooms').doc(rematchRoomId).get()).data;
 if (
@@ -1034,6 +1046,189 @@ if (
   throw new Error('starting a rematch should clear table record counters and cumulative scores');
 }
 
+{
+  const nonHostDb = new MemoryDocumentDatabase();
+  const nonHostRoomId = '991128';
+  const nonHostEngine = new serverEngine.HuapaiEngine(serverRules.DEFAULT_RULES);
+  nonHostEngine.startRound({
+    seed: 5005,
+    players: [
+      { openid: 'nh-host', nickName: '房主', isHuman: true },
+      { openid: 'nh-guest', nickName: '客人', isHuman: true },
+      { isHuman: false },
+      { isHuman: false },
+    ],
+  });
+  nonHostEngine.state.phase = 'result';
+  nonHostEngine.state.round = 2;
+  nonHostEngine.state.result = { type: 'draw-round', summary: '测试' };
+  const nonHostPlayers = [
+    { seat: 0, openid: 'nh-host', nickName: '房主', avatarUrl: '', isHuman: true, online: true, ready: true },
+    { seat: 1, openid: 'nh-guest', nickName: '客人', avatarUrl: '', isHuman: true, online: true, ready: true },
+  ];
+  await nonHostDb.collection('rooms').doc(nonHostRoomId).set({
+    data: room.documentData({
+      _id: nonHostRoomId,
+      status: 'tableResult',
+      seatCount: 4,
+      players: nonHostPlayers,
+      playerOpenids: nonHostPlayers.map((player) => player.openid),
+      settings: { maxRounds: 2 },
+      hostOpenid: 'nh-host',
+      version: 1,
+      state: nonHostEngine.state,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }),
+  });
+  const nonHostAttempt = await room.requestRematch({ roomId: nonHostRoomId }, { db: nonHostDb, OPENID: 'nh-guest' });
+  if (nonHostAttempt.ok || nonHostAttempt.error !== 'NOT_HOST') {
+    throw new Error('a non-host should not be able to initiate a rematch');
+  }
+}
+
+{
+  const declineDb = new MemoryDocumentDatabase();
+  const declineRoomId = '991129';
+  const declineEngine = new serverEngine.HuapaiEngine(serverRules.DEFAULT_RULES);
+  declineEngine.startRound({
+    seed: 3003,
+    players: [
+      { openid: 'decline-host', nickName: '房主', isHuman: true },
+      { openid: 'decline-guest', nickName: '客人', isHuman: true },
+      { isHuman: false },
+      { isHuman: false },
+    ],
+  });
+  declineEngine.state.phase = 'result';
+  declineEngine.state.round = 2;
+  declineEngine.state.result = { type: 'draw-round', summary: '测试' };
+  const declinePlayers = [
+    { seat: 0, openid: 'decline-host', nickName: '房主', avatarUrl: '', isHuman: true, online: true, ready: true },
+    { seat: 1, openid: 'decline-guest', nickName: '客人', avatarUrl: '', isHuman: true, online: true, ready: true },
+  ];
+  await declineDb.collection('rooms').doc(declineRoomId).set({
+    data: room.documentData({
+      _id: declineRoomId,
+      status: 'tableResult',
+      seatCount: 4,
+      players: declinePlayers,
+      playerOpenids: declinePlayers.map((player) => player.openid),
+      settings: { maxRounds: 2 },
+      hostOpenid: 'decline-host',
+      version: 1,
+      state: declineEngine.state,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }),
+  });
+  await room.requestRematch({ roomId: declineRoomId }, { db: declineDb, OPENID: 'decline-host' });
+  const declined = await room.requestRematch(
+    { roomId: declineRoomId, accept: false },
+    { db: declineDb, OPENID: 'decline-guest' }
+  );
+  if (!declined.ok || !declined.declined || !declined.left || declined.status !== 'closed') {
+    throw new Error('declining a rematch invite should close the room once too few humans remain');
+  }
+}
+
+{
+  const threeDb = new MemoryDocumentDatabase();
+  const threeRoomId = '991130';
+  const threeEngine = new serverEngine.HuapaiEngine(serverRules.DEFAULT_RULES);
+  threeEngine.startRound({
+    seed: 4004,
+    players: [
+      { openid: 'three-host', nickName: '房主', isHuman: true },
+      { openid: 'three-guest-a', nickName: '客甲', isHuman: true },
+      { openid: 'three-guest-b', nickName: '客乙', isHuman: true },
+      { isHuman: false },
+    ],
+  });
+  threeEngine.state.phase = 'result';
+  threeEngine.state.round = 2;
+  threeEngine.state.result = { type: 'draw-round', summary: '测试' };
+  const threePlayers = [
+    { seat: 0, openid: 'three-host', nickName: '房主', avatarUrl: '', isHuman: true, online: true, ready: true },
+    { seat: 1, openid: 'three-guest-a', nickName: '客甲', avatarUrl: '', isHuman: true, online: true, ready: true },
+    { seat: 2, openid: 'three-guest-b', nickName: '客乙', avatarUrl: '', isHuman: true, online: true, ready: true },
+  ];
+  await threeDb.collection('rooms').doc(threeRoomId).set({
+    data: room.documentData({
+      _id: threeRoomId,
+      status: 'tableResult',
+      seatCount: 4,
+      players: threePlayers,
+      playerOpenids: threePlayers.map((player) => player.openid),
+      settings: { maxRounds: 2 },
+      hostOpenid: 'three-host',
+      version: 1,
+      state: threeEngine.state,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }),
+  });
+  await room.requestRematch({ roomId: threeRoomId }, { db: threeDb, OPENID: 'three-host' });
+  const declinedThree = await room.requestRematch(
+    { roomId: threeRoomId, accept: false },
+    { db: threeDb, OPENID: 'three-guest-a' }
+  );
+  if (!declinedThree.ok || declinedThree.status !== 'waiting' || declinedThree.closed) {
+    throw new Error('declining in a 3+ human room should keep the room waiting instead of closing it');
+  }
+  const threeRoomAfterDecline = (await threeDb.collection('rooms').doc(threeRoomId).get()).data;
+  if (threeRoomAfterDecline.players.some((player) => player.openid === 'three-guest-a')) {
+    throw new Error('the declining player should be removed from room.players, freeing the seat for AI or a new join');
+  }
+}
+
+{
+  // 受邀者迟迟不表态时的兜底：deadlineAt 已过的 rematchInvite 应该在下一次进入房间时
+  // （这里用 roomInfo 模拟）被懒惰地清理掉，避免房主被永久卡在等待室里。
+  const expireDb = new MemoryDocumentDatabase();
+  const expireRoomId = '991131';
+  const expirePlayers = [
+    { seat: 0, openid: 'expire-host', nickName: '房主', avatarUrl: '', isHuman: true, online: true, ready: false },
+    { seat: 1, openid: 'expire-guest-a', nickName: '客甲', avatarUrl: '', isHuman: true, online: true, ready: false },
+    { seat: 2, openid: 'expire-guest-b', nickName: '客乙', avatarUrl: '', isHuman: true, online: true, ready: false },
+  ];
+  await expireDb.collection('rooms').doc(expireRoomId).set({
+    data: room.documentData({
+      _id: expireRoomId,
+      status: 'waiting',
+      seatCount: 4,
+      players: expirePlayers,
+      playerOpenids: expirePlayers.map((player) => player.openid),
+      settings: { maxRounds: 2 },
+      hostOpenid: 'expire-host',
+      version: 1,
+      rematchInvite: {
+        id: 'stale-invite',
+        requestedBy: 'expire-host',
+        pendingOpenids: ['expire-guest-b'],
+        createdAt: Date.now() - 60000,
+        deadlineAt: Date.now() - 1000,
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }),
+  });
+  const expiredInfo = await room.roomInfo({ roomId: expireRoomId }, { db: expireDb, OPENID: 'expire-host' });
+  if (
+    !expiredInfo.ok
+    || expiredInfo.room.rematchInvite
+    || expiredInfo.room.status !== 'waiting'
+    || expiredInfo.room.players.length !== 2
+    || expiredInfo.room.players.some((player) => player.openid === 'expire-guest-b')
+  ) {
+    throw new Error('a rematch invite past its deadline should silently drop the non-responding invitee without leaving the host stuck');
+  }
+  const expireRoomAfter = (await expireDb.collection('rooms').doc(expireRoomId).get()).data;
+  if (expireRoomAfter.status !== 'waiting' || expireRoomAfter.rematchInvite || expireRoomAfter.playerOpenids.includes('expire-guest-b')) {
+    throw new Error('an expired rematch invite should be persisted as cleared, not just hidden in the roomInfo response');
+  }
+}
+
 const legacyDrawRoomId = '991119';
 const legacyDrawState = JSON.parse(JSON.stringify(rematchEngine.state));
 legacyDrawState.phase = 'result';
@@ -1042,9 +1237,13 @@ legacyDrawState.result = { type: 'draw-round', summary: '无赢家' };
 const legacyDrawPlayers = [
   { seat: 0, openid: 'legacy-draw-host', nickName: '旧房主', avatarUrl: '', isHuman: true, online: true, ready: true },
   { seat: 1, openid: 'legacy-draw-guest', nickName: '旧客人', avatarUrl: '', isHuman: true, online: true, ready: true },
+  // 第三位真人是为了让下面 leaveRoom 的用例在客人离开后房间仍满足 MIN_HUMANS，
+  // 不会被顺带关闭——关闭后 room.status 变成 'closed'，buildTableRecord 就会返回 null。
+  { seat: 2, openid: 'legacy-draw-third', nickName: '旧闲家', avatarUrl: '', isHuman: true, online: true, ready: true },
 ];
 legacyDrawState.seats[0].openid = 'legacy-draw-host';
 legacyDrawState.seats[1].openid = 'legacy-draw-guest';
+legacyDrawState.seats[2].openid = 'legacy-draw-third';
 await rematchDb.collection('rooms').doc(legacyDrawRoomId).set({
   data: room.documentData({
     _id: legacyDrawRoomId,
@@ -1060,9 +1259,11 @@ await rematchDb.collection('rooms').doc(legacyDrawRoomId).set({
     updatedAt: Date.now(),
   }),
 });
-const legacyDrawResult = await room.requestRematch(
+// leaveRoom (rather than requestRematch) exercises settleRoomStatus/applyRoundSettlementToTableScores
+// without also resetting table stats the way a rematch-initiate now deliberately does.
+const legacyDrawResult = await room.leaveRoom(
   { roomId: legacyDrawRoomId },
-  { db: rematchDb, OPENID: 'legacy-draw-host' }
+  { db: rematchDb, OPENID: 'legacy-draw-guest' }
 );
 const persistedLegacyDraw = (await rematchDb.collection('rooms').doc(legacyDrawRoomId).get()).data;
 if (

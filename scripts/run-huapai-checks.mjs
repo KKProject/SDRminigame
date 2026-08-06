@@ -970,6 +970,27 @@ for (const recordCase of [
   }
 }
 
+const nonHostRecordLayout = new TableLayout(844, 390, {
+  safeAreaInsets: { left: 47, top: 0, right: 0, bottom: 21 },
+}).build({
+  ...roundResultState,
+  tableFinished: true,
+  tableRecordOpen: true,
+  tableRecord: {
+    roomId: '139240',
+    completedRounds: 2,
+    settings: { payType: 'jiahu', repeatRound: true, washTwice: true },
+    players: tableRecordPlayers,
+  },
+  tableRematch: { isHost: false, canRequest: false },
+});
+if (
+  !nonHostRecordLayout.tableRecord
+  || nonHostRecordLayout.tableRecord.actionButtons.map((button) => button.action.type).join(',') !== 'leaveTable'
+) {
+  throw new Error('a non-host with no rematch permission should only see a leave-table action on the settlement screen');
+}
+
 function takeCards(deck, keys) {
   return keys.map((key) => {
     const index = deck.findIndex((card) => card.key === key);

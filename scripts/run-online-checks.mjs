@@ -1272,6 +1272,82 @@ if (
 ) {
   throw new Error('rejected leave requests should preserve the current room and local game session');
 }
+
+// 房主发起"再来一局"后，其他还活跃在牌桌（结算页面）上的玩家应该原地弹出系统弹窗（wx.showModal）
+// 询问同意/拒绝，而不是被 applySocketSnapshot 直接切进等待室——这条路径此前有过回归（bug），必须锁住。
+const rematchRouteController = new online.default({}, onlineRenderer, onlineMusic);
+rematchRouteController.roomId = 'rematch-route-room';
+rematchRouteController.active = true;
+rematchRouteController.socket = {
+  isReady() { return true; },
+  request() { return new Promise(() => {}); },
+  close() {},
+};
+let rematchRouteWaitingRoomCalled = false;
+rematchRouteController.onWaitingRoom = () => { rematchRouteWaitingRoomCalled = true; };
+const shownModals = [];
+const previousWxShowModal = globalThis.wx.showModal;
+globalThis.wx.showModal = (options) => { shownModals.push(options); };
+let requestRematchCalledWith = null;
+rematchRouteController.requestRematch = (accept) => {
+  requestRematchCalledWith = accept;
+  return Promise.resolve(true);
+};
+const rematchInviteSnapshot = {
+  ok: true,
+  roomId: 'rematch-route-room',
+  room: {
+    roomId: 'rematch-route-room',
+    status: 'waiting',
+    rematchInvite: { id: 'rematch-route-invite', requestedByName: '房主' },
+  },
+};
+rematchRouteController.applySocketSnapshot(rematchInviteSnapshot);
+await Promise.resolve();
+if (
+  shownModals.length !== 1
+  || shownModals[0].title !== '再来一局'
+  || shownModals[0].cancelText !== '拒绝'
+  || shownModals[0].confirmText !== '同意'
+  || !shownModals[0].content.includes('房主')
+  || !rematchRouteController.active
+  || rematchRouteController.roomId !== 'rematch-route-room'
+  || rematchRouteWaitingRoomCalled
+) {
+  throw new Error('an active player receiving a pending rematch invite should stay on the table and be asked via the native system modal, not be switched into the waiting room');
+}
+// 同一条邀请重复广播（比如重连、重复推送）不应该再弹第二次系统弹窗。
+rematchRouteController.applySocketSnapshot(rematchInviteSnapshot);
+await Promise.resolve();
+if (shownModals.length !== 1) {
+  throw new Error('the same rematch invite id should not re-trigger a second system modal');
+}
+shownModals[0].success({ confirm: true, cancel: false });
+if (requestRematchCalledWith !== true) {
+  throw new Error('confirming the system modal should accept the rematch invite');
+}
+shownModals[0].success({ confirm: false, cancel: true });
+if (requestRematchCalledWith !== false) {
+  throw new Error('cancelling the system modal should decline the rematch invite');
+}
+globalThis.wx.showModal = previousWxShowModal;
+rematchRouteController.applySocketSnapshot({
+  ok: true,
+  roomId: 'rematch-route-room',
+  room: {
+    roomId: 'rematch-route-room',
+    status: 'waiting',
+    rematchInvite: null,
+    players: [],
+    yourSeat: 0,
+  },
+});
+await Promise.resolve();
+if (rematchRouteController.active || !rematchRouteWaitingRoomCalled) {
+  throw new Error('once the invite is no longer pending, the same room-snapshot path should still transition into the real waiting room');
+}
+rematchRouteController.stopWaitingRefresh();
+
 const directSnapshot = {
   ok: true,
   version: 3,
@@ -2607,7 +2683,7 @@ globalThis.wx.request = (options) => {
       ok: true,
       roomId: 'animation-room',
       version: onlineController.version,
-      rematch: { status: 'pending', active: true, agreedOpenids: ['unit-openid'], agreedCount: 1, requiredCount: 2 },
+      rematch: { isHost: false, canRequest: false },
     },
   });
 };
@@ -2827,13 +2903,6 @@ function terminalRoomFixture(id, overrides = {}) {
     players,
     playerOpenids: players.map((player) => player.openid),
     settings: { maxRounds: 2 },
-    rematch: {
-      status: 'pending',
-      requestedBy: players[0].openid,
-      agreedOpenids: [players[0].openid, players[3].openid],
-      declinedOpenids: [],
-      deadlineAt: null,
-    },
   }, overrides);
 }
 
@@ -2854,7 +2923,6 @@ if (
   || terminalAfterRelease.status !== 'tableResult'
   || terminalAfterRelease.players.some((player) => player.openid === 'terminal-release-player-3')
   || terminalAfterRelease.playerOpenids.includes('terminal-release-player-3')
-  || terminalAfterRelease.rematch.agreedOpenids.includes('terminal-release-player-3')
 ) {
   throw new Error('activeRoom should idempotently release a non-host from tableResult without restoring the terminal room');
 }
@@ -2878,25 +2946,6 @@ const insufficientTerminalActive = await roomFunction.activeRoom({}, {
 });
 if (insufficientTerminalActive.hasRoom || insufficientTerminalDb.documents.rooms['terminal-insufficient'].status !== 'closed') {
   throw new Error('terminal release should close rooms that fall below the minimum human count');
-}
-
-const terminalTimeoutDb = createRoomDb({
-  'terminal-timeout': terminalRoomFixture('terminal-timeout', {
-    rematch: {
-      status: 'host-decision',
-      requestedBy: '',
-      agreedOpenids: [],
-      declinedOpenids: [],
-      deadlineAt: 10,
-    },
-  }),
-});
-const terminalTimeoutActive = await roomFunction.activeRoom({ now: 11 }, {
-  db: terminalTimeoutDb,
-  OPENID: 'terminal-timeout-player-3',
-});
-if (terminalTimeoutActive.hasRoom || terminalTimeoutDb.documents.rooms['terminal-timeout'].status !== 'closed') {
-  throw new Error('expired tableResult rooms should close during active-room lookup');
 }
 
 const terminalCreateDb = createRoomDb({
@@ -3128,13 +3177,6 @@ const blockedNextRound = await roomFunction.startRound({
 }, { db: maxRoundDb, OPENID: 'max-round-openid' });
 if (blockedNextRound.ok || blockedNextRound.error !== 'TABLE_FINISHED' || maxRoundDb.documents.rooms['max-round-room'].status !== 'tableResult') {
   throw new Error('startRound should be blocked once a room reaches settings.maxRounds');
-}
-if (
-  !maxRoundDb.documents.rooms['max-round-room'].rematch
-  || maxRoundDb.documents.rooms['max-round-room'].rematch.status !== 'host-decision'
-  || typeof maxRoundDb.documents.rooms['max-round-room'].rematch.deadlineAt !== 'number'
-) {
-  throw new Error('final table result should initialize a host rematch decision window');
 }
 const blockedFinalConfirmation = await roomFunction.confirmNextRound({
   roomId: 'max-round-room',
@@ -3510,7 +3552,6 @@ function finalRoom(id, overrides = {}) {
     playerOpenids: ['rematch-host', 'rematch-guest'],
     settings: { maxRounds: 2 },
     state: finalResultState(2),
-    rematch: null,
   }, overrides);
 }
 const nonWinDetailDb = createRoomDb({
@@ -3531,7 +3572,7 @@ if (
   throw new Error('non-win result details should keep every player hu count empty');
 }
 const leaveFinalDriftDb = createRoomDb({
-  'leave-final-drift': finalRoom('leave-final-drift', { status: 'playing', rematch: null }),
+  'leave-final-drift': finalRoom('leave-final-drift', { status: 'playing' }),
 });
 const leaveFinalDrift = await roomFunction.leaveRoom({
   roomId: 'leave-final-drift',
@@ -3545,16 +3586,7 @@ if (
   throw new Error('leaveRoom should allow exiting max-round result drift rooms and release active room membership');
 }
 const hostLeaveFinalDb = createRoomDb({
-  'host-leave-final': finalRoom('host-leave-final', {
-    rematch: {
-      status: 'host-decision',
-      requestedBy: '',
-      agreedOpenids: [],
-      declinedOpenids: [],
-      createdAt: 10,
-      deadlineAt: Date.now() + 15000,
-    },
-  }),
+  'host-leave-final': finalRoom('host-leave-final'),
 });
 const hostLeaveFinal = await roomFunction.leaveRoom({
   roomId: 'host-leave-final',
@@ -3566,114 +3598,124 @@ if (
   || hostLeaveFinalDb.documents.rooms['host-leave-final'].status !== 'closed'
   || hostLeaveFinalDb.documents.rooms['host-leave-final'].playerOpenids.length !== 0
 ) {
-  throw new Error('host leave from a final rematch decision room should close the room and release active memberships');
+  throw new Error('host leave from a table-result room should close the room and release active memberships');
 }
-const rematchTimeoutDb = createRoomDb({
-  'rematch-timeout': finalRoom('rematch-timeout', {
-    version: 5,
-    rematch: {
-      status: 'host-decision',
-      requestedBy: '',
-      agreedOpenids: [],
-      declinedOpenids: [],
-      createdAt: 10,
-      deadlineAt: 100,
-    },
+// 新的"再来一局"机制：房主发起后自己直接进入真正的等待室（room.status 从 tableResult
+// 变成 waiting），其他真人玩家在等待室快照里看到 rematchInvite、同意后一起停在等待室，
+// 拒绝则退出并按人数决定房间是否关闭。全程复用等待室既有的 setReady/startRound。
+const rematchFlowDb = createRoomDb({
+  'rematch-flow': finalRoom('rematch-flow', {
+    tableScores: { 0: 8, 1: -4 },
   }),
 });
-const timedOutRematch = await roomFunction.requestRematch({
-  roomId: 'rematch-timeout',
-  now: 116,
-}, { db: rematchTimeoutDb, OPENID: 'rematch-host' });
+const hostRematch = await roomFunction.requestRematch({
+  roomId: 'rematch-flow',
+}, { db: rematchFlowDb, OPENID: 'rematch-host' });
 if (
-  !timedOutRematch.ok
-  || !timedOutRematch.closed
-  || rematchTimeoutDb.documents.rooms['rematch-timeout'].status !== 'closed'
-  || rematchTimeoutDb.documents.rooms['rematch-timeout'].playerOpenids.length !== 0
+  !hostRematch.ok
+  || hostRematch.status !== 'waiting'
+  || !hostRematch.room
+  || hostRematch.room.players.length !== 2
+  || hostRematch.room.players.some((player) => player.ready)
+  || hostRematch.room.rematchInvite
 ) {
-  throw new Error('expired host rematch decisions should close the room and release all active memberships');
+  throw new Error('host requesting a rematch should land directly in a real waiting room, not stay on the result screen');
 }
-const rematchPendingDb = createRoomDb({
-  'rematch-pending': finalRoom('rematch-pending', {
-    rematch: {
-      status: 'host-decision',
-      requestedBy: '',
-      agreedOpenids: [],
-      declinedOpenids: [],
-      createdAt: 10,
-      deadlineAt: Date.now() + 15000,
-    },
-  }),
-});
-const hostRequestedRematch = await roomFunction.requestRematch({
-  roomId: 'rematch-pending',
-}, { db: rematchPendingDb, OPENID: 'rematch-host' });
+const repeatedHostRematch = await roomFunction.requestRematch({
+  roomId: 'rematch-flow',
+}, { db: rematchFlowDb, OPENID: 'rematch-host' });
+if (repeatedHostRematch.ok || repeatedHostRematch.error !== 'ROOM_NOT_FINISHED') {
+  throw new Error('requesting a rematch again once the room already left tableResult should be rejected');
+}
+const guestInfoBeforeAgree = await roomFunction.roomInfo({
+  roomId: 'rematch-flow',
+}, { db: rematchFlowDb, OPENID: 'rematch-guest' });
 if (
-  !hostRequestedRematch.ok
-  || !hostRequestedRematch.rematch.active
-  || !hostRequestedRematch.rematch.selfAgreed
-  || rematchPendingDb.documents.rooms['rematch-pending'].rematch.status !== 'pending'
+  !guestInfoBeforeAgree.ok
+  || !guestInfoBeforeAgree.room.rematchInvite
+  || guestInfoBeforeAgree.room.rematchInvite.requestedByName !== '房主'
 ) {
-  throw new Error('only the host decision should open a pending rematch vote and count the host as agreed');
+  throw new Error('the invited guest should see a pending rematch invite in the waiting room snapshot');
 }
-const rematchRejectDb = createRoomDb({
-  'rematch-reject': finalRoom('rematch-reject', {
-    rematch: {
-      status: 'pending',
-      requestedBy: 'rematch-host',
-      agreedOpenids: ['rematch-host'],
-      declinedOpenids: [],
-      createdAt: 10,
-      deadlineAt: null,
-    },
-  }),
+const guestRematch = await roomFunction.requestRematch({
+  roomId: 'rematch-flow',
+}, { db: rematchFlowDb, OPENID: 'rematch-guest' });
+if (!guestRematch.ok || guestRematch.status !== 'waiting' || guestRematch.room.rematchInvite) {
+  throw new Error('the invited guest agreeing should clear the invite and stay in the waiting room');
+}
+await roomFunction.setReady({ roomId: 'rematch-flow', ready: true }, { db: rematchFlowDb, OPENID: 'rematch-guest' });
+const hostReadyAfterRematch = await roomFunction.setReady({ roomId: 'rematch-flow', ready: true }, { db: rematchFlowDb, OPENID: 'rematch-host' });
+if (!hostReadyAfterRematch.room.canStart) {
+  throw new Error('both players ready after a rematch should allow the host to start');
+}
+const restartedRematch = await roomFunction.startRound({
+  roomId: 'rematch-flow',
+}, { db: rematchFlowDb, OPENID: 'rematch-host' });
+if (
+  !restartedRematch.ok
+  || restartedRematch.status !== 'playing'
+  || restartedRematch.public.round !== 1
+  || rematchFlowDb.documents.rooms['rematch-flow'].tableScores[0] !== 0
+  || rematchFlowDb.documents.rooms['rematch-flow'].tableScores[1] !== 0
+  || !restartedRematch.public
+  || !restartedRematch.private
+  || !restartedRematch.privateViewsBySeat
+  || !restartedRematch.privateViewsBySeat[0]
+  || !restartedRematch.privateViewsBySeat[1]
+) {
+  throw new Error('starting a rematch-created waiting room should reset table scores and deal a fresh round 1');
+}
+const nonHostRematchDb = createRoomDb({
+  'rematch-non-host': finalRoom('rematch-non-host'),
 });
-const rejectedRematch = await roomFunction.requestRematch({
-  roomId: 'rematch-reject',
+const nonHostRematch = await roomFunction.requestRematch({
+  roomId: 'rematch-non-host',
+}, { db: nonHostRematchDb, OPENID: 'rematch-guest' });
+if (nonHostRematch.ok || nonHostRematch.error !== 'NOT_HOST') {
+  throw new Error('only the host should be able to initiate a rematch from the table-result screen');
+}
+const declineTwoHumanDb = createRoomDb({
+  'rematch-decline-two': finalRoom('rematch-decline-two'),
+});
+await roomFunction.requestRematch({ roomId: 'rematch-decline-two' }, { db: declineTwoHumanDb, OPENID: 'rematch-host' });
+const declinedTwoHuman = await roomFunction.requestRematch({
+  roomId: 'rematch-decline-two',
   accept: false,
-}, { db: rematchRejectDb, OPENID: 'rematch-guest' });
+}, { db: declineTwoHumanDb, OPENID: 'rematch-guest' });
 if (
-  !rejectedRematch.ok
-  || !rejectedRematch.left
-  || !rejectedRematch.declined
-  || !rejectedRematch.closed
-  || rematchRejectDb.documents.rooms['rematch-reject'].status !== 'closed'
-  || rematchRejectDb.documents.rooms['rematch-reject'].playerOpenids.length !== 0
+  !declinedTwoHuman.ok
+  || !declinedTwoHuman.left
+  || !declinedTwoHuman.declined
+  || !declinedTwoHuman.closed
+  || declineTwoHumanDb.documents.rooms['rematch-decline-two'].status !== 'closed'
 ) {
-  throw new Error('declining a rematch should exit the player and close the room when too few humans remain');
+  throw new Error('declining a rematch invite should exit the player and close the room when too few humans remain');
 }
-const rematchAcceptDb = createRoomDb({
-  'rematch-accept': finalRoom('rematch-accept', {
-    tableScores: { 0: 8, 1: -4, 2: -4, 3: 0 },
-    rematch: {
-      status: 'pending',
-      requestedBy: 'rematch-host',
-      agreedOpenids: ['rematch-host'],
-      declinedOpenids: [],
-      createdAt: 10,
-      deadlineAt: null,
-    },
+const declineThreeHumanDb = createRoomDb({
+  'rematch-decline-three': finalRoom('rematch-decline-three', {
+    hostOpenid: 'rematch-host',
+    players: [
+      { seat: 0, openid: 'rematch-host', nickName: '房主', ready: true, online: true },
+      { seat: 1, openid: 'rematch-guest', nickName: '好友', ready: true, online: true },
+      { seat: 2, openid: 'rematch-third', nickName: '第三人', ready: true, online: true },
+    ],
+    playerOpenids: ['rematch-host', 'rematch-guest', 'rematch-third'],
   }),
 });
-const acceptedRematch = await roomFunction.requestRematch({
-  roomId: 'rematch-accept',
-}, { db: rematchAcceptDb, OPENID: 'rematch-guest' });
+await roomFunction.requestRematch({ roomId: 'rematch-decline-three' }, { db: declineThreeHumanDb, OPENID: 'rematch-host' });
+const declinedThreeHuman = await roomFunction.requestRematch({
+  roomId: 'rematch-decline-three',
+  accept: false,
+}, { db: declineThreeHumanDb, OPENID: 'rematch-guest' });
 if (
-  !acceptedRematch.ok
-  || !acceptedRematch.rematchStarted
-  || rematchAcceptDb.documents.rooms['rematch-accept'].status !== 'playing'
-  || rematchAcceptDb.documents.rooms['rematch-accept'].state.round !== 1
-  || rematchAcceptDb.documents.rooms['rematch-accept'].tableScores[0] !== 0
-  || rematchAcceptDb.documents.rooms['rematch-accept'].tableScores[1] !== 0
-  || rematchAcceptDb.documents.rooms['rematch-accept'].rematch !== null
-  || !acceptedRematch.public
-  || !acceptedRematch.private
-  || !acceptedRematch.privateViewsBySeat
-  || !acceptedRematch.privateViewsBySeat[0]
-  || !acceptedRematch.privateViewsBySeat[1]
-  || !acceptedRematch.animation
+  !declinedThreeHuman.ok
+  || !declinedThreeHuman.left
+  || !declinedThreeHuman.declined
+  || declinedThreeHuman.closed
+  || declineThreeHumanDb.documents.rooms['rematch-decline-three'].status !== 'waiting'
+  || declineThreeHumanDb.documents.rooms['rematch-decline-three'].playerOpenids.includes('rematch-guest')
 ) {
-  throw new Error('all required rematch acceptances should reset the room counter and broadcast a fresh round snapshot');
+  throw new Error('declining a rematch invite in a room with enough remaining humans should just remove that player');
 }
 const targetedBarrierEngine = new HuapaiEngine(DEFAULT_RULES);
 targetedBarrierEngine.load({
@@ -4049,8 +4091,8 @@ if (/eventSeq|playOnlineEvent/.test(rendererSource)) {
 if (!/state\.animationWaiting/.test(rendererSource)) {
   throw new Error('renderer should block state compensation while an online authoritative animation is waiting');
 }
-if (!/leaveTable/.test(layoutSource) || !/requestRematch/.test(layoutSource) || !/declineRematch/.test(layoutSource)) {
-  throw new Error('final table settlement should expose exit, accept, and decline action hit regions');
+if (!/leaveTable/.test(layoutSource) || !/requestRematch/.test(layoutSource)) {
+  throw new Error('final table settlement should expose exit and rematch-request action hit regions');
 }
 if (!/state\.tableFinished[\s\S]*?牌局已结束/.test(rendererSource)) {
   throw new Error('final table settlement should render an explicit table result title');

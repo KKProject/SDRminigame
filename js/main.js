@@ -251,6 +251,8 @@ export default class Main {
       this.requestSeatSwap(profile && profile.player);
     } else if (mode === 'seatSwapRespond') {
       this.respondSeatSwap(profile || {});
+    } else if (mode === 'rematchRespond') {
+      this.respondRematch(profile && profile.accept !== false);
     } else if (mode === 'waitingRetry') {
       if (this.online) this.online.refreshWaitingRoom();
     }
@@ -581,6 +583,15 @@ export default class Main {
     if (!this.online) return;
     this.menu.setBusy(true);
     this.online.respondSeatSwap(detail.requestId, detail.accept !== false)
+      .finally(() => {
+        this.menu.setBusy(false);
+      });
+  }
+
+  respondRematch(accept = true) {
+    if (!this.online) return;
+    this.menu.setBusy(true);
+    this.online.requestRematch(accept !== false)
       .finally(() => {
         this.menu.setBusy(false);
       });

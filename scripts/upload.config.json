@@ -2,9 +2,19 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.33",
-  "desc": "半透明框缩窄为紧贴头像，左右各留2px",
-  "ignores": [],
+  "version": "1.0.37",
+  "desc": "再来一局邀请改用系统弹窗（wx.showModal），移除自绘 Canvas 弹窗",
+  "ignores": [
+    ".claude/**/*",
+    ".codegraph/**/*",
+    ".git/**/*",
+    "node_modules/**/*",
+    "services/**/*",
+    "scripts/**/*",
+    "openspec/**/*",
+    "docs/**/*",
+    ".tmp-*/**/*"
+  ],
   "setting": {
     "es6": true,
     "es7": true,

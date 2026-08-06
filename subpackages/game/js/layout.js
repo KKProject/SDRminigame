@@ -30,7 +30,6 @@ function actionButtonWidth(action, buttonHeight) {
   if (action && (
     action.type === 'leaveTable'
     || action.type === 'requestRematch'
-    || action.type === 'declineRematch'
     || action.type === 'confirmNextRound'
     || action.type === 'viewRecord'
   )) {
@@ -253,30 +252,17 @@ export function createTableRecordLayout(contentBounds, state) {
   });
   const contentHeight = Math.max(0, rowY - scrollRegion.y - (rows.length ? rowGap : 0));
 
+  // "再来一局"的邀请询问现在走系统弹窗（wx.showModal，见 online.js#presentRematchInvite），
+  // 结算页面本身不再需要感知/绘制邀请状态——非房主没有可发起操作时只保留"退出"。
   const rematch = state.tableRematch || {};
-  let actions;
-  if (rematch.active && rematch.canAccept) {
-    actions = [
-      { type: 'declineRematch', label: '拒绝' },
-      { type: 'requestRematch', label: '同意' },
-    ];
-  } else {
-    let right = { type: 'requestRematch', label: '等待房主', disabled: true };
-    if (rematch.hostDecision && rematch.canRequest) {
-      right = { type: 'requestRematch', label: '再来一局' };
-    } else if (rematch.active) {
-      right = {
-        type: 'requestRematch',
-        label: rematch.selfAgreed ? '等待其他玩家' : '等待确认',
-        disabled: true,
-      };
-    }
-    actions = [{ type: 'leaveTable', label: '退出' }, right];
-  }
+  const actions = rematch.canRequest
+    ? [{ type: 'leaveTable', label: '退出' }, { type: 'requestRematch', label: '再来一局' }]
+    : [{ type: 'leaveTable', label: '退出' }];
   const buttonWidth = Math.max(148, Math.min(280, Math.floor(contentBounds.width * 0.27)));
   const buttonHeight = Math.max(44, Math.min(66, Math.floor(buttonWidth * (86 / 366))));
   const buttonGap = Math.max(18, Math.floor(contentBounds.width * 0.025));
-  const actionX = contentBounds.x + (contentBounds.width - buttonWidth * 2 - buttonGap) / 2;
+  const groupWidth = buttonWidth * actions.length + buttonGap * Math.max(0, actions.length - 1);
+  const actionX = contentBounds.x + (contentBounds.width - groupWidth) / 2;
   const actionY = actionBottom - buttonHeight;
   const actionButtons = actions.map((action, index) => rect(
     actionX + index * (buttonWidth + buttonGap),

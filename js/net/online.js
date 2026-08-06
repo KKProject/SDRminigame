@@ -433,6 +433,7 @@ export function onlineErrorMessage(err) {
     SET_READY_FAILED: '准备状态更新失败，请重试',
     LEAVE_ROOM_FAILED: '退出牌桌失败，请重试',
     REMATCH_FAILED: '发起重开失败，请重试',
+    NO_PENDING_REMATCH_INVITE: '当前没有待处理的重开邀请',
     SOCKET_ENDPOINT_MISSING: 'WebSocket 入口未配置，请设置自有 WSS 域名',
     SOCKET_URL_MISSING: 'WebSocket 入口未配置，请设置自有 WSS 域名',
     SOCKET_SERVICE_MISSING: 'WebSocket 入口未配置，请设置自有 WSS 域名',
@@ -741,9 +742,9 @@ export default class OnlineController {
     this.lastServerEventSeq = 0;
     this.socketReconnecting = false;
     this.lastSocketErrorCode = '';
-    this.rematchDecisionTimer = null;
     this.reconnectFallbackTimer = null;
     this.reconnectFallbackInFlight = false;
+    this.shownRematchInviteId = '';
   }
 
   setStatus(text) {
@@ -820,23 +821,10 @@ export default class OnlineController {
     }
   }
 
-  clearRematchDecisionTimer() {
-    if (this.rematchDecisionTimer) clearTimeout(this.rematchDecisionTimer);
-    this.rematchDecisionTimer = null;
-  }
-
-  scheduleRematchDecisionTimer(rematch = {}) {
-    this.clearRematchDecisionTimer();
-    if (!rematch || !rematch.hostDecision || !rematch.deadlineAt) return;
-    const delay = Math.max(0, Number(rematch.deadlineAt) - Date.now());
-    this.rematchDecisionTimer = setTimeout(() => {
-      this.returnToLobby();
-    }, delay);
-  }
-
   returnToLobby() {
     clearRoomSession();
     this.active = false;
+    this.shownRematchInviteId = '';
     this.roomId = null;
     this.version = -1;
     this.lastServerEventSeq = 0;
@@ -848,7 +836,6 @@ export default class OnlineController {
     this.isAnimating = false;
     this.animationWaiting = false;
     this.ackingEventSeq = 0;
-    this.clearRematchDecisionTimer();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.stopReconnectFallbackRefresh();
@@ -1060,8 +1047,11 @@ export default class OnlineController {
       ? info.seat
       : (room && typeof room.yourSeat === 'number' ? room.yourSeat : this.mySeat);
     saveRoomSession(this.roomId, this.mySeat);
+    this.shownRematchInviteId = '';
     this.active = false;
     this.closeWatcher();
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
     if (wx.offTouchStart) wx.offTouchStart(this.boundTouch);
     if (wx.offTouchMove) wx.offTouchMove(this.boundTouchMove);
     if (wx.offTouchEnd) wx.offTouchEnd(this.boundTouchEnd);
@@ -1299,7 +1289,7 @@ export default class OnlineController {
       }
       try {
         const res = await this.socket.request('pull', { roomId: this.roomId, version: this.version });
-        return this.applyServerSnapshot(res);
+        return this.applySocketSnapshot(Object.assign({ ok: true }, res));
       } catch (err) {
         this.scheduleReconnect(0);
         return false;
@@ -1307,7 +1297,7 @@ export default class OnlineController {
     }
     try {
       const res = await callFunction('game', { action: 'pull', roomId: this.roomId });
-      return this.applyServerSnapshot(res);
+      return this.applySocketSnapshot(Object.assign({ ok: true }, res));
     } catch (err) {
       return false;
     }
@@ -1432,8 +1422,46 @@ export default class OnlineController {
   applySocketSnapshot(snapshot = {}) {
     if (!snapshot) return false;
     if (snapshot.public) return this.applyServerSnapshot(Object.assign({ ok: true }, snapshot));
-    if (snapshot.room) this.setWaitingRoomState(snapshot.room);
+    if (snapshot.room) {
+      if (snapshot.room.rematchInvite && this.active) {
+        // 我还活跃在牌桌上（结算页面），且这是一条待我表态的再来一局邀请：
+        // 不直接切等待室，用系统弹窗原地询问，同意/拒绝之后才真正切换。
+        this.presentRematchInvite(snapshot.room.rematchInvite);
+        return true;
+      }
+      this.shownRematchInviteId = '';
+      // 走完整的 enterWaitingRoom 切换（而不是只软更新 waitingRoom 数据），这样被动收到
+      // 广播的一方（比如断线重连后房间已经在等待室里）也能正确关掉牌桌触摸监听、换成等待室。
+      this.enterWaitingRoom({
+        roomId: snapshot.roomId || this.roomId,
+        room: snapshot.room,
+        seat: snapshot.yourSeat,
+      });
+      return true;
+    }
     return true;
+  }
+
+  /** 用系统弹窗（而不是手绘 Canvas 弹窗）询问是否接受再来一局邀请，同一条邀请只弹一次。 */
+  presentRematchInvite(invite) {
+    if (!invite || !invite.id || invite.id === this.shownRematchInviteId) return;
+    if (!wx.showModal) return;
+    this.shownRematchInviteId = invite.id;
+    const requesterName = invite.requestedByName || '房主';
+    wx.showModal({
+      title: '再来一局',
+      content: `${requesterName} 想再来一局，同意将进入等待室，拒绝将返回大厅`,
+      cancelText: '拒绝',
+      confirmText: '同意',
+      success: (res) => {
+        if (this.shownRematchInviteId !== invite.id) return;
+        if (res && res.confirm) {
+          this.requestRematch(true);
+        } else {
+          this.requestRematch(false);
+        }
+      },
+    });
   }
 
   applySocketDelta(delta = {}) {
@@ -1801,7 +1829,6 @@ export default class OnlineController {
     local.tableRematch = res.rematch || null;
     local.tableRecordOpen = Boolean(this.databus.tableRecordOpen && local.tableRecord && local.tableFinished);
     this.authoritativeState = clonePlain(local);
-    this.scheduleRematchDecisionTimer(local.tableRematch);
     const animation = res.animation || {
       currentEvent: res.public.publicEvent || null,
       selfAcked: false,
@@ -2448,10 +2475,6 @@ export default class OnlineController {
       if (!action.disabled) this.requestRematch();
       return;
     }
-    if (action.type === 'declineRematch') {
-      if (!action.disabled) this.requestRematch(false);
-      return;
-    }
     if (action.type === 'confirmNextRound') {
       if (!action.disabled) this.confirmNextRound();
       return;
@@ -2558,6 +2581,12 @@ export default class OnlineController {
     }
   }
 
+  /**
+   * 再来一局：房主发起、待表态者同意/拒绝，三种场景都调这一个方法（accept 参数区分）。
+   * 服务端把这三种场景统一处理成"要么直接回大厅（拒绝/关闭），要么带着一个真正的等待室
+   * 快照（res.room）"，所以这里只需要照抄 respondSeatSwap 那套路由，不用再单独维护一套
+   * "倒计时+留在原地"的展示逻辑。
+   */
   async requestRematch(accept = true) {
     if (!this.roomId) return false;
     try {
@@ -2569,11 +2598,11 @@ export default class OnlineController {
       if (res.left || res.closed || res.declined || res.status === 'closed') {
         return this.returnToLobby();
       }
-      if (!this.applyServerSnapshot(res)) {
-        this.databus.tableRematch = res.rematch || this.databus.tableRematch;
-        this.scheduleRematchDecisionTimer(this.databus.tableRematch);
-        this.databus.feedback = accept === false ? '已退出牌桌' : (res.rematchStarted ? '新一局开始' : '已同意，等待其他玩家');
+      if (res.room) {
+        await this.enterWaitingRoom(res);
+        return true;
       }
+      await this.refresh();
       return true;
     } catch (err) {
       this.databus.feedback = onlineErrorMessage(err);
@@ -2595,7 +2624,6 @@ export default class OnlineController {
     this.heartbeatTimer = null;
     if (this.ackRetryTimer) clearTimeout(this.ackRetryTimer);
     this.ackRetryTimer = null;
-    this.clearRematchDecisionTimer();
     this.ackingEventSeq = 0;
     this.cancelLocalActionPreview();
     if (wx.offNetworkStatusChange) wx.offNetworkStatusChange(this.boundNetworkChange);

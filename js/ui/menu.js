@@ -57,6 +57,8 @@ export default class StartMenu {
       error: '',
       swapModal: null,
       swapRequestId: '',
+      rematchModal: null,
+      rematchInviteId: '',
     };
     this.waitingAvatarImages = {};
     this.avatarImage = null;
@@ -147,6 +149,8 @@ export default class StartMenu {
     this.createSettingsTouchActive = false;
     this.waiting.swapModal = null;
     this.waiting.swapRequestId = '';
+    this.waiting.rematchModal = null;
+    this.waiting.rematchInviteId = '';
     this.destroyProfileButton();
     this.lobby.profile = Object.assign({ nickName: '玩家', avatarUrl: '' }, profile);
     this.loadAvatar(this.lobby.profile.avatarUrl);
@@ -159,6 +163,8 @@ export default class StartMenu {
     this.createSettingsTouchActive = false;
     this.waiting.swapModal = null;
     this.waiting.swapRequestId = '';
+    this.waiting.rematchModal = null;
+    this.waiting.rematchInviteId = '';
     if (profile && (profile.nickName || profile.avatarUrl)) {
       this.updateStartProfile(profile);
     }
@@ -230,6 +236,14 @@ export default class StartMenu {
       this.waiting.swapRequestId = '';
       if (this.waiting.swapModal && this.waiting.swapModal.type === 'received') this.waiting.swapModal = null;
     }
+    const rematchInvite = this.waiting.room && this.waiting.room.rematchInvite;
+    if (rematchInvite && rematchInvite.id !== this.waiting.rematchInviteId) {
+      this.waiting.rematchModal = { requestedByName: rematchInvite.requestedByName || '房主' };
+      this.waiting.rematchInviteId = rematchInvite.id;
+    } else if (!rematchInvite) {
+      this.waiting.rematchInviteId = '';
+      this.waiting.rematchModal = null;
+    }
     this.destroyProfileButton();
   }
 
@@ -279,7 +293,14 @@ export default class StartMenu {
       return;
     }
     if (this.screen === MENU_SCREENS.WAITING_ROOM) {
-      if (hit.type === 'swap-modal-cancel') {
+      if (hit.type === 'rematch-modal-accept') {
+        this.status = '已同意再来一局，进入等待室';
+        this.onSelect('rematchRespond', { accept: true });
+        this.waiting.rematchModal = null;
+      } else if (hit.type === 'rematch-modal-decline') {
+        this.onSelect('rematchRespond', { accept: false });
+        this.waiting.rematchModal = null;
+      } else if (hit.type === 'swap-modal-cancel') {
         this.waiting.swapModal = null;
       } else if (hit.type === 'swap-modal-send') {
         this.status = '已发送换座请求，等待对方确认';
@@ -1140,7 +1161,13 @@ export default class StartMenu {
         : (room.readyToStart ? '全员已准备，等待房主开局' : '微信邀请进入后自动分配空座位'));
     this.drawDesignText(ctx, layout, statusText, 780, 824, 20, errorText ? '#ffb4a8' : '#ffd78a', '500', 'center');
 
-    if (this.waiting.swapModal) this.drawSeatSwapModal(ctx, layout, this.waiting.swapModal);
+    if (this.waiting.rematchModal) {
+      this.buttons = [];
+      this.drawRematchInviteModal(ctx, layout, this.waiting.rematchModal);
+    } else if (this.waiting.swapModal) {
+      this.buttons = [];
+      this.drawSeatSwapModal(ctx, layout, this.waiting.swapModal);
+    }
 
     ctx.restore();
   }
@@ -1304,6 +1331,17 @@ export default class StartMenu {
       this.drawWaitingActionButton(ctx, layout, 537, 496, '取消', 'swap-modal-cancel', true, false, {}, 'rgba(255,255,255,0.12)');
       this.drawWaitingActionButton(ctx, layout, 793, 496, '发送请求', 'swap-modal-send', true, false, { player });
     }
+  }
+
+  drawRematchInviteModal(ctx, layout, modal) {
+    const requesterName = (modal && modal.requestedByName) || '房主';
+    this.drawDesignRect(ctx, layout, 0, 0, 1560, 878, 0, 'rgba(0, 0, 0, 0.46)');
+    this.drawDesignRect(ctx, layout, 514, 284, 532, 330, 10, 'rgba(64, 24, 12, 0.96)', '#d9a75a', 2);
+    this.drawDesignText(ctx, layout, '再来一局', 780, 326, 31, '#fff2c7', 'bold', 'center');
+    this.drawDesignText(ctx, layout, `${requesterName} 想再来一局`, 780, 390, 22, '#ffd78a', 'bold', 'center');
+    this.drawDesignText(ctx, layout, '同意将进入等待室，拒绝将返回大厅。', 780, 430, 18, '#e7c17a', 'normal', 'center');
+    this.drawWaitingActionButton(ctx, layout, 537, 496, '拒绝', 'rematch-modal-decline', true, false, {}, 'rgba(255,255,255,0.12)');
+    this.drawWaitingActionButton(ctx, layout, 793, 496, '同意', 'rematch-modal-accept', true, false, {});
   }
 
   roundRect(ctx, x, y, w, h, r) {
