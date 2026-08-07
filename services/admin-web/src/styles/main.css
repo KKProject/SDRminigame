@@ -156,10 +156,63 @@ code { font-family: var(--font-mono); }
 .status-dot::before { width: 6px; height: 6px; content: ""; background: #22a06b; border-radius: 50%; }
 .status-dot--off { color: #6b7280; background: #eef0f2; }
 .status-dot--off::before { background: #9ca3af; }
+.status-dot--waiting { color: #1d4ed8; background: #eaf0ff; }
+.status-dot--waiting::before { background: #3b6ef0; }
+.status-dot--playing { color: #126044; background: #e9f7f1; }
+.status-dot--playing::before { background: #22a06b; }
+.status-dot--finished { color: #8a4b1f; background: #fff0e4; }
+.status-dot--finished::before { background: #c66a32; }
+.status-dot--table-result { color: #5b3ea8; background: #f1ecfc; }
+.status-dot--table-result::before { background: #8b6fd6; }
+
+.filter-row { display: flex; align-items: center; gap: 12px; padding: 16px 22px; border-bottom: 1px solid var(--color-border); }
+.filter-row .el-input { flex: 1; min-width: 220px; }
+/* 用祖先类加权，避免和 element-plus 自身 .el-select 默认宽度按加载顺序打平手（同优先级时后加载的样式会赢） */
+.filter-row .filter-row__status { width: 168px; flex: none; }
+.filter-row .filter-row__status .el-select__wrapper { width: 100%; }
+.filter-row__selection { flex: none; color: var(--color-muted); font-size: 12px; white-space: nowrap; }
+
+.rooms-table { min-width: 1080px; }
+.players-table { min-width: 940px; }
+.select-cell { width: 42px; padding-right: 0 !important; padding-left: 22px !important; }
+.players-table tbody tr.is-selected-row { background: #f3f7ff; }
+
+.player-chip-list { display: grid; gap: 5px; min-width: 168px; }
+.player-chip { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.player-chip__avatar { width: 18px; height: 18px; flex: none; object-fit: cover; border-radius: 50%; }
+.player-chip__avatar--placeholder { color: #9aa5b8; }
+.player-chip__name { overflow: hidden; color: #3c4656; text-overflow: ellipsis; white-space: nowrap; }
+.player-chip__host { flex: none; padding: 1px 6px; color: #8a4b1f; font-size: 10px; font-weight: 700; background: #fff0e4; border-radius: 99px; }
+.player-chip-list__count { margin-top: 2px; color: var(--color-muted); font-size: 11px; }
+
+.room-detail { display: grid; gap: 18px; }
+.room-detail__meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; }
+.room-detail__meta > div { display: grid; gap: 4px; font-size: 13px; }
+.room-detail__meta span { color: var(--color-muted); font-size: 11px; }
+.seat-table { min-width: 0; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+.seat-table th, .seat-table td { padding: 10px 14px; }
+.seat-table__empty { color: var(--color-muted); font-style: italic; }
+
+.player-avatar { width: 28px; height: 28px; object-fit: cover; border-radius: 50%; }
+.player-avatar--placeholder { color: #9aa5b8; }
+.openid-cell { display: flex; align-items: center; gap: 6px; }
+.icon-button-sm { display: grid; place-items: center; width: 24px; height: 24px; flex: none; color: var(--color-muted); background: #f1f4f7; border: 0; border-radius: 6px; transition: color 180ms ease, background-color 180ms ease; }
+.icon-button-sm:hover { color: var(--color-primary); background: #eaf0ff; }
+
+.player-detail { display: grid; justify-items: center; gap: 6px; text-align: center; }
+.player-detail__avatar { width: 56px; height: 56px; margin-bottom: 6px; object-fit: cover; border-radius: 50%; }
+.player-detail__avatar--placeholder { color: #9aa5b8; }
+.player-detail h3 { margin: 0 0 14px; font-size: 18px; }
+.player-detail__meta { display: grid; gap: 12px; width: 100%; margin: 0; }
+.player-detail__meta > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid #eef1f4; }
+.player-detail__meta dt { color: var(--color-muted); font-size: 12px; }
+.player-detail__meta dd { margin: 0; font-size: 13px; text-align: right; }
 
 .el-button { font-weight: 700; }
 .el-button--primary { --el-button-bg-color: var(--color-primary); --el-button-border-color: var(--color-primary); --el-button-hover-bg-color: var(--color-primary-hover); --el-button-hover-border-color: var(--color-primary-hover); }
-.el-input__wrapper, .el-select__wrapper { min-height: 42px; box-shadow: 0 0 0 1px var(--color-border) inset; }
+/* !important：el-select 的按需样式在异步路由 chunk 里加载，顺序晚于本文件时会和这条规则打平手，
+   同优先级下"后加载的赢"会让 42px 失效（表现为 select 比旁边的 input 矮一截），加 !important 消除顺序依赖 */
+.el-input__wrapper, .el-select__wrapper { min-height: 42px !important; box-shadow: 0 0 0 1px var(--color-border) inset; }
 .el-input__wrapper.is-focus, .el-select__wrapper.is-focused { box-shadow: 0 0 0 1px var(--color-primary) inset, 0 0 0 3px rgb(30 64 175 / 12%); }
 
 @media (max-width: 900px) {
@@ -179,6 +232,7 @@ code { font-family: var(--font-mono); }
   .workspace { padding: 76px 20px 32px; }
   .stat-grid { grid-template-columns: repeat(3, minmax(190px, 1fr)); overflow-x: auto; padding-bottom: 4px; }
   .admin-form { grid-template-columns: 1fr 1fr; }
+  .room-detail__meta { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 600px) {
@@ -196,6 +250,8 @@ code { font-family: var(--font-mono); }
   .danger-zone .el-button { width: 100%; }
   .admin-form { grid-template-columns: 1fr; padding: 18px; }
   .admin-form__submit { width: 100%; }
+  .filter-row { flex-direction: column; align-items: stretch; padding: 14px 18px; }
+  .filter-row .filter-row__status { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

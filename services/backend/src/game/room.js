@@ -984,6 +984,51 @@ async function persistRoomLifecycle(db, room, engine = null, now = Date.now()) {
   }
 }
 
+const ADMIN_ROOM_LIST_LIMIT = 500;
+
+/** 剥离房间文档中的大字段（engine state）与内部细节，仅保留后台展示/操作所需字段 */
+function sanitizeRoomForAdmin(room) {
+  return {
+    roomId: room._id,
+    status: room.status,
+    seatCount: room.seatCount || SEAT_COUNT,
+    hostOpenid: room.hostOpenid || '',
+    players: (room.players || []).map((p) => ({
+      seat: p.seat,
+      openid: p.openid,
+      nickName: p.nickName || '',
+      avatarUrl: p.avatarUrl || '',
+    })),
+    settings: normalizeRoomSettings(room.settings),
+    tableScores: ensureTableScores(room),
+    tableStats: ensureTableStats(room),
+    version: room.version || 0,
+    createdAt: room.createdAt || 0,
+    updatedAt: room.updatedAt || 0,
+  };
+}
+
+/** 后台管理：列出房间，按更新时间倒序，最多 ADMIN_ROOM_LIST_LIMIT 条 */
+async function listRoomsForAdmin(db) {
+  const snap = await db.collection(ROOMS).where({}).orderBy('updatedAt', 'desc').limit(ADMIN_ROOM_LIST_LIMIT).get();
+  return (snap.data || []).map(sanitizeRoomForAdmin);
+}
+
+/** 后台管理：强制解散指定房间（幂等，已关闭则直接返回当前状态） */
+async function closeRoomForAdmin(db, roomId) {
+  const id = String(roomId || '').trim();
+  if (!id) return { ok: false, error: 'ADMIN_ROOM_ID_REQUIRED' };
+  const room = await getRoom(db, id);
+  if (!room) return { ok: false, error: 'ADMIN_ROOM_NOT_FOUND' };
+  if (room.status !== 'closed') {
+    const engine = loadEngine(room.state || null, room.settings);
+    closeRoom(room);
+    room.version = (room.version || 0) + 1;
+    await persistRoomLifecycle(db, room, engine, Date.now());
+  }
+  return { ok: true, room: sanitizeRoomForAdmin(room) };
+}
+
 async function releaseTerminalRoomMembership(db, room, openid, options = {}) {
   if (!room || room.status !== 'tableResult' || seatOfOpenid(room, openid) < 0) return false;
   const now = Number(options.now) || Date.now();
@@ -2284,4 +2329,6 @@ module.exports = {
   animationState,
   barrierComplete,
   syncAnimationBarrier,
+  listRoomsForAdmin,
+  closeRoomForAdmin,
 };

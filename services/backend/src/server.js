@@ -6,6 +6,7 @@ const { AuthService } = require('./auth-service');
 const { readConfig } = require('./config');
 const { createDatabase } = require('./db');
 const { LocalGameService } = require('./game-service');
+const room = require('./game/room');
 const { createSocketLayer } = require('./socket-server');
 const { verifyAppToken } = require('./tokens');
 
@@ -266,6 +267,60 @@ async function createBackendServer(options = {}) {
         sendJson(res, 200, await adminClear(db, body));
       } catch (err) {
         sendJson(res, 200, { ok: false, error: err.code || err.message || 'ADMIN_CLEAR_FAILED', message: err.message });
+      }
+      return;
+    }
+    if (parsedUrl.pathname === '/api/admin/rooms' && req.method === 'GET') {
+      const verified = await verifyAdminRequest(req, admin);
+      if (!verified.ok) {
+        sendJson(res, verified.status, { ok: false, error: verified.error });
+        return;
+      }
+      try {
+        sendJson(res, 200, { ok: true, rooms: await room.listRoomsForAdmin(db) });
+      } catch (err) {
+        sendJson(res, 200, { ok: false, error: err.code || err.message || 'ADMIN_ROOMS_LIST_FAILED', message: err.message });
+      }
+      return;
+    }
+    if (parsedUrl.pathname === '/api/admin/rooms/close' && req.method === 'POST') {
+      const verified = await verifyAdminRequest(req, admin);
+      if (!verified.ok) {
+        sendJson(res, verified.status, { ok: false, error: verified.error });
+        return;
+      }
+      try {
+        const body = await readBody(req);
+        sendJson(res, 200, await room.closeRoomForAdmin(db, body.roomId));
+      } catch (err) {
+        sendJson(res, 200, { ok: false, error: err.code || err.message || 'ADMIN_ROOM_CLOSE_FAILED', message: err.message });
+      }
+      return;
+    }
+    if (parsedUrl.pathname === '/api/admin/users' && req.method === 'GET') {
+      const verified = await verifyAdminRequest(req, admin);
+      if (!verified.ok) {
+        sendJson(res, verified.status, { ok: false, error: verified.error });
+        return;
+      }
+      try {
+        sendJson(res, 200, { ok: true, users: await auth.listUsersForAdmin() });
+      } catch (err) {
+        sendJson(res, 200, { ok: false, error: err.code || err.message || 'ADMIN_USERS_LIST_FAILED', message: err.message });
+      }
+      return;
+    }
+    if (parsedUrl.pathname === '/api/admin/users/delete' && req.method === 'POST') {
+      const verified = await verifyAdminRequest(req, admin);
+      if (!verified.ok) {
+        sendJson(res, verified.status, { ok: false, error: verified.error });
+        return;
+      }
+      try {
+        const body = await readBody(req);
+        sendJson(res, 200, await auth.deleteUsersForAdmin(body.openids || body.openid));
+      } catch (err) {
+        sendJson(res, 200, { ok: false, error: err.code || err.message || 'ADMIN_USER_DELETE_FAILED', message: err.message });
       }
       return;
     }

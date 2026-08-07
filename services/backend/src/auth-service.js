@@ -22,6 +22,20 @@ function profileUpdateData(profile = {}, now = Date.now()) {
   return data;
 }
 
+const ADMIN_USER_LIST_LIMIT = 500;
+
+/** 后台管理：仅保留展示所需字段，不暴露内部记录细节 */
+function sanitizeUserForAdmin(user) {
+  return {
+    openid: user.openid || user._id || '',
+    nickName: user.nickName || '',
+    avatarUrl: user.avatarUrl || '',
+    totalScore: Number(user.totalScore) || 0,
+    createdAt: user.createdAt || 0,
+    lastLoginAt: user.lastLoginAt || 0,
+  };
+}
+
 class AuthService {
   constructor({ config, db, fetch } = {}) {
     this.config = config || {};
@@ -72,6 +86,47 @@ class AuthService {
         expiresAt: socketToken.expiresAt,
       },
     };
+  }
+
+  /** 后台管理：列出玩家账号，按最近登录时间倒序，最多 ADMIN_USER_LIST_LIMIT 条 */
+  async listUsersForAdmin() {
+    const snap = await this.db.collection(USERS)
+      .where({})
+      .orderBy('lastLoginAt', 'desc')
+      .limit(ADMIN_USER_LIST_LIMIT)
+      .get();
+    return (snap.data || []).map(sanitizeUserForAdmin);
+  }
+
+  /**
+   * 后台管理：永久删除一个或多个玩家档案（仅 users 集合，不联动房间/匹配队列数据）。
+   * @param {string|string[]} openidOrOpenids - 单个 openid，或用于批量删除的 openid 数组
+   * @returns {{ok:true, deleted:string[], notFound:string[]} | {ok:false, error:string, notFound?:string[]}}
+   */
+  async deleteUsersForAdmin(openidOrOpenids) {
+    const list = Array.isArray(openidOrOpenids) ? openidOrOpenids : [openidOrOpenids];
+    const ids = Array.from(new Set(list.map((value) => String(value || '').trim()).filter(Boolean)));
+    if (!ids.length) return { ok: false, error: 'ADMIN_USER_ID_REQUIRED' };
+
+    const deleted = [];
+    const notFound = [];
+    for (const id of ids) {
+      const userRef = this.db.collection(USERS).doc(id);
+      let existing = null;
+      try {
+        existing = (await userRef.get()).data;
+      } catch (err) {
+        if (err.message !== 'DOCUMENT_NOT_FOUND') throw err;
+      }
+      if (!existing) {
+        notFound.push(id);
+        continue;
+      }
+      await userRef.remove();
+      deleted.push(id);
+    }
+    if (!deleted.length) return { ok: false, error: 'ADMIN_USER_NOT_FOUND', notFound };
+    return { ok: true, deleted, notFound };
   }
 }
 

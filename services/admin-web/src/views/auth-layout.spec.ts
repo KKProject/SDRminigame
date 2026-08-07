@@ -26,6 +26,8 @@ function createTestContext(authenticated = false) {
     routes: [
       { path: '/login', name: 'login', component: { template: '<div />' } },
       { path: '/', name: 'dashboard', component: { template: '<div />' } },
+      { path: '/rooms', name: 'rooms', component: { template: '<div />' } },
+      { path: '/players', name: 'players', component: { template: '<div />' } },
       { path: '/administrators', name: 'administrators', component: { template: '<div />' } },
     ],
   })
@@ -82,8 +84,8 @@ describe('login and application layout', () => {
     await wrapper.find('.mobile-menu-button').trigger('click')
     expect(wrapper.find('.sidebar').classes()).toContain('sidebar--open')
     const navItems = wrapper.findAll('button.nav-item')
-    expect(navItems).toHaveLength(2)
-    await navItems[1].trigger('click')
+    expect(navItems).toHaveLength(4)
+    await navItems[3].trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('administrators')
     await wrapper.find('.mobile-menu-button').trigger('click')

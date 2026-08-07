@@ -8,6 +8,10 @@ import type {
   ClearResponse,
   LoginResponse,
   MeResponse,
+  PlayerDeleteResponse,
+  PlayersResponse,
+  RoomCloseResponse,
+  RoomsResponse,
   StatusResponse,
 } from './types'
 
@@ -25,6 +29,10 @@ const errorMessages: Record<string, string> = {
   ADMIN_USERNAME_INVALID: '用户名需为 3–32 位字母、数字、点、短横线或下划线。',
   ADMIN_PASSWORD_INVALID: '密码长度需为 6–128 位。',
   ADMIN_CONFIRM_REQUIRED: '确认文本不匹配。',
+  ADMIN_ROOM_ID_REQUIRED: '请提供房间号。',
+  ADMIN_ROOM_NOT_FOUND: '未找到该房间。',
+  ADMIN_USER_ID_REQUIRED: '请提供玩家 openid。',
+  ADMIN_USER_NOT_FOUND: '未找到该玩家。',
   REQUEST_FAILED: '请求失败，请稍后重试。',
   BAD_JSON: '服务返回了无法识别的数据。',
 }
@@ -105,6 +113,24 @@ export const adminApi = {
     return request<AdminResponse>('/api/admin/admins/disable', token, {
       method: 'POST',
       body: JSON.stringify({ username }),
+    })
+  },
+  rooms(token: string) {
+    return request<RoomsResponse>('/api/admin/rooms', token)
+  },
+  closeRoom(token: string, roomId: string) {
+    return request<RoomCloseResponse>('/api/admin/rooms/close', token, {
+      method: 'POST',
+      body: JSON.stringify({ roomId }),
+    })
+  },
+  players(token: string) {
+    return request<PlayersResponse>('/api/admin/users', token)
+  },
+  deletePlayers(token: string, openids: string[]) {
+    return request<PlayerDeleteResponse>('/api/admin/users/delete', token, {
+      method: 'POST',
+      body: JSON.stringify({ openids }),
     })
   },
 }

@@ -6,6 +6,7 @@ import { adminApi, ApiError } from '@/api/client'
 import type { AdminRole, AdminUser } from '@/api/types'
 import DangerConfirmDialog from '@/components/DangerConfirmDialog.vue'
 import { useSessionStore } from '@/stores/session'
+import { formatTime } from '@/utils/format'
 
 const session = useSessionStore()
 const admins = ref<AdminUser[]>([])
@@ -19,12 +20,6 @@ const targetAdmin = ref<AdminUser | null>(null)
 const form = reactive({ username: '', password: '', role: 'admin' as AdminRole })
 
 const formValid = computed(() => /^[A-Za-z0-9_.-]{3,32}$/.test(form.username.trim()) && form.password.length >= 6)
-
-function formatTime(value: string) {
-  if (!value) return '—'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
-}
 
 function canDisable(admin: AdminUser) {
   return admin.enabled && !admin.defaultAdmin && admin.username !== session.admin?.username

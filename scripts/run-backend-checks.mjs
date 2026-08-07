@@ -211,11 +211,39 @@ const existingAdminSnap = await existingAdminDb.collection('adminUsers').limit(1
 assert(existingAdminSnap.data.length === 1 && existingAdminSnap.data[0].updatedAt === 'existing', 'existing admins should not be created or overwritten');
 
 const adminDb = new MemoryDocumentDatabase();
-await adminDb.collection('rooms').doc('room-a').set({ data: { status: 'waiting' } });
-await adminDb.collection('rooms').doc('room-b').set({ data: { status: 'playing' } });
+await adminDb.collection('rooms').doc('room-a').set({
+  data: {
+    status: 'waiting',
+    seatCount: 4,
+    hostOpenid: 'openid-a',
+    players: [{ seat: 0, openid: 'openid-a', nickName: '保留用户', avatarUrl: '' }],
+    settings: { maxRounds: 2, repeatRound: false, washTwice: false, payType: 'pihu' },
+    state: { seats: [], phase: 'waiting' },
+    version: 0,
+    createdAt: 1000,
+    updatedAt: 2000,
+  },
+});
+await adminDb.collection('rooms').doc('room-b').set({
+  data: { status: 'playing', hostOpenid: 'openid-b', createdAt: 1500, updatedAt: 2500 },
+});
 await adminDb.collection('roomStates').doc('room-a').set({ data: { version: 1 } });
 await adminDb.collection('matchQueue').doc('openid-a').set({ data: { status: 'waiting' } });
-await adminDb.collection('users').doc('openid-a').set({ data: { nickName: '保留用户' } });
+await adminDb.collection('users').doc('openid-a').set({
+  data: { openid: 'openid-a', nickName: '保留用户', totalScore: 12, createdAt: 1000, lastLoginAt: 3000 },
+});
+await adminDb.collection('users').doc('openid-b').set({
+  data: { openid: 'openid-b', nickName: '后来者', totalScore: 5, createdAt: 1200, lastLoginAt: 4000 },
+});
+await adminDb.collection('users').doc('openid-temp').set({
+  data: { openid: 'openid-temp', nickName: '待删除', totalScore: 0, createdAt: 1300, lastLoginAt: 500 },
+});
+await adminDb.collection('users').doc('openid-temp2').set({
+  data: { openid: 'openid-temp2', nickName: '待批量删除甲', totalScore: 0, createdAt: 1300, lastLoginAt: 600 },
+});
+await adminDb.collection('users').doc('openid-temp3').set({
+  data: { openid: 'openid-temp3', nickName: '待批量删除乙', totalScore: 0, createdAt: 1300, lastLoginAt: 700 },
+});
 const adminApp = await createBackendServer({ config: adminConfig, db: adminDb });
 await adminApp.listen(0);
 const adminBase = `http://127.0.0.1:${adminApp.server.address().port}`;
@@ -225,6 +253,22 @@ const adminApiUnauthorized = await fetch(`${adminBase}/api/admin/status`, {
   headers: { authorization: 'Bearer wrong' },
 });
 assert(adminApiUnauthorized.status === 401, 'admin api should reject an invalid session token');
+const roomsListUnauthorized = await fetch(`${adminBase}/api/admin/rooms`, { headers: { authorization: 'Bearer wrong' } });
+assert(roomsListUnauthorized.status === 401, 'admin rooms list should reject an invalid session token');
+const roomsCloseUnauthorized = await fetch(`${adminBase}/api/admin/rooms/close`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', authorization: 'Bearer wrong' },
+  body: JSON.stringify({ roomId: 'room-a' }),
+});
+assert(roomsCloseUnauthorized.status === 401, 'admin room close should reject an invalid session token');
+const usersListUnauthorized = await fetch(`${adminBase}/api/admin/users`, { headers: { authorization: 'Bearer wrong' } });
+assert(usersListUnauthorized.status === 401, 'admin users list should reject an invalid session token');
+const usersDeleteUnauthorized = await fetch(`${adminBase}/api/admin/users/delete`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', authorization: 'Bearer wrong' },
+  body: JSON.stringify({ openid: 'openid-a' }),
+});
+assert(usersDeleteUnauthorized.status === 401, 'admin user delete should reject an invalid session token');
 const adminLoginFailed = await fetch(`${adminBase}/api/admin/login`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
@@ -284,6 +328,70 @@ const adminStatus = await fetch(`${adminBase}/api/admin/status`, {
 const roomsStatus = adminStatus.collections.find((item) => item.name === 'rooms');
 const roomStatesStatus = adminStatus.collections.find((item) => item.name === 'roomStates');
 assert(adminStatus.ok && roomsStatus.count === 2 && roomStatesStatus.count === 1, 'admin status should count managed collections');
+
+const roomsList = await fetch(`${adminBase}/api/admin/rooms`, { headers: adminAuthHeaders }).then((res) => res.json());
+assert(roomsList.ok && roomsList.rooms.length === 2, 'admin rooms list should return every seeded room');
+const roomARow = roomsList.rooms.find((item) => item.roomId === 'room-a');
+assert(roomARow && roomARow.status === 'waiting' && roomARow.hostOpenid === 'openid-a', 'admin rooms list should surface real room fields');
+assert(roomARow.players.length === 1 && roomARow.players[0].nickName === '保留用户', 'admin rooms list should surface seated players');
+assert(!('state' in roomARow), 'admin rooms list should strip the heavy engine state field');
+const roomBClose = await fetch(`${adminBase}/api/admin/rooms/close`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
+  body: JSON.stringify({ roomId: 'room-b' }),
+}).then((res) => res.json());
+assert(roomBClose.ok && roomBClose.room.status === 'closed', 'admin should be able to force-close a room');
+const roomBCloseAgain = await fetch(`${adminBase}/api/admin/rooms/close`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
+  body: JSON.stringify({ roomId: 'room-b' }),
+}).then((res) => res.json());
+assert(roomBCloseAgain.ok && roomBCloseAgain.room.status === 'closed', 'closing an already-closed room should be idempotent');
+const roomCloseMissing = await fetch(`${adminBase}/api/admin/rooms/close`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
+  body: JSON.stringify({ roomId: 'no-such-room' }),
+}).then((res) => res.json());
+assert(!roomCloseMissing.ok && roomCloseMissing.error === 'ADMIN_ROOM_NOT_FOUND', 'closing an unknown room should fail clearly');
+
+const usersList = await fetch(`${adminBase}/api/admin/users`, { headers: adminAuthHeaders }).then((res) => res.json());
+assert(usersList.ok && usersList.users.length === 5, 'admin users list should return every seeded player');
+assert(usersList.users[0].openid === 'openid-b', 'admin users list should sort by most recent login first');
+const userARow = usersList.users.find((item) => item.openid === 'openid-a');
+assert(userARow && userARow.nickName === '保留用户' && userARow.totalScore === 12, 'admin users list should surface real player fields');
+
+const deleteMissingUser = await fetch(`${adminBase}/api/admin/users/delete`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
+  body: JSON.stringify({ openid: 'no-such-user' }),
+}).then((res) => res.json());
+assert(!deleteMissingUser.ok && deleteMissingUser.error === 'ADMIN_USER_NOT_FOUND', 'deleting an unknown player should fail clearly');
+const deleteUser = await fetch(`${adminBase}/api/admin/users/delete`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
+  body: JSON.stringify({ openid: 'openid-temp' }),
+}).then((res) => res.json());
+assert(deleteUser.ok && deleteUser.deleted.length === 1 && deleteUser.deleted[0] === 'openid-temp', 'admin should be able to delete a single player profile (legacy singular field)');
+assert(await adminDb.collection('users').countDocuments({}) === 4, 'deleted player should no longer be present');
+const usersListAfterDelete = await fetch(`${adminBase}/api/admin/users`, { headers: adminAuthHeaders }).then((res) => res.json());
+assert(
+  usersListAfterDelete.ok && !usersListAfterDelete.users.some((item) => item.openid === 'openid-temp'),
+  'deleted player should no longer appear in the admin users list'
+);
+
+const deleteBatch = await fetch(`${adminBase}/api/admin/users/delete`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', ...adminAuthHeaders },
+  body: JSON.stringify({ openids: ['openid-temp2', 'openid-temp3', 'no-such-user-2'] }),
+}).then((res) => res.json());
+assert(deleteBatch.ok, 'batch delete should succeed when at least one target exists');
+assert(
+  deleteBatch.deleted.length === 2 && deleteBatch.deleted.includes('openid-temp2') && deleteBatch.deleted.includes('openid-temp3'),
+  'batch delete should delete every existing target'
+);
+assert(deleteBatch.notFound.length === 1 && deleteBatch.notFound[0] === 'no-such-user-2', 'batch delete should report targets that were not found without failing the whole batch');
+assert(await adminDb.collection('users').countDocuments({}) === 2, 'both batch-deleted players should no longer be present');
+
 const forbiddenClear = await fetch(`${adminBase}/api/admin/clear`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', ...adminAuthHeaders },
@@ -302,7 +410,7 @@ const clearRooms = await fetch(`${adminBase}/api/admin/clear`, {
   body: JSON.stringify({ collection: 'rooms', confirm: 'CLEAR' }),
 }).then((res) => res.json());
 assert(clearRooms.ok && clearRooms.deleted.rooms === 2, 'admin clear should delete one managed collection');
-assert(await adminDb.collection('users').countDocuments({}) === 1, 'admin clear should leave non-managed collections untouched');
+assert(await adminDb.collection('users').countDocuments({}) === 2, 'admin clear should leave non-managed collections untouched');
 const clearAll = await fetch(`${adminBase}/api/admin/clear`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', ...adminAuthHeaders },

@@ -17,6 +17,58 @@ export interface CollectionStatus {
   count: number
 }
 
+export type RoomStatus = 'waiting' | 'playing' | 'finished' | 'tableResult' | 'closed'
+
+export interface RoomPlayerSummary {
+  seat: number
+  openid: string
+  nickName: string
+  avatarUrl: string
+}
+
+export interface RoomSettingsSummary {
+  maxRounds: number
+  repeatRound: boolean
+  washTwice: boolean
+  payType: 'pihu' | 'jiahu' | 'changhu'
+}
+
+export interface RoomTableStats {
+  completedRounds: number
+  winRounds: Record<string, number>
+  lastAppliedResultKey: string
+}
+
+export interface RoomSummary {
+  roomId: string
+  status: RoomStatus
+  seatCount: number
+  hostOpenid: string
+  players: RoomPlayerSummary[]
+  settings: RoomSettingsSummary
+  tableScores: Record<string, number>
+  tableStats: RoomTableStats
+  version: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface RoomsResponse { ok: true; rooms: RoomSummary[] }
+export interface RoomCloseResponse { ok: true; room: RoomSummary }
+
+// 命名用 Player 而非 User，避免和管理员账号的 AdminUser 混淆——这里对应的是 users 集合里的游戏玩家
+export interface PlayerSummary {
+  openid: string
+  nickName: string
+  avatarUrl: string
+  totalScore: number
+  createdAt: number
+  lastLoginAt: number
+}
+
+export interface PlayersResponse { ok: true; users: PlayerSummary[] }
+export interface PlayerDeleteResponse { ok: true; deleted: string[]; notFound: string[] }
+
 export interface LoginResponse {
   ok: true
   token: string

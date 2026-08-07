@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Database, LogOut, Menu, ShieldCheck, Users, X } from 'lucide-vue-next'
+import { Database, DoorOpen, LogOut, Menu, ShieldCheck, UserRound, Users, X } from 'lucide-vue-next'
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -60,6 +60,24 @@ function navigate(name: string) {
         >
           <Database :size="19" />
           <span>数据概览</span>
+        </button>
+        <button
+          type="button"
+          class="nav-item"
+          :class="{ 'nav-item--active': route.name === 'rooms' }"
+          @click="navigate('rooms')"
+        >
+          <DoorOpen :size="19" />
+          <span>房间管理</span>
+        </button>
+        <button
+          type="button"
+          class="nav-item"
+          :class="{ 'nav-item--active': route.name === 'players' }"
+          @click="navigate('players')"
+        >
+          <UserRound :size="19" />
+          <span>玩家管理</span>
         </button>
         <button
           v-if="session.isSuperAdmin"
