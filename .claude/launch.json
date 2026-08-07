@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "portrait-bust-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/wangyoukun/Desktop/imgthree/reconstruction", "run", "dev"],
+      "port": 5183
+    },
+    {
+      "name": "sdr-admin-backend-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["/private/tmp/claude-501/-Users-wangyoukun-WeChatProjects-SDRminigame/cda77202-65c2-4d7a-962c-53b2c1375642/scratchpad/preview-backend.mjs"],
+      "port": 8080
+    },
+    {
+      "name": "sdr-admin-web-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/wangyoukun/WeChatProjects/SDRminigame/services/admin-web", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}
