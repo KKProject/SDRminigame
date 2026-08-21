@@ -664,7 +664,7 @@ function attachLobbySocket(controller, seat = 0) {
 attachLobbySocket(createdLobby, 0);
 lobbyCalls = [];
 const createdLobbyResult = await createdLobby.createLobbyRoom({
-  maxRounds: 4,
+  maxRounds: 16,
   repeatRound: true,
   washTwice: true,
   payType: 'jiahu',
@@ -674,12 +674,12 @@ if (
   createdLobbyResult.entered
   || !createdLobbyResult.waiting
   || createdLobby.waitingRoom.roomId !== '123456'
-  || createdLobby.waitingRoom.settings.maxRounds !== 4
+  || createdLobby.waitingRoom.settings.maxRounds !== 16
   || createdLobby.waitingRoom.settings.repeatRound !== true
   || createdLobby.waitingRoom.settings.washTwice !== true
   || createdLobby.waitingRoom.settings.payType !== 'jiahu'
   || !createRoomCall
-  || createRoomCall.data.maxRounds !== 4
+  || createRoomCall.data.maxRounds !== 16
   || !createRoomCall.data.settings
   || createRoomCall.data.settings.repeatRound !== true
   || createRoomCall.data.settings.washTwice !== true
@@ -692,13 +692,13 @@ const legacyLobby = new online.default({ ...lobbyDatabus }, lobbyRenderer, lobby
 legacyLobby.lobbyProfile = { nickName: '大厅玩家', avatarUrl: 'avatar.png' };
 attachLobbySocket(legacyLobby, 0);
 lobbyCalls = [];
-const legacyLobbyResult = await legacyLobby.createLobbyRoom(6);
+const legacyLobbyResult = await legacyLobby.createLobbyRoom(32);
 const legacyCreateRoomCall = lobbyCalls.find((call) => call.data && call.data.action === 'createRoom');
 if (
   !legacyLobbyResult.waiting
   || !legacyCreateRoomCall
-  || legacyCreateRoomCall.data.maxRounds !== 6
-  || legacyCreateRoomCall.data.settings.maxRounds !== 6
+  || legacyCreateRoomCall.data.maxRounds !== 32
+  || legacyCreateRoomCall.data.settings.maxRounds !== 32
   || legacyCreateRoomCall.data.settings.payType !== 'pihu'
 ) {
   throw new Error('lobby room creation should keep numeric maxRounds calls compatible');
@@ -2763,7 +2763,7 @@ const activeRoomDb = createRoomDb({
     updatedAt: 3,
     players: [{ seat: 2, openid: 'active-player' }],
     playerOpenids: ['active-player'],
-    settings: { maxRounds: 4 },
+    settings: { maxRounds: 16 },
   },
 });
 const activeRoomLookup = await roomFunction.activeRoom({}, { db: activeRoomDb, OPENID: 'active-player' });
@@ -2772,7 +2772,7 @@ if (
   || !activeRoomLookup.hasRoom
   || activeRoomLookup.roomId !== 'active-room'
   || activeRoomLookup.seat !== 2
-  || activeRoomLookup.settings.maxRounds !== 4
+  || activeRoomLookup.settings.maxRounds !== 16
 ) {
   throw new Error('activeRoom should return the current player unfinished room and normalized settings');
 }
@@ -2789,10 +2789,10 @@ const closedWithResultDb = createRoomDb({
     hostOpenid: 'closed-player',
     players: [{ seat: 0, openid: 'closed-player', ready: true, online: false }],
     playerOpenids: [],
-    settings: { maxRounds: 1 },
+    settings: { maxRounds: 8 },
     state: {
       phase: 'result',
-      round: 1,
+      round: 8,
       seats: [{}, {}, {}, {}],
       result: { type: 'draw-round' },
       eventSeq: 0,
@@ -2809,7 +2809,7 @@ const createRoomDbInstance = createRoomDb();
 const createdConfiguredRoom = await roomFunction.createRoom({
   profile: { nickName: '建房玩家' },
   settings: {
-    maxRounds: 4,
+    maxRounds: 16,
     repeatRound: true,
     washTwice: true,
     payType: 'changhu',
@@ -2817,7 +2817,7 @@ const createdConfiguredRoom = await roomFunction.createRoom({
 }, { db: createRoomDbInstance, OPENID: 'creator-openid' });
 if (
   !createdConfiguredRoom.ok
-  || createdConfiguredRoom.settings.maxRounds !== 4
+  || createdConfiguredRoom.settings.maxRounds !== 16
   || createdConfiguredRoom.settings.repeatRound !== true
   || createdConfiguredRoom.settings.washTwice !== true
   || createdConfiguredRoom.settings.payType !== 'changhu'
@@ -2830,11 +2830,11 @@ if (
 }
 const createOneRoundDbInstance = createRoomDb();
 const createdOneRoundRoom = await roomFunction.createRoom({
-  profile: { nickName: '一局玩家' },
-  maxRounds: 1,
-}, { db: createOneRoundDbInstance, OPENID: 'one-round-openid' });
-if (!createdOneRoundRoom.ok || createdOneRoundRoom.settings.maxRounds !== 1) {
-  throw new Error('createRoom should accept one-round rooms as a supported maxRounds option');
+  profile: { nickName: '八局玩家' },
+  maxRounds: 8,
+}, { db: createOneRoundDbInstance, OPENID: 'eight-round-openid' });
+if (!createdOneRoundRoom.ok || createdOneRoundRoom.settings.maxRounds !== 8) {
+  throw new Error('createRoom should accept eight-round rooms as a supported maxRounds option');
 }
 const createdDefaultRoom = await roomFunction.createRoom({
   profile: { nickName: '非法局数玩家' },
@@ -2842,7 +2842,7 @@ const createdDefaultRoom = await roomFunction.createRoom({
 }, { db: createRoomDb(), OPENID: 'invalid-rounds-openid' });
 if (
   !createdDefaultRoom.ok
-  || createdDefaultRoom.settings.maxRounds !== 2
+  || createdDefaultRoom.settings.maxRounds !== 8
   || createdDefaultRoom.settings.repeatRound !== false
   || createdDefaultRoom.settings.washTwice !== false
   || createdDefaultRoom.settings.payType !== 'pihu'
@@ -2857,12 +2857,12 @@ const duplicateRoomDb = createRoomDb({
     updatedAt: 1,
     players: [{ seat: 0, openid: 'duplicate-openid' }],
     playerOpenids: ['duplicate-openid'],
-    settings: { maxRounds: 6 },
+    settings: { maxRounds: 32 },
   },
 });
 const duplicateCreate = await roomFunction.createRoom({
   profile: { nickName: '重复建房' },
-  maxRounds: 2,
+  maxRounds: 8,
 }, { db: duplicateRoomDb, OPENID: 'duplicate-openid' });
 if (
   duplicateCreate.ok
@@ -2875,8 +2875,8 @@ if (
 }
 const concurrentCreateDb = createRoomDb();
 const concurrentCreates = await Promise.all([
-  roomFunction.createRoom({ profile: { nickName: '并发建房' }, maxRounds: 2 }, { db: concurrentCreateDb, OPENID: 'concurrent-openid' }),
-  roomFunction.createRoom({ profile: { nickName: '并发建房' }, maxRounds: 2 }, { db: concurrentCreateDb, OPENID: 'concurrent-openid' }),
+  roomFunction.createRoom({ profile: { nickName: '并发建房' }, maxRounds: 8 }, { db: concurrentCreateDb, OPENID: 'concurrent-openid' }),
+  roomFunction.createRoom({ profile: { nickName: '并发建房' }, maxRounds: 8 }, { db: concurrentCreateDb, OPENID: 'concurrent-openid' }),
 ]);
 if (
   concurrentCreates.filter((result) => result.ok).length !== 1
@@ -3161,10 +3161,10 @@ const maxRoundDb = createRoomDb({
     hostOpenid: 'max-round-openid',
     players: [{ seat: 0, openid: 'max-round-openid' }],
     playerOpenids: ['max-round-openid'],
-    settings: { maxRounds: 2 },
+    settings: { maxRounds: 8 },
     state: {
       phase: 'result',
-      round: 2,
+      round: 8,
       seats: [],
       eventSeq: 0,
       publicEvent: null,
@@ -3180,7 +3180,7 @@ if (blockedNextRound.ok || blockedNextRound.error !== 'TABLE_FINISHED' || maxRou
 }
 const blockedFinalConfirmation = await roomFunction.confirmNextRound({
   roomId: 'max-round-room',
-  round: 2,
+  round: 8,
 }, { db: maxRoundDb, OPENID: 'max-round-openid' });
 if (blockedFinalConfirmation.ok || blockedFinalConfirmation.error !== 'TABLE_FINISHED') {
   throw new Error('final table results must reject ordinary next-round confirmation');
@@ -3488,10 +3488,10 @@ const finalEventDriftDb = createRoomDb({
       { seat: 1, openid: 'final-event-guest', ready: true, online: true },
     ],
     playerOpenids: ['final-event-host', 'final-event-guest'],
-    settings: { maxRounds: 2 },
+    settings: { maxRounds: 8 },
     state: {
       phase: 'result',
-      round: 2,
+      round: 8,
       seats: [{}, {}, {}, {}],
       eventSeq: 21,
       publicEvent: { eventSeq: 21, type: 'hu', createdAt: 11, result: { type: 'win', winner: 0 } },
@@ -3515,7 +3515,7 @@ if (
 const { HuapaiEngine } = require(join(root, 'services/backend/src/game/core/engine.js'));
 const { DEFAULT_RULES } = require(join(root, 'services/backend/src/game/core/rules.js'));
 const { getLegalDiscards } = require(join(root, 'services/backend/src/game/core/evaluator.js'));
-function finalResultState(round = 2) {
+function finalResultState(round = 8) {
   return {
     phase: 'result',
     currentSeat: 0,
@@ -3550,8 +3550,8 @@ function finalRoom(id, overrides = {}) {
       { seat: 1, openid: 'rematch-guest', nickName: '好友', ready: true, online: true },
     ],
     playerOpenids: ['rematch-host', 'rematch-guest'],
-    settings: { maxRounds: 2 },
-    state: finalResultState(2),
+    settings: { maxRounds: 8 },
+    state: finalResultState(8),
   }, overrides);
 }
 const nonWinDetailDb = createRoomDb({

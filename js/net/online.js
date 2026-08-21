@@ -72,7 +72,7 @@ function normalizeLobbyRoomSettings(input = {}) {
   const maxRounds = Number(source.maxRounds);
   const payType = SUPPORTED_PAY_TYPES.indexOf(source.payType) >= 0 ? source.payType : 'pihu';
   return {
-    maxRounds: [1, 2, 4, 6].indexOf(maxRounds) >= 0 ? maxRounds : 2,
+    maxRounds: [8, 16, 24, 32].indexOf(maxRounds) >= 0 ? maxRounds : 8,
     repeatRound: Boolean(source.repeatRound),
     washTwice: Boolean(source.washTwice),
     payType,

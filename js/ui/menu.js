@@ -976,10 +976,10 @@ export default class StartMenu {
     ctx.clip();
 
     this.drawDesignText(ctx, layout, '选择局数', 476, yOf(204), 31, '#ffd78a', 'bold');
-    this.drawCheckbox(ctx, layout, 470, yOf(280), '1局', draft.maxRounds === 1, 'round', { maxRounds: 1, scrollContent: true });
-    this.drawCheckbox(ctx, layout, 630, yOf(280), '2局', draft.maxRounds === 2, 'round', { maxRounds: 2, scrollContent: true });
-    this.drawCheckbox(ctx, layout, 790, yOf(280), '4局', draft.maxRounds === 4, 'round', { maxRounds: 4, scrollContent: true });
-    this.drawCheckbox(ctx, layout, 950, yOf(280), '6局', draft.maxRounds === 6, 'round', { maxRounds: 6, scrollContent: true });
+    this.drawCheckbox(ctx, layout, 470, yOf(280), '8局', draft.maxRounds === 8, 'round', { maxRounds: 8, scrollContent: true });
+    this.drawCheckbox(ctx, layout, 630, yOf(280), '16局', draft.maxRounds === 16, 'round', { maxRounds: 16, scrollContent: true });
+    this.drawCheckbox(ctx, layout, 790, yOf(280), '24局', draft.maxRounds === 24, 'round', { maxRounds: 24, scrollContent: true });
+    this.drawCheckbox(ctx, layout, 950, yOf(280), '32局', draft.maxRounds === 32, 'round', { maxRounds: 32, scrollContent: true });
 
     this.drawDesignLine(ctx, layout, 470, yOf(390), 620);
     this.drawDesignText(ctx, layout, '房间选项', 476, yOf(414), 31, '#ffd78a', 'bold');
