@@ -1065,17 +1065,16 @@ function calculateHuScoring(doors, rules = DEFAULT_RULES, context = {}) {
     .forEach((door) => {
       const key = door.keys[0];
       const symbol = symbols[key];
-      const result = applyJiangMultiplier(1, symbol, jiangPhraseId);
       entries.push({
         type: 'xy',
         key,
         text: symbol ? symbol.phraseText : door.keys.join(''),
         baseFu: 1,
-        multiplier: result.multiplier,
-        fu: result.amount,
+        multiplier: 1,
+        fu: 1,
         description: `${symbol ? symbol.phraseText : door.keys.join('')}搭子`,
       });
-      totalFu += result.amount;
+      totalFu += 1;
     });
 
   const grade = classifyHuGrade(doors, totalFu);

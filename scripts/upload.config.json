@@ -2,8 +2,8 @@
   "appid": "wx487628e952ff200d",
   "projectPath": ".",
   "privateKeyPath": "./private.wx487628e952ff200d.key",
-  "version": "1.0.38",
-  "desc": "搭子计入 1 福，更新福数规则",
+  "version": "1.0.39",
+  "desc": "搭子固定 1 福，原句按将牌倍率计福",
   "ignores": [
     ".claude/**/*",
     ".codegraph/**/*",
