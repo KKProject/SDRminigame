@@ -852,6 +852,8 @@ function exposedDoors(melds) {
     supportNeeded: supportPairsNeeded(meld.cards.length),
     exposed: true,
     meldType: meld.type,
+    handKeyCount: meld.handKeyCount,
+    zhaoSize: meld.zhaoSize,
     label: meld.label,
     size: meld.cards.length,
   }));
@@ -873,6 +875,20 @@ function cardColorBase(symbol) {
 
 function naturalKeziBase(symbol) {
   return cardColorBase(symbol) * 2;
+}
+
+function naturalKeziFu(symbol, cardCount) {
+  return Math.max(0, cardCount - 2) * naturalKeziBase(symbol);
+}
+
+function exposedZhaoTaFu(meld, symbol) {
+  const cards = Array.isArray(meld.cards) ? meld.cards : [];
+  const handKeyCount = Number.isInteger(meld.handKeyCount)
+    ? meld.handKeyCount
+    : Math.max(0, (Number(meld.zhaoSize) || cards.length) - 1);
+  const zhaoSize = Number(meld.zhaoSize) || handKeyCount + 1;
+  const taCount = Math.max(0, cards.length - zhaoSize);
+  return naturalKeziFu(symbol, handKeyCount) + cardColorBase(symbol) * (1 + taCount);
 }
 
 /** 将牌（jiang）所在句子的牌计福 ×4 */
@@ -904,8 +920,9 @@ function scoreOperationMeld(meld, rules = DEFAULT_RULES, context = {}) {
   const symbols = createSymbolMap(rules);
   const symbol = symbols[key] || meld.cards[0];
   const increment = cardColorBase(symbol);
-  const base = meld.type === 'peng' ? increment : naturalKeziBase(symbol);
-  const baseFu = base + Math.max(0, meld.cards.length - 3) * increment;
+  const baseFu = meld.type === 'peng'
+    ? increment
+    : exposedZhaoTaFu(meld, symbol);
   const result = applyJiangMultiplier(baseFu, symbol, context.jiangPhraseId || null);
   return {
     type: meld.type || 'peng',
@@ -983,7 +1000,17 @@ function calculateHuScoring(doors, rules = DEFAULT_RULES, context = {}) {
     .forEach((door) => {
       const symbol = symbols[door.key];
       const increment = cardColorBase(symbol);
-      const base = door.meldType === 'peng' ? increment : naturalKeziBase(symbol);
+      const exposedZhaoTa = door.meldType === 'zhao' || door.meldType === 'ta';
+      const handKeyCount = Number.isInteger(door.handKeyCount)
+        ? door.handKeyCount
+        : Math.max(0, (Number(door.zhaoSize) || door.keys.length) - 1);
+      const zhaoSize = Number(door.zhaoSize) || handKeyCount + 1;
+      const taCount = Math.max(0, door.keys.length - zhaoSize);
+      const base = door.meldType === 'peng'
+        ? increment
+        : exposedZhaoTa
+          ? naturalKeziFu(symbol, handKeyCount)
+          : naturalKeziBase(symbol);
       const baseResult = applyJiangMultiplier(base, symbol, jiangPhraseId);
       entries.push({
         type: door.meldType === 'peng' ? 'peng' : 'natural-keitzi',
@@ -996,9 +1023,11 @@ function calculateHuScoring(doors, rules = DEFAULT_RULES, context = {}) {
       });
       totalFu += baseResult.amount;
 
-      const extraCards = Math.max(0, door.keys.length - 3);
+      const extraCards = exposedZhaoTa
+        ? 1 + taCount
+        : Math.max(0, door.keys.length - 3);
       if (extraCards) {
-        const extraBase = extraCards * increment;
+        const extraBase = extraCards * (exposedZhaoTa ? increment : naturalKeziBase(symbol));
         const extraResult = applyJiangMultiplier(extraBase, symbol, jiangPhraseId);
         entries.push({
           type: door.meldType === 'ta' ? 'ta' : 'zhao',
