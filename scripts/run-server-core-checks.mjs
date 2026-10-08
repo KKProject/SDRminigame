@@ -788,7 +788,7 @@ function makeResponseEngine() {
         { seat: 1, openid: 'test-1', nickName: '玩家1', avatarUrl: '', isHuman: true, online: false, lastSeenAt: oldSeenAt },
       ],
       playerOpenids: ['test-0', 'test-1'],
-      settings: { maxRounds: 2 },
+      settings: { maxRounds: 8 },
       hostOpenid: 'test-0',
       version: 3,
       state: engine.state,
@@ -968,7 +968,7 @@ rematchEngine.startRound({
   ],
 });
 rematchEngine.state.phase = 'result';
-rematchEngine.state.round = 2;
+rematchEngine.state.round = 8;
 rematchEngine.state.result = {
   type: 'win',
   winner: 0,
@@ -990,7 +990,7 @@ await rematchDb.collection('rooms').doc(rematchRoomId).set({
     seatCount: 4,
     players: rematchPlayers,
     playerOpenids: rematchPlayers.map((player) => player.openid),
-    settings: { maxRounds: 2 },
+    settings: { maxRounds: 8 },
     hostOpenid: 'host-openid',
     version: 7,
     state: rematchEngine.state,
@@ -1060,7 +1060,7 @@ if (
     ],
   });
   nonHostEngine.state.phase = 'result';
-  nonHostEngine.state.round = 2;
+  nonHostEngine.state.round = 8;
   nonHostEngine.state.result = { type: 'draw-round', summary: '测试' };
   const nonHostPlayers = [
     { seat: 0, openid: 'nh-host', nickName: '房主', avatarUrl: '', isHuman: true, online: true, ready: true },
@@ -1073,7 +1073,7 @@ if (
       seatCount: 4,
       players: nonHostPlayers,
       playerOpenids: nonHostPlayers.map((player) => player.openid),
-      settings: { maxRounds: 2 },
+      settings: { maxRounds: 8 },
       hostOpenid: 'nh-host',
       version: 1,
       state: nonHostEngine.state,
@@ -1101,7 +1101,7 @@ if (
     ],
   });
   declineEngine.state.phase = 'result';
-  declineEngine.state.round = 2;
+  declineEngine.state.round = 8;
   declineEngine.state.result = { type: 'draw-round', summary: '测试' };
   const declinePlayers = [
     { seat: 0, openid: 'decline-host', nickName: '房主', avatarUrl: '', isHuman: true, online: true, ready: true },
@@ -1114,7 +1114,7 @@ if (
       seatCount: 4,
       players: declinePlayers,
       playerOpenids: declinePlayers.map((player) => player.openid),
-      settings: { maxRounds: 2 },
+      settings: { maxRounds: 8 },
       hostOpenid: 'decline-host',
       version: 1,
       state: declineEngine.state,
@@ -1146,7 +1146,7 @@ if (
     ],
   });
   threeEngine.state.phase = 'result';
-  threeEngine.state.round = 2;
+  threeEngine.state.round = 8;
   threeEngine.state.result = { type: 'draw-round', summary: '测试' };
   const threePlayers = [
     { seat: 0, openid: 'three-host', nickName: '房主', avatarUrl: '', isHuman: true, online: true, ready: true },
@@ -1160,7 +1160,7 @@ if (
       seatCount: 4,
       players: threePlayers,
       playerOpenids: threePlayers.map((player) => player.openid),
-      settings: { maxRounds: 2 },
+      settings: { maxRounds: 8 },
       hostOpenid: 'three-host',
       version: 1,
       state: threeEngine.state,
@@ -1199,7 +1199,7 @@ if (
       seatCount: 4,
       players: expirePlayers,
       playerOpenids: expirePlayers.map((player) => player.openid),
-      settings: { maxRounds: 2 },
+      settings: { maxRounds: 8 },
       hostOpenid: 'expire-host',
       version: 1,
       rematchInvite: {
@@ -1232,7 +1232,7 @@ if (
 const legacyDrawRoomId = '991119';
 const legacyDrawState = JSON.parse(JSON.stringify(rematchEngine.state));
 legacyDrawState.phase = 'result';
-legacyDrawState.round = 1;
+legacyDrawState.round = 8;
 legacyDrawState.result = { type: 'draw-round', summary: '无赢家' };
 const legacyDrawPlayers = [
   { seat: 0, openid: 'legacy-draw-host', nickName: '旧房主', avatarUrl: '', isHuman: true, online: true, ready: true },
@@ -1251,7 +1251,7 @@ await rematchDb.collection('rooms').doc(legacyDrawRoomId).set({
     seatCount: 4,
     players: legacyDrawPlayers,
     playerOpenids: legacyDrawPlayers.map((player) => player.openid),
-    settings: { maxRounds: 1 },
+    settings: { maxRounds: 8 },
     hostOpenid: 'legacy-draw-host',
     version: 1,
     state: legacyDrawState,
@@ -1268,7 +1268,7 @@ const legacyDrawResult = await room.leaveRoom(
 const persistedLegacyDraw = (await rematchDb.collection('rooms').doc(legacyDrawRoomId).get()).data;
 if (
   !legacyDrawResult.public.tableRecord
-  || legacyDrawResult.public.tableRecord.completedRounds !== 1
+  || legacyDrawResult.public.tableRecord.completedRounds !== 8
   || legacyDrawResult.public.tableRecord.players.some((player) => player.winRounds !== 0)
   || !persistedLegacyDraw.tableStats
 ) {
@@ -1287,7 +1287,7 @@ await rematchDb.collection('rooms').doc(startupFinalRoomId).set({
     seatCount: 4,
     players: startupFinalPlayers,
     playerOpenids: startupFinalPlayers.map((player) => player.openid),
-    settings: { maxRounds: 2 },
+    settings: { maxRounds: 8 },
     hostOpenid: 'startup-final-host',
     version: 7,
     state: rematchEngine.state,
@@ -1315,7 +1315,7 @@ await rematchDb.collection('rooms').doc(finishedRecoveryRoomId).set({
     seatCount: 4,
     players: finishedRecoveryPlayers,
     playerOpenids: finishedRecoveryPlayers.map((player) => player.openid),
-    settings: { maxRounds: 2 },
+    settings: { maxRounds: 8 },
     hostOpenid: 'finished-host',
     version: 3,
     state: finishedRecoveryState,
@@ -1341,7 +1341,7 @@ await rematchDb.collection('rooms').doc(leaveRoomId).set({
     seatCount: 4,
     players: leavePlayers,
     playerOpenids: leavePlayers.map((player) => player.openid),
-    settings: { maxRounds: 2 },
+    settings: { maxRounds: 8 },
     hostOpenid: 'leave-host-openid',
     version: 3,
     state: rematchEngine.state,
@@ -1368,7 +1368,7 @@ await waitingDb.collection('rooms').doc(waitingRoomId).set({
     seatCount: 4,
     players: waitingPlayers,
     playerOpenids: waitingPlayers.map((player) => player.openid),
-    settings: { maxRounds: 2 },
+    settings: { maxRounds: 8 },
     hostOpenid: 'waiting-host-openid',
     version: 0,
     createdAt: Date.now(),
