@@ -1060,6 +1060,24 @@ function calculateHuScoring(doors, rules = DEFAULT_RULES, context = {}) {
       totalFu += result.amount;
     });
 
+  doors
+    .filter((door) => door.type === 'xy')
+    .forEach((door) => {
+      const key = door.keys[0];
+      const symbol = symbols[key];
+      const result = applyJiangMultiplier(1, symbol, jiangPhraseId);
+      entries.push({
+        type: 'xy',
+        key,
+        text: symbol ? symbol.phraseText : door.keys.join(''),
+        baseFu: 1,
+        multiplier: result.multiplier,
+        fu: result.amount,
+        description: `${symbol ? symbol.phraseText : door.keys.join('')}搭子`,
+      });
+      totalFu += result.amount;
+    });
+
   const grade = classifyHuGrade(doors, totalFu);
   const points = pointValueForGrade(grade, rules, totalFu);
   const heavyRound = isHeavyRoundSettlement(grade, totalFu, rules);
